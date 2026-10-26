@@ -1,0 +1,35 @@
+{
+  "$schema": "https://turborepo.com/schema.json",
+  "tasks": {
+    "dev": {
+      "cache": false,
+      "persistent": true,
+      "passThroughEnv": [
+        "HOST",
+        "PORT",
+        "WEB_PORT",
+        "LOG_LEVEL",
+        "CORS_ORIGINS",
+        "API_URL",
+        "NEXT_PUBLIC_MAP_STYLE_URL",
+        "NEXT_PUBLIC_INITIAL_LONGITUDE",
+        "NEXT_PUBLIC_INITIAL_LATITUDE"
+      ]
+    },
+    "build": {
+      "dependsOn": ["^build"],
+      "outputs": ["dist/**", ".next/**", "!.next/cache/**"],
+      "env": [
+        "API_URL",
+        "NEXT_PUBLIC_MAP_STYLE_URL",
+        "NEXT_PUBLIC_INITIAL_LONGITUDE",
+        "NEXT_PUBLIC_INITIAL_LATITUDE"
+      ]
+    },
+    "typecheck": {
+      "dependsOn": ["^typecheck"],
+      "outputs": []
+    }
+  },
+  "globalDependencies": [".env"]
+}

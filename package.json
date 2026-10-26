@@ -1,0 +1,33 @@
+{
+  "name": "simulicity-ia",
+  "private": true,
+  "version": "0.1.0",
+  "packageManager": "pnpm@10.32.1",
+  "engines": {
+    "node": ">=22.14 <25"
+  },
+  "scripts": {
+    "dev": "turbo run dev",
+    "build": "turbo run build",
+    "lint": "eslint . --max-warnings 0",
+    "typecheck": "turbo run typecheck",
+    "test": "vitest run",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "db:generate": "dotenv -e .env -- pnpm --filter @simulicity/database generate",
+    "db:push": "dotenv -e .env -- pnpm --filter @simulicity/database db:push",
+    "db:validate": "dotenv -e .env -- pnpm --filter @simulicity/database validate"
+  },
+  "devDependencies": {
+    "@eslint/js": "^10.0.1",
+    "eslint": "^10.13.0",
+    "typescript-eslint": "^8.57.0",
+    "typescript": "~5.9.3",
+    "prettier": "^3.8.0",
+    "turbo": "^2.8.0",
+    "vitest": "^4.1.0",
+    "@types/node": "^22.19.0",
+    "dotenv-cli": "^11.0.0"
+  },
+  "type": "module"
+}

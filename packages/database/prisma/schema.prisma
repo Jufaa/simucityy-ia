@@ -1,0 +1,18 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url = env("DATABASE_URL")
+}
+
+// Application metadata only. No persistence routes are enabled in the initial API.
+model Scenario {
+  id        String   @id @default(uuid())
+  name      String
+  cityId    String
+  seed      BigInt
+  config    Json
+  createdAt DateTime @default(now())
+}

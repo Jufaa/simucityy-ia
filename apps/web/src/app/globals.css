@@ -1,0 +1,80 @@
+@import 'tailwindcss';
+
+@theme inline {
+  --color-background: #080e17;
+  --color-foreground: #e2e8f0;
+  --color-primary: #67e8f9;
+  --color-primary-foreground: #0f172a;
+  --color-border: #1e293b;
+  --font-sans: Arial, Helvetica, sans-serif;
+}
+:root {
+  color-scheme: dark;
+}
+* {
+  box-sizing: border-box;
+}
+body {
+  margin: 0;
+  background: var(--color-background);
+  color: var(--color-foreground);
+  font-family: Arial, Helvetica, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+button,
+select,
+input {
+  font: inherit;
+}
+button:not(:disabled),
+select:not(:disabled) {
+  cursor: pointer;
+}
+input:disabled,
+select:disabled,
+button:disabled {
+  cursor: not-allowed;
+}
+.panel-heading {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 1rem;
+  border-bottom: 1px solid #1e293b;
+  color: #94a3b8;
+  font-size: 0.65rem;
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+}
+.section-label {
+  color: #94a3b8;
+  font-size: 0.6rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.13em;
+}
+.maplibregl-ctrl-group {
+  background: #0f172a !important;
+  border: 1px solid #334155;
+}
+.maplibregl-ctrl-group button + button {
+  border-top-color: #334155 !important;
+}
+.maplibregl-ctrl-icon {
+  filter: invert(1);
+}
+.maplibregl-ctrl-attrib {
+  color: #334155;
+}
+.maplibregl-ctrl-attrib a {
+  color: #334155;
+}
+.maplibregl-ctrl-scale {
+  background: #0f172acc !important;
+  color: #cbd5e1 !important;
+  border-color: #64748b !important;
+}
+::selection {
+  background: #164e63;
+  color: #cffafe;
+}
