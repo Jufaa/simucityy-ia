@@ -84,7 +84,9 @@ describe('generateBuildings con Semilla (Variación de Alturas)', () => {
 
     expect(buildings).toHaveLength(4);
     // Verificamos que las esquinas no cambien, solo la altura
-    expect(buildings[0].minCorner).toEqual({ x: 5, y: 5 });
-    expect(buildings[0].maxCorner).toEqual({ x: 45, y: 45 });
+    const firstBuilding = buildings[0];
+    expect(firstBuilding).toBeDefined();
+    expect(firstBuilding?.minCorner).toEqual({ x: 5, y: 5 });
+    expect(firstBuilding?.maxCorner).toEqual({ x: 45, y: 45 });
   });
 });
