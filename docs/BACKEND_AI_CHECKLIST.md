@@ -4,13 +4,16 @@
 
 Este checklist contiene trabajo futuro de backend, IA, generación y simulación. No incluye tareas de frontend ni autoriza implementar todo de una vez. Cada casilla se completa con su resultado comprobado, no por crear carpetas o interfaces vacías.
 
+Para implementar cada parte con ejemplos y resultados esperados, seguir la [guía práctica paso a paso](BACKEND_STEP_BY_STEP.md).
+
 ## Punto de partida
 
 - [x] Backend Fastify en `apps/backend` con `/health`, configuración, CORS y errores básicos.
 - [x] Contrato de salud con Zod en `packages/shared`.
 - [x] Herramientas y pruebas de la base configuradas.
+- [x] Tipos iniciales y generador de calles horizontales/verticales, con dos pruebas enfocadas.
 
-Todavía no existen generación de ciudades, integración con Meta, almacenamiento de escenarios ni motor de catástrofes. La API key no equivale a una integración funcionando.
+El generador actual solo produce una cuadrícula de segmentos de calles: todavía no valida entradas ni genera terreno o edificios. No existen una ciudad completa, integración con Meta, almacenamiento de escenarios ni motor de catástrofes. La API key no equivale a una integración funcionando. El [estado de continuación](PROJECT_HANDOFF.md) detalla el código, las limitaciones y el siguiente paso recomendado.
 
 ## Experiencia acordada
 
@@ -47,6 +50,9 @@ La IA propone; el generador construye los datos del mapa; el backend organiza y 
 ## 3. Construir el generador procedural
 
 - [ ] **G1 — Generar una primera ciudad desde parámetros conocidos.** Construir datos de terreno, calles y edificios sin necesitar todavía una llamada a Meta. Esto prueba que el generador funciona por sí mismo.
+
+  Estado parcial: cuadrícula de calles implementada y probada. Validación, terreno y edificios pendientes; G1 todavía no está completo.
+
 - [ ] **G2 — Incorporar las variaciones aprobadas.** Agregar cada característica con sus reglas y pruebas; no intentar todos los tipos de ciudad simultáneamente.
 - [ ] **G3 — Comprobar coherencia.** Validar posiciones y geometrías, conexiones viales y cruces de agua si existen. Señalar sectores aislados y limitaciones; no corregir o eliminar silenciosamente características solicitadas.
 - [ ] **G4 — Hacer reproducible el mapa.** Conservar parámetros, semilla y versión del generador. Probar que esas mismas entradas reconstruyan el mismo resultado y guardar el mapa generado para recuperarlo sin volver a consultar a la IA.

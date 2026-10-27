@@ -29,7 +29,10 @@ const configSchema = z.object({
   // BYOK: 64 hex chars (32 bytes) for AES-256-GCM
   BYOK_MASTER_KEY: z
     .string()
-    .regex(/^[0-9a-fA-F]{64}$/, 'BYOK_MASTER_KEY must be 64 hex chars (32 bytes).'),
+    .regex(
+      /^[0-9a-fA-F]{64}$/,
+      'BYOK_MASTER_KEY must be 64 hex chars (32 bytes).',
+    ),
 
   // Optional: global Meta API key as fallback
   META_API_KEY: z

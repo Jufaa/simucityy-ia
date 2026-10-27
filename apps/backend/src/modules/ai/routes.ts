@@ -7,7 +7,9 @@ import { runAi } from './service.js';
 
 const saveKeySchema = z.object({
   userId: z.string().min(1),
-  apiKey: z.string().regex(/^LLM_[A-Za-z0-9_-]+$/, 'Invalid Meta API key format'),
+  apiKey: z
+    .string()
+    .regex(/^LLM_[A-Za-z0-9_-]+$/, 'Invalid Meta API key format'),
 });
 
 const chatSchema = z.object({
@@ -26,7 +28,9 @@ export async function registerAiRoutes(
   app.post('/ai/keys', async (request, reply) => {
     const parsed = saveKeySchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: 'Invalid body', issues: parsed.error.issues });
+      return reply
+        .status(400)
+        .send({ error: 'Invalid body', issues: parsed.error.issues });
     }
     const encrypted = encryptUserKey(parsed.data.apiKey, config.byokMasterKey);
     await repo.save(parsed.data.userId, encrypted);
@@ -34,16 +38,21 @@ export async function registerAiRoutes(
   });
 
   // Delete a user's key
-  app.delete<{ Params: { userId: string } }>('/ai/keys/:userId', async (request, reply) => {
-    await repo.delete(request.params.userId);
-    return reply.status(204).send();
-  });
+  app.delete<{ Params: { userId: string } }>(
+    '/ai/keys/:userId',
+    async (request, reply) => {
+      await repo.delete(request.params.userId);
+      return reply.status(204).send();
+    },
+  );
 
   // Chat endpoint: uses the user's own key
   app.post('/ai/chat', async (request, reply) => {
     const parsed = chatSchema.safeParse(request.body);
     if (!parsed.success) {
-      return reply.status(400).send({ error: 'Invalid body', issues: parsed.error.issues });
+      return reply
+        .status(400)
+        .send({ error: 'Invalid body', issues: parsed.error.issues });
     }
     const { userId, mode, prompt } = parsed.data;
 
@@ -58,7 +67,9 @@ export async function registerAiRoutes(
     try {
       userKey = decryptUserKey(stored.encryptedKey, config.byokMasterKey);
     } catch {
-      return reply.status(500).send({ error: 'Stored key could not be decrypted.' });
+      return reply
+        .status(500)
+        .send({ error: 'Stored key could not be decrypted.' });
     }
 
     try {

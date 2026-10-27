@@ -19,7 +19,10 @@ export function encryptUserKey(plainKey: string, masterKey: Buffer): string {
  * Decrypts a payload produced by encryptUserKey.
  * Throws if the payload was tampered with (GCM auth failure).
  */
-export function decryptUserKey(payloadBase64: string, masterKey: Buffer): string {
+export function decryptUserKey(
+  payloadBase64: string,
+  masterKey: Buffer,
+): string {
   const data = Buffer.from(payloadBase64, 'base64');
   const iv = data.subarray(0, 12);
   const authTag = data.subarray(12, 28);
