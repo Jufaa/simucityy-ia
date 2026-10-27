@@ -1,0 +1,25 @@
+{
+  "name": "@simulicity/web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "node scripts/next-server.mjs dev",
+    "build": "next build",
+    "start": "node scripts/next-server.mjs start",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "@simulicity/shared": "workspace:*",
+    "next": "^16.4.3",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.3",
+    "@tailwindcss/postcss": "^4.3.3",
+    "dotenv": "^17.3.1"
+  },
+  "devDependencies": {
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3"
+  }
+}

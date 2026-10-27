@@ -1,41 +1,25 @@
 import { describe, expect, it } from 'vitest';
-import {
-  geographicSchema,
-  localCoordinateSchema,
-  demoScenario,
-  scenarioSchema,
-  buildingSchema,
-  demoProvenance,
-} from './index';
-describe('shared contracts', () => {
-  it('keeps coordinate systems distinct', () => {
-    expect(
-      localCoordinateSchema.safeParse({ crs: 'EPSG:4326', x: 1, y: 2, z: 0 })
-        .success,
-    ).toBe(false);
-    expect(
-      geographicSchema.safeParse({
-        crs: 'EPSG:4326',
-        longitude: 200,
-        latitude: 0,
-      }).success,
-    ).toBe(false);
+import * as shared from './index';
+
+describe('minimal shared health contract', () => {
+  it('exports only the contract used by the API and web health connection', () => {
+    expect(Object.keys(shared)).toEqual(['healthSchema']);
   });
-  it('validates the explicitly synthetic scenario', () => {
-    expect(scenarioSchema.parse(demoScenario).demo).toBe(true);
-  });
-  it('does not require invented height or occupancy', () => {
-    const p = demoScenario.origin;
+
+  it('accepts the existing health response and removes unknown fields', () => {
     expect(
-      buildingSchema.parse({
-        id: 'b',
-        provenance: demoProvenance,
-        footprint: [p, p, p, p],
-        heightMeters: null,
-        heightProvenance: null,
-        occupancy: null,
-        occupancyProvenance: null,
-      }).heightMeters,
-    ).toBeNull();
+      shared.healthSchema.parse({
+        status: 'ok',
+        service: 'simulicity-api',
+        version: '0.1.0',
+        privateValue: 'not public',
+      }),
+    ).toEqual({ status: 'ok', service: 'simulicity-api', version: '0.1.0' });
+  });
+
+  it('rejects responses outside the health contract', () => {
+    expect(shared.healthSchema.safeParse({ status: 'down' }).success).toBe(
+      false,
+    );
   });
 });
