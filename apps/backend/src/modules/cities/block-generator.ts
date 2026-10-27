@@ -1,6 +1,8 @@
 import { CityConfig, Block } from './city.types';
+import { validateCityConfig } from './city-validation';
 
 export function generateBlocks(config: CityConfig): Block[] {
+  validateCityConfig(config);
   const blocks: Block[] = [];
   const { widthInMeters, heightInMeters, streetSpacingInMeters } = config;
 

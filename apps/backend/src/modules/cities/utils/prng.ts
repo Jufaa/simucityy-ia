@@ -1,5 +1,8 @@
 // prng.ts
+import { validateSeed } from '../city-validation';
+
 export function createRandom(seed: number): () => number {
+  validateSeed(seed);
   let s = seed;
   return function () {
     s += 0x6d2b79f5;
