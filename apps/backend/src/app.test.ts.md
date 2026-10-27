@@ -1,3 +1,5 @@
+//TODO: qedo de antes esto es importante
+
 import { afterEach, describe, expect, it } from 'vitest';
 import { healthSchema } from '@simulicity/shared';
 import { z } from 'zod';
