@@ -19,3 +19,11 @@ verificar que anda el request a la apiKey:
 
 
   SI TIRA ALGUN ERROR DE CURL AL INGRESAR LA CLAVE PROBAR NO SOLO LEVANTANDO EL BACKEND SINO TODO EL PROYECT
+
+
+  Si estas en windows no sirve nada de lo de arriba s2
+
+  $env:BYOK_MASTER_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+  pnpm turbo run dev --env-mode=loose
+
+  Y despues abris otra terminal y pones Invoke-RestMethod -Uri "http://127.0.0.1:4000/ai/keys" -Method Post -ContentType "application/json" -Body '{"userId":"Nombre","apiKey":"LLM_api que te dieron"}' | ConvertTo-Json -Depth 5
