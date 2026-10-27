@@ -1,34 +1,9 @@
 import type { City, CityConfig, Road } from './city.types';
+import { validateCityConfig } from './city-validation';
 
-const MAX_STREETS = 1000; // podemos agregar mas es un stimate
 export function generateCity(config: CityConfig): City {
+  validateCityConfig(config);
   const roads: Road[] = [];
-  if (
-    config.widthInMeters <= 0 ||
-    config.heightInMeters <= 0 ||
-    config.streetSpacingInMeters <= 0 ||
-    !Number.isFinite(config.widthInMeters) ||
-    !Number.isFinite(config.heightInMeters) ||
-    !Number.isFinite(config.streetSpacingInMeters)
-  ) {
-    throw new RangeError(
-      'Las dimensiones y el espaciado deben ser números finitos mayores a cero.',
-    );
-  }
-
-  const horizontalStimate =
-    Math.floor(config.heightInMeters / config.streetSpacingInMeters) + 1;
-  const verticalStimate =
-    Math.floor(config.heightInMeters / config.streetSpacingInMeters) + 1;
-  const totalStreetStimate = horizontalStimate + verticalStimate;
-  if (
-    !Number.isFinite(totalStreetStimate) ||
-    totalStreetStimate > MAX_STREETS
-  ) {
-    throw new RangeError(
-      `La cantidad estimada de calles (${totalStreetStimate}) supera el límite máximo permitido de ${MAX_STREETS}.`,
-    );
-  }
 
   for (
     let y = 0;
