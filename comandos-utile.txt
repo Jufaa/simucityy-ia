@@ -16,3 +16,6 @@ verificar que anda el request a la apiKey:
   -H "Content-Type: application/json" \
   -d '{"userId":"nombre_usuario","mode":"auto","prompt":"Di solo: OK"}'
   (deberia devolver OK).
+
+
+  SI TIRA ALGUN ERROR DE CURL AL INGRESAR LA CLAVE PROBAR NO SOLO LEVANTANDO EL BACKEND SINO TODO EL PROYECT
