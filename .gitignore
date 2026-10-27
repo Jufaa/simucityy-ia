@@ -9,3 +9,4 @@ coverage/
 *.tsbuildinfo
 .codegraph/
 .atl/
+apps/backend/data/
