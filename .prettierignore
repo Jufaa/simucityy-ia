@@ -6,3 +6,6 @@ dist
 .atl
 
 **/next-env.d.ts
+
+# Preserve the original formatting of the user-provided local planning source.
+/Ideadelproyect.md

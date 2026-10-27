@@ -13,10 +13,7 @@
     "typecheck": "turbo run typecheck",
     "test": "vitest run",
     "format": "prettier --write .",
-    "format:check": "prettier --check .",
-    "db:generate": "dotenv -e .env -- pnpm --filter @simulicity/database generate",
-    "db:push": "dotenv -e .env -- pnpm --filter @simulicity/database db:push",
-    "db:validate": "dotenv -e .env -- pnpm --filter @simulicity/database validate"
+    "format:check": "prettier --check ."
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
@@ -26,8 +23,7 @@
     "prettier": "^3.8.0",
     "turbo": "^2.8.0",
     "vitest": "^4.1.0",
-    "@types/node": "^22.19.0",
-    "dotenv-cli": "^11.0.0"
+    "@types/node": "^22.19.0"
   },
   "type": "module"
 }
