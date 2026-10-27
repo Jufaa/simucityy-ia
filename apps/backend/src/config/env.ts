@@ -25,6 +25,17 @@ const configSchema = z.object({
     .default('http://localhost:3000,http://127.0.0.1:3000')
     .transform((value) => value.split(',').map((origin) => origin.trim()))
     .pipe(z.array(originSchema).min(1)),
+
+  // BYOK: 64 hex chars (32 bytes) for AES-256-GCM
+  BYOK_MASTER_KEY: z
+    .string()
+    .regex(/^[0-9a-fA-F]{64}$/, 'BYOK_MASTER_KEY must be 64 hex chars (32 bytes).'),
+
+  // Optional: global Meta API key as fallback
+  META_API_KEY: z
+    .string()
+    .regex(/^LLM_[A-Za-z0-9_-]+$/, 'META_API_KEY must start with LLM_')
+    .optional(),
 });
 
 export interface ApiConfig {
@@ -32,6 +43,8 @@ export interface ApiConfig {
   port: number;
   logLevel: z.infer<typeof configSchema>['LOG_LEVEL'];
   corsOrigins: string[];
+  byokMasterKey: Buffer;
+  metaApiKey?: string | undefined; // 👈 añade | undefined
 }
 
 export function loadConfig(
@@ -42,7 +55,6 @@ export function loadConfig(
     const fields = [
       ...new Set(result.error.issues.map((issue) => issue.path[0])),
     ];
-    // Never serialize raw environment values or Zod input into logs.
     throw new Error(`Invalid API configuration: ${fields.join(', ')}.`);
   }
   return {
@@ -50,5 +62,7 @@ export function loadConfig(
     port: result.data.PORT,
     logLevel: result.data.LOG_LEVEL,
     corsOrigins: result.data.CORS_ORIGINS,
+    byokMasterKey: Buffer.from(result.data.BYOK_MASTER_KEY, 'hex'),
+    metaApiKey: result.data.META_API_KEY,
   };
 }

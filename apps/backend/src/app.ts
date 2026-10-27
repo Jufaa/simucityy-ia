@@ -3,6 +3,7 @@ import { healthSchema } from '@simulicity/shared';
 import { registerErrorHandlers } from './common/errors';
 import { loadConfig, type ApiConfig } from './config/env';
 import { registerCors } from './plugins/cors';
+import { registerAiRoutes } from './modules/ai/routes';
 
 export function buildApp(config: ApiConfig = loadConfig(process.env)) {
   const app = Fastify({
@@ -36,6 +37,10 @@ export function buildApp(config: ApiConfig = loadConfig(process.env)) {
   });
   registerErrorHandlers(app);
   registerCors(app, config);
+
+  // 👇 NUEVO: rutas de IA (BYOK)
+  registerAiRoutes(app, config);
+
   app.get('/health', () =>
     healthSchema.parse({
       status: 'ok',

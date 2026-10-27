@@ -3,9 +3,9 @@ import { config as loadDotenv } from 'dotenv';
 import { buildApp } from './app';
 import { loadConfig } from './config/env';
 
-// src/server.ts and dist/server.js are both three levels below the root .env.
+// apps/backend/src/server.ts → apps/backend/.env
 loadDotenv({
-  path: fileURLToPath(new URL('../../../.env', import.meta.url)),
+  path: fileURLToPath(new URL('../.env', import.meta.url)),
   quiet: true,
 });
 
