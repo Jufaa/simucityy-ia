@@ -48,12 +48,16 @@ export async function runAi(
   } catch (error) {
     if (error instanceof OpenAI.APIError) {
       // 401 = clave inválida, 429 = rate limit, 5xx = error del proveedor
-      throw new Error(`Meta API error (${error.status}): ${error.message}`);
+      throw new Error(`Meta API error (${error.status}): ${error.message}`, {
+        cause: error,
+      });
     }
     if (error instanceof OpenAI.APIConnectionTimeoutError) {
-      throw new Error('Meta API request timed out.');
+      throw new Error('Meta API request timed out.', { cause: error });
     }
-    throw new Error(`Unexpected error calling Meta API: ${String(error)}`);
+    throw new Error(`Unexpected error calling Meta API: ${String(error)}`, {
+      cause: error,
+    });
   }
 
   const content = completion.choices[0]?.message?.content ?? '';
