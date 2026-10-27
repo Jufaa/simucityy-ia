@@ -1,59 +1,142 @@
-export type CellKind = 'empty' | 'road' | 'building';
+// Contratos base compatibles estructuralmente con apps/backend/src/modules/cities/city.types.ts
+export interface Point {
+  readonly x: number;
+  readonly y: number;
+}
 
-export interface FloodTerrainInput {
-  readonly width: number;
-  readonly height: number;
-  /** Elevación del terreno por celda (largo = width * height, orden row-major: y * width + x) */
-  readonly elevation: ArrayLike<number>;
-  /** Tipo de celda opcional o IDs asociados para cruzar con el mapa de A */
-  readonly cellKinds?: ArrayLike<CellKind> | undefined;
-  readonly entityIds?: ArrayLike<string | undefined> | undefined;
+export interface Building {
+  readonly id: string;
+  readonly minCorner: Point;
+  readonly maxCorner: Point;
+  readonly heightInMeters: number;
+}
+
+export interface RoadNode extends Point {
+  readonly id: string;
+}
+
+export interface RoadEdge {
+  readonly id: string;
+  readonly roadId: string;
+  readonly from: string;
+  readonly to: string;
+  readonly lengthInMeters: number;
+  readonly bidirectional: boolean;
+}
+
+export interface RoadGraph {
+  readonly nodes: readonly RoadNode[];
+  readonly edges: readonly RoadEdge[];
+}
+
+export interface TerrainGrid {
+  readonly xCoordinates: readonly number[];
+  readonly yCoordinates: readonly number[];
+  readonly elevationsInMeters: readonly (readonly number[])[];
+  readonly source?: string;
+}
+
+export interface TerrainConfig {
+  readonly kind: string;
+  readonly elevationInMeters: number;
+}
+
+/**
+ * Subconjunto estructural de CityScenario requerido por el motor de inundación.
+ * Acepta directamente cualquier objeto CityScenario validado por parseCityScenario,
+ * sin mutarlo en ningún momento.
+ */
+export interface CityScenarioInput {
+  readonly terrain: TerrainConfig;
+  readonly terrainGrid: TerrainGrid;
+  readonly roadGraph: RoadGraph;
+  readonly buildings: readonly Building[];
+}
+
+export type SyntheticReliefMode = 'none' | 'central-basin' | 'west-to-east-slope';
+
+export interface FloodPulse {
+  readonly row: number;
+  readonly column: number;
+  readonly depthInMeters: number;
 }
 
 export interface FloodConfig {
-  /** Metros/unidades de agua agregados por celda en cada tick */
-  readonly rainRatePerTick: number;
-  /** Fracción de la diferencia de nivel transferida a los vecinos por tick (0 a 1) */
+  /** Duración de cada tick de simulación en segundos */
+  readonly timeStepInSeconds: number;
+  /** Intensidad de lluvia en milímetros por hora (mm/h) o equivalente por segundo */
+  readonly rainIntensityMmPerHour: number;
+  /** Pérdida por drenaje/infiltración en milímetros por hora (mm/h) */
+  readonly drainRateMmPerHour: number;
+  /** Coeficiente de transferencia lateral entre celdas vecinas por tick (0 a 1) */
   readonly flowTransferRatio: number;
-  /** Pérdida/absorción/drenaje de agua por celda en cada tick (>= 0) */
-  readonly drainRatePerTick: number;
-  /** Umbral de agua (m) a partir del cual una calle (road) se considera inundada */
-  readonly roadFloodedThreshold: number;
-  /** Umbral de agua (m) a partir del cual un edificio (building) se considera expuesto */
-  readonly buildingExposedThreshold: number;
+  /** Umbral de profundidad (m) a partir del cual un tramo (edge.id) no es transitable */
+  readonly roadFloodedThresholdInMeters: number;
+  /** Umbral de profundidad (m) a partir del cual un edificio (building.id) se considera expuesto */
+  readonly buildingExposedThresholdInMeters: number;
+  /**
+   * Relieve sintético opcional superpuesto en el motor cuando el terreno de demo es plano (0m),
+   * sin alterar CityScenario.
+   */
+  readonly syntheticRelief: SyntheticReliefMode;
+  /** Amplitud máxima en metros del relieve sintético cuando syntheticRelief !== 'none' */
+  readonly syntheticReliefAmplitudeInMeters: number;
+}
+
+export interface CellBounds {
+  readonly row: number;
+  readonly column: number;
+  readonly minX: number;
+  readonly maxX: number;
+  readonly minY: number;
+  readonly maxY: number;
+  readonly areaInSqMeters: number;
+  readonly groundElevationInMeters: number;
+}
+
+export interface AffectedRoadEdge {
+  readonly edgeId: string;
+  readonly roadId: string;
+  readonly maxWaterDepthInMeters: number;
+  readonly meanWaterDepthInMeters: number;
+  readonly blocked: boolean;
+}
+
+export interface ExposedBuildingStatus {
+  readonly buildingId: string;
+  readonly maxWaterDepthInMeters: number;
+  readonly meanWaterDepthInMeters: number;
+  readonly exposed: boolean;
 }
 
 export interface WaterBalance {
-  readonly initialWater: number;
-  readonly totalRainAdded: number;
-  readonly totalDrained: number;
-  readonly currentTotalWater: number;
-  /** Desviación numérica: debería ser ~0 (initial + rain - drained - current) */
-  readonly massBalanceError: number;
+  readonly initialVolumeInCubicMeters: number;
+  readonly totalRainVolumeInCubicMeters: number;
+  readonly totalDrainedVolumeInCubicMeters: number;
+  readonly currentVolumeInCubicMeters: number;
+  /** Error absoluto de conservación de volumen (m³): |initial + rain - drained - current| */
+  readonly volumeBalanceErrorInCubicMeters: number;
 }
 
-export interface FloodMetrics {
+export interface FloodState {
   readonly tick: number;
-  readonly maxWaterDepth: number;
-  readonly meanWaterDepth: number;
-  readonly floodedRoadCellsCount: number;
-  readonly exposedBuildingCellsCount: number;
+  readonly elapsedTimeInSeconds: number;
+  readonly rows: number;
+  readonly columns: number;
+  /** Profundidad de agua en metros por celda [row * columns + column] */
+  readonly waterDepthInMeters: Float32Array;
+  /** Estado de todos los tramos del grafo vial (identificados por edge.id) */
+  readonly roadEdges: readonly AffectedRoadEdge[];
+  /** Lista rápida de IDs de tramos bloqueados/inundados (waterDepth >= roadFloodedThresholdInMeters) */
+  readonly blockedRoadEdgeIds: readonly string[];
+  /** Estado de todos los edificios del escenario (identificados por building.id) */
+  readonly buildings: readonly ExposedBuildingStatus[];
+  /** Lista rápida de IDs de edificios expuestos (waterDepth >= buildingExposedThresholdInMeters) */
+  readonly exposedBuildingIds: readonly string[];
+  readonly maxWaterDepthInMeters: number;
+  readonly meanWaterDepthInMeters: number;
   readonly balance: WaterBalance;
 }
 
-export interface FloodSnapshot {
-  readonly tick: number;
-  readonly width: number;
-  readonly height: number;
-  /** Copia inmutable/compacta de la profundidad de agua por celda para Worker/UI */
-  readonly waterDepth: Float32Array;
-  /** 1 si la vía en esa celda supera roadFloodedThreshold, 0 si es transitable */
-  readonly floodedRoadMask: Uint8Array;
-  /** 1 si el edificio en esa celda supera buildingExposedThreshold, 0 si no */
-  readonly exposedBuildingMask: Uint8Array;
-  /** Lista de IDs de vías inundadas (si se proveyeron entityIds) */
-  readonly floodedRoadIds: readonly string[];
-  /** Lista de IDs de edificios expuestos (si se proveyeron entityIds) */
-  readonly exposedBuildingIds: readonly string[];
-  readonly metrics: FloodMetrics;
-}
+/** Alias compacto para transmisión a Worker / UI / Módulo C (Evacuación) */
+export type FloodSnapshot = FloodState;
