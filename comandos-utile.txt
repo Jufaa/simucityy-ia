@@ -1,0 +1,18 @@
+agregar api key con nombre user: 
+
+primero levantar el backend: 
+
+pnpm --filter @simulicity/api dev (en root proyecto)
+
+Luego:
+
+curl -X POST http://127.0.0.1:4000/ai/keys \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"nombre_usuario","apiKey":"LLM_la_nueva_clave"}'
+
+verificar que anda el request a la apiKey:
+
+  curl -X POST http://127.0.0.1:4000/ai/chat \
+  -H "Content-Type: application/json" \
+  -d '{"userId":"nombre_usuario","mode":"auto","prompt":"Di solo: OK"}'
+  (deberia devolver OK).
