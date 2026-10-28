@@ -31,6 +31,16 @@ const payload = {
 const url = '/api/v1/cities/generate';
 
 describe('POST /api/v1/cities/generate', () => {
+  it('accepts the opt-in district layout while keeping the legacy request supported', async () => {
+    const response = await makeApp().inject({
+      method: 'POST',
+      url,
+      payload: { ...payload, layout: 'district' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().config.layout).toBe('district');
+    expect(response.json().district.parks.length).toBeGreaterThan(0);
+  });
   it('returns the actual validated generator result, deterministically and without caching', async () => {
     const app = makeApp();
     const first = await app.inject({ method: 'POST', url, payload });

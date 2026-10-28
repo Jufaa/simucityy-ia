@@ -6,6 +6,7 @@ import { generateCityScenario } from './city-scenario-generator';
 
 const fields = cityScenarioConfigSchema.shape;
 const generationRequestSchema = z.strictObject({
+  layout: z.enum(['grid', 'district']).optional(),
   config: z.strictObject({
     widthInMeters: fields.widthInMeters,
     heightInMeters: fields.heightInMeters,
@@ -27,6 +28,7 @@ export function registerCityRoutes(app: FastifyInstance): void {
       config: { ...input.config, seed: input.config.seed ?? 1 },
       terrain: input.terrain,
     };
+    if (input.layout !== undefined) options.layout = input.layout;
     for (const field of [
       'buildingMarginInMeters',
       'minBuildingHeightInMeters',

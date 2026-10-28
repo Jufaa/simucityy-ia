@@ -1,4 +1,4 @@
-// Espejo del JSON que devuelve GET /city del backend (A).
+// HTTP view of POST /api/v1/cities/generate. Extended district fields are optional.
 // No importamos de @simulicity/api: el frontend solo depende del contrato HTTP.
 
 export interface Point {
@@ -23,6 +23,7 @@ export interface Building {
   minCorner: Point;
   maxCorner: Point;
   heightInMeters: number;
+  use?: 'residential' | 'commercial';
 }
 
 export interface TerrainConfig {
@@ -43,4 +44,12 @@ export interface CityResponse {
   roads: Road[];
   blocks: Block[];
   buildings: Building[];
+  district?: {
+    roadWidthInMeters: number;
+    sidewalkWidthInMeters: number;
+    parks: Block[];
+    sidewalks: Block[];
+  };
+  roadGraph?: { nodes: (Point & { id: string })[] };
+  shelters?: { id: string; nodeId: string; active: boolean }[];
 }

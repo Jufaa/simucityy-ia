@@ -2,6 +2,8 @@
 
 Start with [`scenarios/demo-city.json`](../scenarios/demo-city.json). This self-contained fixture needs no running backend, environment keys, Meta API or database. It is a synthetic district, not verified geographic data or a physical simulation.
 
+For the richer optional layout with multiple buildings per block, parks and sidewalks, see [Small district](SMALL_DISTRICT.md) and `scenarios/small-district.json`. The original fixture and requests without a layout flag keep their existing grid behavior.
+
 ## Quick handoff
 
 1. Request a generated scenario from `POST /api/v1/cities/generate` (below), or load the fixture as static data to work without a running backend. Keep the source scenario immutable.

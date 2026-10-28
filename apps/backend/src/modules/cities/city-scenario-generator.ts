@@ -6,6 +6,7 @@ import { generateRoadGraph, generateBuildingAccess } from './road-graph';
 import { generateTerrainGrid } from './terrain-grid';
 import { generateResidents, generateShelters } from './population-generator';
 import { cityScenarioSchema } from './city.schema';
+import { buildDistrictScenario } from './district-generator';
 import { GENERATOR_VERSION } from './city.types';
 import type {
   CityConfig,
@@ -15,6 +16,7 @@ import type {
 } from './city.types';
 
 interface GenerateCityScenarioOptions {
+  layout?: 'grid' | 'district';
   config: CityConfig & Partial<CityScenarioConfig>;
   terrain: TerrainConfig;
   buildingMarginInMeters?: number;
@@ -26,6 +28,7 @@ interface GenerateCityScenarioOptions {
 export function generateCityScenario({
   config,
   terrain,
+  layout = config.layout,
   buildingMarginInMeters = config.buildingMarginInMeters ?? 5,
   minBuildingHeightInMeters = config.minBuildingHeightInMeters ?? 5,
   maxBuildingHeightInMeters = config.maxBuildingHeightInMeters ?? 15,
@@ -40,6 +43,7 @@ export function generateCityScenario({
     maxBuildingHeightInMeters,
     terrainCellSizeInMeters,
     populationCount,
+    ...(layout === undefined ? {} : { layout }),
   };
 
   if (
@@ -86,7 +90,7 @@ export function generateCityScenario({
     effectiveConfig.seed,
   );
 
-  return cityScenarioSchema.parse({
+  const base = {
     schemaVersion: 1,
     generatorVersion: GENERATOR_VERSION,
     source: 'procedural',
@@ -103,5 +107,8 @@ export function generateCityScenario({
       ...terrain,
       elevationInMeters: terrainElevation,
     },
-  });
+  } satisfies CityScenario;
+  return cityScenarioSchema.parse(
+    layout === 'district' ? buildDistrictScenario(base) : base,
+  );
 }

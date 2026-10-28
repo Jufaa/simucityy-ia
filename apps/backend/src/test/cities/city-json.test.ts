@@ -75,6 +75,9 @@ describe('city JSON boundary', () => {
     const help = run('--help');
     expect(help.status).toBe(0);
     expect(help.stdout).toContain('Usage:');
+    const district = run('--district');
+    expect(district.status).toBe(0);
+    expect(parseCityScenario(district.stdout).config.layout).toBe('district');
     for (const args of [['--invalid'], ['--invalid', '--help']]) {
       const failure = run(...args);
       expect(failure.status).toBe(1);

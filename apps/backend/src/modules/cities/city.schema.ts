@@ -37,6 +37,9 @@ export const blockSchema = rectangleSchema.refine(positiveArea, {
 export const buildingSchema = rectangleSchema
   .extend({
     heightInMeters: z.number().finite().positive(),
+    blockId: identifier.optional(),
+    parcelId: identifier.optional(),
+    use: z.enum(['residential', 'commercial']).optional(),
   })
   .refine(positiveArea, {
     message: 'Rectangle must have positive area.',
@@ -45,6 +48,7 @@ export const buildingSchema = rectangleSchema
 
 export const cityScenarioConfigSchema = z
   .strictObject({
+    layout: z.enum(['grid', 'district']).optional(),
     widthInMeters: z.number().finite().positive(),
     heightInMeters: z.number().finite().positive(),
     streetSpacingInMeters: z.number().finite().positive(),
@@ -142,6 +146,36 @@ export const cityScenarioSchema = z
         }),
       )
       .max(300),
+    district: z
+      .strictObject({
+        roadWidthInMeters: z.number().finite().positive(),
+        sidewalkWidthInMeters: z.number().finite().positive(),
+        parcels: z
+          .array(
+            rectangleSchema
+              .extend({
+                blockId: identifier,
+                kind: z.enum(['residential', 'commercial', 'park']),
+              })
+              .refine(positiveArea),
+          )
+          .max(2500),
+        parks: z
+          .array(
+            rectangleSchema
+              .extend({ blockId: identifier })
+              .refine(positiveArea),
+          )
+          .max(625),
+        sidewalks: z
+          .array(
+            rectangleSchema
+              .extend({ blockId: identifier })
+              .refine(positiveArea),
+          )
+          .max(2500),
+      })
+      .optional(),
   })
   .strict()
   .superRefine((scenario, context) => {
