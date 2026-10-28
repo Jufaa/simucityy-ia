@@ -1,6 +1,10 @@
 import { cityScenarioSchema } from './city.schema';
 import { generateCityScenario } from './city-scenario-generator';
-import { GENERATOR_VERSION } from './city.types';
+import {
+  GENERATOR_VERSION,
+  DISTRICT_GENERATOR_VERSION,
+  URBAN_GENERATOR_VERSION,
+} from './city.types';
 import type { CityScenario } from './city.types';
 
 const MAX_JSON_BYTES = 2 * 1024 * 1024;
@@ -21,7 +25,14 @@ export function serializeCityScenario(scenario: unknown): string {
 
 export function regenerateCityScenario(input: unknown): CityScenario {
   const saved = cityScenarioSchema.parse(input);
-  if (saved.generatorVersion !== GENERATOR_VERSION)
+  if (
+    saved.generatorVersion !==
+    (saved.config.detailLevel === 'urban'
+      ? URBAN_GENERATOR_VERSION
+      : saved.config.layout === 'district'
+        ? DISTRICT_GENERATOR_VERSION
+        : GENERATOR_VERSION)
+  )
     throw new RangeError(
       'This generator cannot reproduce the saved generator version.',
     );

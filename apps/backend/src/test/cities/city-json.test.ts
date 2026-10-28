@@ -67,6 +67,7 @@ describe('city JSON boundary', () => {
       spawnSync(process.execPath, [require.resolve('tsx/cli'), cli, ...args], {
         encoding: 'utf8',
         timeout: 10000,
+        maxBuffer: 3 * 1024 * 1024,
       });
     const output = run();
     expect(output.status).toBe(0);
@@ -75,6 +76,12 @@ describe('city JSON boundary', () => {
     const help = run('--help');
     expect(help.status).toBe(0);
     expect(help.stdout).toContain('Usage:');
+    const district = run('--district');
+    expect(district.status).toBe(0);
+    expect(parseCityScenario(district.stdout).config.layout).toBe('district');
+    const urban = run('--urban');
+    expect(urban.status).toBe(0);
+    expect(parseCityScenario(urban.stdout).config.detailLevel).toBe('urban');
     for (const args of [['--invalid'], ['--invalid', '--help']]) {
       const failure = run(...args);
       expect(failure.status).toBe(1);

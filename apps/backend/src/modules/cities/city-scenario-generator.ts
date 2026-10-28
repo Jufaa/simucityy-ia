@@ -6,6 +6,8 @@ import { generateRoadGraph, generateBuildingAccess } from './road-graph';
 import { generateTerrainGrid } from './terrain-grid';
 import { generateResidents, generateShelters } from './population-generator';
 import { cityScenarioSchema } from './city.schema';
+import { buildDistrictScenario } from './district-generator';
+import { enrichUrbanDistrict } from './urban-details';
 import { GENERATOR_VERSION } from './city.types';
 import type {
   CityConfig,
@@ -15,6 +17,8 @@ import type {
 } from './city.types';
 
 interface GenerateCityScenarioOptions {
+  detailLevel?: 'basic' | 'urban';
+  layout?: 'grid' | 'district';
   config: CityConfig & Partial<CityScenarioConfig>;
   terrain: TerrainConfig;
   buildingMarginInMeters?: number;
@@ -26,6 +30,8 @@ interface GenerateCityScenarioOptions {
 export function generateCityScenario({
   config,
   terrain,
+  layout = config.layout,
+  detailLevel = config.detailLevel,
   buildingMarginInMeters = config.buildingMarginInMeters ?? 5,
   minBuildingHeightInMeters = config.minBuildingHeightInMeters ?? 5,
   maxBuildingHeightInMeters = config.maxBuildingHeightInMeters ?? 15,
@@ -40,7 +46,11 @@ export function generateCityScenario({
     maxBuildingHeightInMeters,
     terrainCellSizeInMeters,
     populationCount,
+    ...(layout === undefined ? {} : { layout }),
+    ...(detailLevel === undefined ? {} : { detailLevel }),
   };
+  if (detailLevel === 'urban' && layout !== 'district')
+    throw new RangeError('Urban detail requires the district layout.');
 
   if (
     !Number.isInteger(populationCount) ||
@@ -86,7 +96,7 @@ export function generateCityScenario({
     effectiveConfig.seed,
   );
 
-  return cityScenarioSchema.parse({
+  const base = {
     schemaVersion: 1,
     generatorVersion: GENERATOR_VERSION,
     source: 'procedural',
@@ -103,5 +113,9 @@ export function generateCityScenario({
       ...terrain,
       elevationInMeters: terrainElevation,
     },
-  });
+  } satisfies CityScenario;
+  const generated = layout === 'district' ? buildDistrictScenario(base) : base;
+  return cityScenarioSchema.parse(
+    detailLevel === 'urban' ? enrichUrbanDistrict(generated) : generated,
+  );
 }
