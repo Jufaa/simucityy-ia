@@ -40,6 +40,17 @@ export const buildingSchema = rectangleSchema
     blockId: identifier.optional(),
     parcelId: identifier.optional(),
     use: z.enum(['residential', 'commercial']).optional(),
+    architecture: z
+      .strictObject({
+        style: z.enum(['house', 'apartment', 'shop']),
+        floors: z.number().int().min(1).max(30),
+        roof: z.enum(['gable', 'flat']),
+        roofRiseInMeters: z.number().finite().nonnegative(),
+        facade: z.enum(['sand', 'brick', 'stone']),
+        entranceSide: z.enum(['north', 'south', 'east', 'west']),
+        balconyDepthInMeters: z.number().finite().nonnegative(),
+      })
+      .optional(),
   })
   .refine(positiveArea, {
     message: 'Rectangle must have positive area.',
@@ -49,6 +60,7 @@ export const buildingSchema = rectangleSchema
 export const cityScenarioConfigSchema = z
   .strictObject({
     layout: z.enum(['grid', 'district']).optional(),
+    detailLevel: z.enum(['basic', 'urban']).optional(),
     widthInMeters: z.number().finite().positive(),
     heightInMeters: z.number().finite().positive(),
     streetSpacingInMeters: z.number().finite().positive(),
@@ -174,6 +186,54 @@ export const cityScenarioSchema = z
               .refine(positiveArea),
           )
           .max(2500),
+        urban: z
+          .strictObject({
+            yards: z
+              .array(
+                rectangleSchema
+                  .extend({ buildingId: identifier })
+                  .refine(positiveArea),
+              )
+              .max(1000),
+            parkPaths: z
+              .array(
+                rectangleSchema
+                  .extend({
+                    parkId: identifier,
+                    kind: z.enum(['path', 'plaza', 'entrance']),
+                  })
+                  .refine(positiveArea),
+              )
+              .max(2000),
+            amenities: z
+              .array(
+                z.strictObject({
+                  id: identifier,
+                  parkId: identifier,
+                  kind: z.enum(['tree', 'bench', 'lamp', 'fountain']),
+                  position: pointSchema,
+                  rotation: z.number().finite(),
+                  radiusInMeters: z.number().finite().positive().max(2),
+                }),
+              )
+              .max(2000),
+            streetDetails: z
+              .array(
+                rectangleSchema
+                  .extend({
+                    sourceId: identifier,
+                    kind: z.enum([
+                      'curb',
+                      'crosswalk',
+                      'lane-marking',
+                      'building-access',
+                    ]),
+                  })
+                  .refine(positiveArea),
+              )
+              .max(6000),
+          })
+          .optional(),
       })
       .optional(),
   })

@@ -1,6 +1,7 @@
 import type { Block, CityScenario, Point } from './city.types';
 import { validateCityConfig } from './city-validation';
 import { districtIssues } from './district-validation';
+import { urbanIssues } from './urban-validation';
 
 /** Semantic validation runs after Zod has established the structure. */
 export function scenarioIssues(s: CityScenario): string[] {
@@ -200,5 +201,5 @@ export function scenarioIssues(s: CityScenario): string[] {
       ),
     'Terrain grid dimensions or flat elevations are inconsistent.',
   );
-  return [...issues, ...districtIssues(s)];
+  return [...issues, ...districtIssues(s), ...urbanIssues(s)];
 }

@@ -6,6 +6,17 @@ export interface CityConfig {
 }
 export const GENERATOR_VERSION = '1.0.0';
 export const DISTRICT_GENERATOR_VERSION = '1.1.0';
+export const URBAN_GENERATOR_VERSION = '1.2.0';
+
+export interface BuildingArchitecture {
+  style: 'house' | 'apartment' | 'shop';
+  floors: number;
+  roof: 'gable' | 'flat';
+  roofRiseInMeters: number;
+  facade: 'sand' | 'brick' | 'stone';
+  entranceSide: 'north' | 'south' | 'east' | 'west';
+  balconyDepthInMeters: number;
+}
 
 export interface Point {
   x: number;
@@ -39,6 +50,7 @@ export interface Building {
   blockId?: string | undefined;
   parcelId?: string | undefined;
   use?: 'residential' | 'commercial' | undefined;
+  architecture?: BuildingArchitecture | undefined;
 }
 
 export type TerrainKind = 'flat';
@@ -49,6 +61,7 @@ export interface TerrainConfig {
 }
 
 export interface CityScenarioConfig extends CityConfig {
+  detailLevel?: 'basic' | 'urban' | undefined;
   layout?: 'grid' | 'district' | undefined;
   seed: number;
   buildingMarginInMeters: number;
@@ -112,6 +125,30 @@ export interface DistrictData {
   parcels: Parcel[];
   parks: DistrictArea[];
   sidewalks: DistrictArea[];
+  urban?: UrbanDetails | undefined;
+}
+
+export interface ParkPath extends Block {
+  parkId: string;
+  kind: 'path' | 'plaza' | 'entrance';
+}
+export interface ParkAmenity {
+  id: string;
+  parkId: string;
+  kind: 'tree' | 'bench' | 'lamp' | 'fountain';
+  position: Point;
+  rotation: number;
+  radiusInMeters: number;
+}
+export interface StreetDetail extends Block {
+  sourceId: string;
+  kind: 'curb' | 'crosswalk' | 'lane-marking' | 'building-access';
+}
+export interface UrbanDetails {
+  parkPaths: ParkPath[];
+  amenities: ParkAmenity[];
+  streetDetails: StreetDetail[];
+  yards: (Block & { buildingId: string })[];
 }
 
 export interface CityScenario {

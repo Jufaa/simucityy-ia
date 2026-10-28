@@ -1,5 +1,7 @@
 # A recognizable small district, generated as data
 
+For the optional architectural, park-furnishing and street-detail profile, see [Urban details](URBAN_DETAILS.md). Basic district generation described below is unchanged.
+
 The homepage now requests an opt-in district from the existing city endpoint. It contains multiple rectangular buildings per developed block, residential/commercial uses, reserved park blocks, sidewalk strips and visible shelter markers. It remains a synthetic, simplified district, not a real place or an active flood simulation.
 
 ## Try it

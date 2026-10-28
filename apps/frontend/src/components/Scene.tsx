@@ -6,6 +6,9 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CityResponse } from './city-types';
 import { createRoadMesh } from './create-road-mesh';
 import { createDistrictLayer } from './create-district-layer';
+import { createBuildingLayer } from './urban-building-layer';
+import { createUrbanDetailLayer } from './urban-detail-layer';
+import { createUrbanTextures } from './urban-materials';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4000';
 
@@ -25,6 +28,7 @@ export default function Scene() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             layout: 'district',
+            detailLevel: 'urban',
             config: {
               widthInMeters: 500,
               heightInMeters: 500,
@@ -85,6 +89,11 @@ export default function Scene() {
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.shadowMap.enabled = true;
+    renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+    renderer.toneMapping = THREE.ACESFilmicToneMapping;
+    renderer.toneMappingExposure = 1;
+    renderer.outputColorSpace = THREE.SRGBColorSpace;
     renderer.setSize(mount.clientWidth, mount.clientHeight);
     mount.appendChild(renderer.domElement);
 
@@ -101,50 +110,58 @@ export default function Scene() {
     controls.maxPolarAngle = Math.PI / 2;
     controls.update();
 
-    const dirLight = new THREE.DirectionalLight(0xffffff, 1.5);
-    dirLight.position.set(100, 200, 100);
+    const dirLight = new THREE.DirectionalLight(0xfff1dc, 2.5);
+    dirLight.position.set(
+      city.config.widthInMeters / 2 + extent * 0.6,
+      city.terrain.elevationInMeters + extent * 0.8,
+      -extent * 0.3,
+    );
+    dirLight.target.position.set(
+      city.config.widthInMeters / 2,
+      city.terrain.elevationInMeters,
+      city.config.heightInMeters / 2,
+    );
+    dirLight.castShadow = true;
+    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.shadow.camera.left = dirLight.shadow.camera.bottom = -extent * 0.8;
+    dirLight.shadow.camera.right = dirLight.shadow.camera.top = extent * 0.8;
+    dirLight.shadow.camera.far = extent * 4;
+    dirLight.shadow.normalBias = 0.08;
+    dirLight.shadow.bias = -0.0001;
+    dirLight.shadow.camera.updateProjectionMatrix();
     scene.add(dirLight);
-    scene.add(new THREE.AmbientLight(0x606060));
+    scene.add(dirLight.target);
+    scene.add(new THREE.HemisphereLight(0xe4f2ff, 0x8c8869, 2));
 
     // Edificios
-    for (const b of city.buildings) {
-      const width = b.maxCorner.x - b.minCorner.x;
-      const depth = b.maxCorner.y - b.minCorner.y;
-      const height = b.heightInMeters;
-
-      const geometry = new THREE.BoxGeometry(width, height, depth);
-      const material = new THREE.MeshStandardMaterial({
-        color:
-          b.use === 'commercial' ? 0x7294a7 : height > 15 ? 0xb6c4c7 : 0xd5c3a4,
-        roughness: 0.85,
-      });
-      const mesh = new THREE.Mesh(geometry, material);
-
-      mesh.position.set(
-        (b.minCorner.x + b.maxCorner.x) / 2,
-        city.terrain.elevationInMeters + height / 2,
-        (b.minCorner.y + b.maxCorner.y) / 2,
-      );
-      scene.add(mesh);
-    }
+    scene.add(createBuildingLayer(city));
+    const textures = createUrbanTextures(false);
+    if (textures.asphalt) textures.asphalt.repeat.set(70, 2);
+    if (textures.grass) textures.grass.repeat.set(64, 64);
 
     // Calles
     const roadMaterial = new THREE.MeshStandardMaterial({
-      color: 0x555555,
+      color: textures.asphalt ? 0xffffff : 0x555555,
       roughness: 1,
+      ...(textures.asphalt ? { map: textures.asphalt } : {}),
     });
     const roadMeshes = city.roads.map((road) =>
       createRoadMesh(road, city.terrain.elevationInMeters, roadMaterial),
     );
     for (const mesh of roadMeshes) scene.add(mesh);
     scene.add(createDistrictLayer(city));
+    scene.add(createUrbanDetailLayer(city, textures.concrete));
 
     // Suelo
     const groundGeometry = new THREE.PlaneGeometry(
       city.config.widthInMeters,
       city.config.heightInMeters,
     );
-    const groundMaterial = new THREE.MeshStandardMaterial({ color: 0xa6b09a });
+    const groundMaterial = new THREE.MeshStandardMaterial({
+      color: textures.grass ? 0xffffff : 0xa6b09a,
+      roughness: 1,
+      ...(textures.grass ? { map: textures.grass } : {}),
+    });
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
     ground.rotation.x = -Math.PI / 2;
     ground.position.set(
@@ -153,6 +170,7 @@ export default function Scene() {
       city.config.heightInMeters / 2,
     );
     scene.add(ground);
+    ground.receiveShadow = true;
     const resize = () => {
       camera.aspect = mount.clientWidth / mount.clientHeight;
       camera.updateProjectionMatrix();
@@ -173,6 +191,7 @@ export default function Scene() {
       window.removeEventListener('resize', resize);
       const geometries = new Set<THREE.BufferGeometry>();
       const materials = new Set<THREE.Material>();
+      const maps = new Set<THREE.Texture>();
       scene.traverse((object) => {
         if (object instanceof THREE.Mesh) {
           geometries.add(object.geometry);
@@ -183,7 +202,13 @@ export default function Scene() {
         }
       });
       for (const geometry of geometries) geometry.dispose();
-      for (const material of materials) material.dispose();
+      for (const material of materials) {
+        if (material instanceof THREE.MeshStandardMaterial && material.map)
+          maps.add(material.map);
+        material.dispose();
+      }
+      for (const texture of maps) texture.dispose();
+      dirLight.shadow.map?.dispose();
       controls.dispose();
       renderer.dispose();
       if (mount.contains(renderer.domElement)) {
@@ -229,8 +254,7 @@ export default function Scene() {
           {city.shelters?.length ?? 0}
         </p>
         <small>
-          Azul: comercios · Beige: viviendas · Verde: plazas · Amarillo:
-          refugios
+          Casas con techo · Departamentos con balcones · Comercios con vidriera
         </small>
         <p style={{ margin: '8px 0 0', fontSize: 12 }}>
           Arrastra para girar · Rueda para acercar. Terreno plano y población

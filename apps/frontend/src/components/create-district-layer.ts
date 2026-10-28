@@ -17,6 +17,7 @@ export function createDistrictLayer(city: CityResponse): THREE.Group {
       material,
     );
     mesh.name = item.id;
+    mesh.receiveShadow = true;
     mesh.position.set(
       (item.minCorner.x + item.maxCorner.x) / 2,
       city.terrain.elevationInMeters + thickness / 2 + 0.01,

@@ -28,6 +28,7 @@ it.each([
       expect(end.z).toBeCloseTo(point.y);
     }
     expect(mesh.material).toBe(material);
+    expect(mesh.receiveShadow).toBe(true);
     expect(road).toEqual(before);
     mesh.geometry.dispose();
     material.dispose();

@@ -31,6 +31,23 @@ const payload = {
 const url = '/api/v1/cities/generate';
 
 describe('POST /api/v1/cities/generate', () => {
+  it('accepts versioned urban details only on district requests', async () => {
+    const app = makeApp();
+    const response = await app.inject({
+      method: 'POST',
+      url,
+      payload: { ...payload, layout: 'district', detailLevel: 'urban' },
+    });
+    expect(response.statusCode).toBe(200);
+    expect(response.json().generatorVersion).toBe('1.2.0');
+    expect(response.json().district.urban.amenities.length).toBeGreaterThan(0);
+    const invalid = await app.inject({
+      method: 'POST',
+      url,
+      payload: { ...payload, detailLevel: 'urban' },
+    });
+    expect(invalid.statusCode).toBe(400);
+  });
   it('accepts the opt-in district layout while keeping the legacy request supported', async () => {
     const response = await makeApp().inject({
       method: 'POST',

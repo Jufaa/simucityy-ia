@@ -1,5 +1,8 @@
 import type { Block, CityScenario } from './city.types';
-import { DISTRICT_GENERATOR_VERSION } from './city.types';
+import {
+  DISTRICT_GENERATOR_VERSION,
+  URBAN_GENERATOR_VERSION,
+} from './city.types';
 
 export function districtIssues(s: CityScenario): string[] {
   const district = s.district;
@@ -12,7 +15,10 @@ export function districtIssues(s: CityScenario): string[] {
     if (condition) issues.push(message);
   };
   fail(
-    s.generatorVersion !== DISTRICT_GENERATOR_VERSION,
+    s.generatorVersion !==
+      (s.config.detailLevel === 'urban'
+        ? URBAN_GENERATOR_VERSION
+        : DISTRICT_GENERATOR_VERSION),
     'District generator version is unsupported.',
   );
   fail(

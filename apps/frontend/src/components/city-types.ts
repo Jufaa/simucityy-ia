@@ -24,6 +24,15 @@ export interface Building {
   maxCorner: Point;
   heightInMeters: number;
   use?: 'residential' | 'commercial';
+  architecture?: {
+    style: 'house' | 'apartment' | 'shop';
+    floors: number;
+    roof: 'gable' | 'flat';
+    roofRiseInMeters: number;
+    facade: 'sand' | 'brick' | 'stone';
+    entranceSide: 'north' | 'south' | 'east' | 'west';
+    balconyDepthInMeters: number;
+  };
 }
 
 export interface TerrainConfig {
@@ -49,6 +58,25 @@ export interface CityResponse {
     sidewalkWidthInMeters: number;
     parks: Block[];
     sidewalks: Block[];
+    urban?: {
+      yards: (Block & { buildingId: string })[];
+      parkPaths: (Block & {
+        parkId: string;
+        kind: 'path' | 'plaza' | 'entrance';
+      })[];
+      amenities: {
+        id: string;
+        parkId: string;
+        kind: 'tree' | 'bench' | 'lamp' | 'fountain';
+        position: Point;
+        rotation: number;
+        radiusInMeters: number;
+      }[];
+      streetDetails: (Block & {
+        sourceId: string;
+        kind: 'curb' | 'crosswalk' | 'lane-marking' | 'building-access';
+      })[];
+    };
   };
   roadGraph?: { nodes: (Point & { id: string })[] };
   shelters?: { id: string; nodeId: string; active: boolean }[];

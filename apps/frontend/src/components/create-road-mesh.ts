@@ -13,6 +13,7 @@ export function createRoadMesh(
   const thickness = 0.05;
   const geometry = new THREE.BoxGeometry(length, thickness, 6);
   const mesh = new THREE.Mesh(geometry, material);
+  mesh.receiveShadow = true;
 
   mesh.position.set(
     (road.start.x + road.end.x) / 2,
