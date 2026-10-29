@@ -152,6 +152,17 @@ it('runs a tsunami from the west edge and raises the alarm without rain', () => 
   expect(sim.snapshot.balance.totalRainVolumeInCubicMeters).toBe(0);
 });
 
+it('collapses shoreline buildings under tsunami load and reroutes evacuation', () => {
+  const sim = new DistrictSimulation(makeCity(), { hazard: 'tsunami' });
+  sim.start();
+  sim.advance(24);
+  expect(sim.snapshot.maxWaterDepthInMeters).toBeGreaterThan(0.5);
+  expect(sim.comparison.before.collapsedBuildings).toBeGreaterThan(0);
+  expect(
+    sim.buildingImpacts.filter((i) => i.condition === 'collapsed').length,
+  ).toBe(sim.comparison.before.collapsedBuildings);
+});
+
 it('keeps an earthquake dry but damages buildings, blocks roads and evacuates', () => {
   const sim = new DistrictSimulation(makeCity(), { hazard: 'earthquake' });
   sim.start();
@@ -163,6 +174,46 @@ it('keeps an earthquake dry but damages buildings, blocks roads and evacuates', 
   );
   expect(sim.selectedBlockedRoadEdgeIds.length).toBeGreaterThan(0);
   expect(sim.alarmTime).not.toBeNull();
+});
+
+it('collapses earthquake buildings over time, traps slow residents and cuts roads with debris', () => {
+  const sim = new DistrictSimulation(makeCity(), { hazard: 'earthquake' });
+  expect(sim.buildingImpacts.every((i) => i.condition !== 'collapsed')).toBe(
+    true,
+  );
+  sim.start();
+  // La alarma suena con la sacudida, sin esperar al agua.
+  expect(sim.alarmTime).toBe(0);
+  sim.advance(24);
+  const collapsed = sim.buildingImpacts.filter(
+    (i) => i.condition === 'collapsed',
+  );
+  expect(collapsed.length).toBeGreaterThan(0);
+  expect(sim.comparison.before.collapsedBuildings).toBe(collapsed.length);
+  expect(sim.selectedCollapsedBlockedRoadEdgeIds.length).toBeGreaterThan(0);
+  const people = sim.evacuation;
+  expect(
+    people.evacuatedCount +
+      people.trappedCount +
+      people.strandedCount +
+      people.waitingCount,
+  ).toBe(12);
+  // Tras el reset no hay derrumbes ni atrapados: el evento vuelve a empezar.
+  sim.reset();
+  expect(sim.comparison.before.collapsedBuildings).toBe(0);
+  expect(sim.evacuation.trappedCount).toBe(0);
+  expect(sim.evacuation.waitingCount).toBe(12);
+});
+
+it('grows wind damage with the gust ramp instead of damaging instantly', () => {
+  const sim = new DistrictSimulation(makeCity(), { hazard: 'strong-wind' });
+  sim.start();
+  sim.advance(0.1);
+  expect(sim.alarmTime).toBeNull();
+  expect(sim.buildingImpacts.every((i) => i.condition === 'intact')).toBe(true);
+  sim.advance(24);
+  expect(sim.alarmTime).not.toBeNull();
+  expect(sim.buildingImpacts.some((i) => i.condition !== 'intact')).toBe(true);
 });
 
 it('keeps strong wind dry with structural damage as the hazard', () => {

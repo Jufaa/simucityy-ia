@@ -1,12 +1,16 @@
 import { describe, expect, it } from 'vitest';
 import {
   assessStructuralDamage,
+  buildingImpactAt,
   createDemoCompatibleScenario,
   createHazardPulses,
+  floodCollapseDepthInMeters,
+  floodImpactLoadInMeters,
   FloodEngine,
   HAZARD_KINDS,
   hazardPreset,
   isHazardKind,
+  roadEdgeIdsBlockedByBuildings,
   type CityScenarioInput,
 } from '../src/index.js';
 
@@ -109,6 +113,93 @@ describe('hazard scenarios', () => {
       expect(scenario.roadGraph.edges.some((edge) => edge.id === id)).toBe(
         true,
       );
+  });
+
+  it('los edificios se dañan primero y se derrumban en su instante determinista', () => {
+    const scenario = createDemoCompatibleScenario(500, 500, 25);
+    const quake = assessStructuralDamage(scenario, 'earthquake');
+    for (const item of quake.buildings) {
+      if (item.collapsed) {
+        expect(item.damaged).toBe(true);
+        expect(item.collapseTimeInSeconds).toBeGreaterThanOrEqual(4);
+        expect(item.collapseTimeInSeconds).toBeLessThanOrEqual(114);
+        const at0 = buildingImpactAt(item, 'earthquake', 0);
+        expect(at0.condition).not.toBe('collapsed');
+        const atCollapse = buildingImpactAt(
+          item,
+          'earthquake',
+          item.collapseTimeInSeconds!,
+        );
+        expect(atCollapse.condition).toBe('collapsed');
+      } else {
+        expect(item.collapseTimeInSeconds).toBeNull();
+        expect(buildingImpactAt(item, 'earthquake', 3600).condition).not.toBe(
+          'collapsed',
+        );
+      }
+    }
+    // El viento no derrumba al inicio: la severidad crece con las rachas.
+    const wind = assessStructuralDamage(scenario, 'strong-wind');
+    for (const item of wind.buildings) {
+      expect(buildingImpactAt(item, 'strong-wind', 0).condition).toBe('intact');
+      if (item.collapsed)
+        expect(item.collapseTimeInSeconds).toBeGreaterThanOrEqual(528);
+    }
+  });
+
+  it('solo los derrumbes cortan calles con escombros', () => {
+    const scenario = createDemoCompatibleScenario(500, 500, 25);
+    const quake = assessStructuralDamage(scenario, 'earthquake');
+    expect(roadEdgeIdsBlockedByBuildings(scenario, new Set())).toEqual([]);
+    expect(quake.blockedRoadEdgeIds).toEqual(
+      roadEdgeIdsBlockedByBuildings(
+        scenario,
+        new Set(
+          quake.buildings
+            .filter((item) => item.collapsed)
+            .map((item) => item.buildingId),
+        ),
+      ),
+    );
+    // Un edificio solo dañado (no derrumbado) no corta ninguna calle.
+    const damagedOnly = quake.buildings.find(
+      (item) => item.damaged && !item.collapsed,
+    );
+    if (damagedOnly)
+      expect(
+        roadEdgeIdsBlockedByBuildings(
+          scenario,
+          new Set([damagedOnly.buildingId]),
+        ),
+      ).toEqual([]);
+  });
+
+  it('el agua derrumba a profundidades distintas por evento y edificio', () => {
+    const house = { id: 'casa', heightInMeters: 3 };
+    const tower = { id: 'torre', heightInMeters: 36 };
+    for (const building of [house, tower]) {
+      expect(floodCollapseDepthInMeters(building, 'tsunami')).toBeLessThan(
+        floodCollapseDepthInMeters(building, 'river-overflow'),
+      );
+      expect(
+        floodCollapseDepthInMeters(building, 'river-overflow'),
+      ).toBeLessThan(floodCollapseDepthInMeters(building, 'rain'));
+    }
+    // La corriente del tsunami carga más que el agua quieta de lluvia.
+    expect(floodImpactLoadInMeters(0.5, 'tsunami')).toBeGreaterThan(
+      floodImpactLoadInMeters(0.5, 'river-overflow'),
+    );
+    expect(floodImpactLoadInMeters(0.5, 'river-overflow')).toBeGreaterThan(
+      floodImpactLoadInMeters(0.5, 'rain'),
+    );
+    expect(floodImpactLoadInMeters(0.5, 'rain')).toBe(0.5);
+    // Determinista y acotada.
+    expect(floodCollapseDepthInMeters(house, 'tsunami')).toBe(
+      floodCollapseDepthInMeters(house, 'tsunami'),
+    );
+    expect(floodCollapseDepthInMeters(house, 'tsunami')).toBeGreaterThanOrEqual(
+      0.3,
+    );
   });
 
   it('el viento daña con severidad acotada y reproducible por edificio', () => {

@@ -14,7 +14,12 @@ export const CITY_ASSETS = [
 
 type AssetKey = (typeof CITY_ASSETS)[number];
 type Templates = Record<AssetKey, THREE.Object3D>;
-export type CityAssetLayer = { group: THREE.Group; dispose(): void };
+export type CityAssetLayer = {
+  group: THREE.Group;
+  dispose(): void;
+  /** Derrumbe visual de un edificio: 0 = intacto, 1 = totalmente caído. */
+  setBuildingCollapse(buildingId: string, progress: number): void;
+};
 type AssetLoader = (url: string) => Promise<THREE.Object3D>;
 
 /** Local-only URLs; every GLB and its relative texture is vendored with CC0 provenance. */
@@ -100,8 +105,51 @@ export function buildCityAssetLayer(
     roughness: 1,
   });
   let disposed = false;
-  const layer = {
+  const collapseEntries = new Map<
+    string,
+    {
+      mesh: THREE.InstancedMesh;
+      index: number;
+      original: THREE.Matrix4;
+      x: number;
+      base: number;
+      z: number;
+      height: number;
+      tilt: number;
+    }[]
+  >();
+  const layer: CityAssetLayer = {
     group,
+    setBuildingCollapse(buildingId: string, progress: number) {
+      const entries = collapseEntries.get(buildingId);
+      if (!entries || disposed) return;
+      const p = Math.max(0, Math.min(1, progress));
+      for (const entry of entries) {
+        if (p === 0) {
+          entry.mesh.setMatrixAt(entry.index, entry.original);
+        } else {
+          // Hundir hacia la base, comprimir la altura e inclinar: la
+          // instancia cae sobre su propia parcela sin moverse de sitio.
+          const collapse = new THREE.Matrix4()
+            .makeTranslation(entry.x, entry.base, entry.z)
+            .multiply(new THREE.Matrix4().makeRotationZ(entry.tilt * p))
+            .multiply(new THREE.Matrix4().makeRotationX(entry.tilt * 0.6 * p))
+            .multiply(new THREE.Matrix4().makeScale(1, 1 - 0.68 * p, 1))
+            .multiply(
+              new THREE.Matrix4().makeTranslation(
+                -entry.x,
+                -entry.base,
+                -entry.z,
+              ),
+            );
+          entry.mesh.setMatrixAt(
+            entry.index,
+            collapse.multiply(entry.original),
+          );
+        }
+        entry.mesh.instanceMatrix.needsUpdate = true;
+      }
+    },
     dispose() {
       if (disposed) return;
       disposed = true;
@@ -129,6 +177,15 @@ export function buildCityAssetLayer(
       }
       boundsByAsset.set(key, bounds);
     }
+    const buildingPoses: {
+      id: string;
+      key: AssetKey;
+      index: number;
+      x: number;
+      base: number;
+      z: number;
+      height: number;
+    }[] = [];
     city.buildings.forEach((building, index) => {
       const key = chooseAsset(building, index);
       const bounds = boundsByAsset.get(key)!;
@@ -173,6 +230,15 @@ export function buildCityAssetLayer(
           ),
         );
       const batch = placements.get(key) ?? [];
+      buildingPoses.push({
+        id: building.id,
+        key,
+        index: batch.length,
+        x,
+        base,
+        z,
+        height: building.heightInMeters,
+      });
       batch.push(pose);
       placements.set(key, batch);
       // A solid plinth reaches the lowest sampled footprint corner, not just its center.
@@ -224,6 +290,36 @@ export function buildCityAssetLayer(
         group.add(instances);
       });
     }
+    // Registrar la matriz original de cada edificio en cada malla
+    // instanciada para poder derrumbarlo sin tocar a los demás.
+    for (const child of group.children) {
+      if (!(child instanceof THREE.InstancedMesh)) continue;
+      const key = CITY_ASSETS.find((asset) =>
+        child.name.startsWith(`${asset}:`),
+      );
+      if (!key) continue;
+      for (const pose of buildingPoses) {
+        if (pose.key !== key) continue;
+        const original = new THREE.Matrix4();
+        child.getMatrixAt(pose.index, original);
+        const entries = collapseEntries.get(pose.id) ?? [];
+        entries.push({
+          mesh: child,
+          index: pose.index,
+          original,
+          x: pose.x,
+          base: pose.base,
+          z: pose.z,
+          height: pose.height,
+          tilt:
+            ([...pose.id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 2 ===
+            0
+              ? 1
+              : -1) * 0.16,
+        });
+        collapseEntries.set(pose.id, entries);
+      }
+    }
     if (foundations.length) {
       const instances = new THREE.InstancedMesh(
         foundationGeometry,
@@ -257,6 +353,7 @@ export function mountCityAssets(
   fallback: THREE.Object3D,
   notify: (status: 'loading' | 'ready' | 'fallback') => void,
   load: (city: CityResponse) => Promise<CityAssetLayer> = loadCityAssetLayer,
+  onReady?: (layer: CityAssetLayer) => void,
 ): () => void {
   let live = true;
   let owned: CityAssetLayer | undefined;
@@ -270,6 +367,7 @@ export function mountCityAssets(
       owned = layer;
       scene.add(layer.group);
       fallback.visible = false;
+      onReady?.(layer);
       notify('ready');
     })
     .catch(() => {

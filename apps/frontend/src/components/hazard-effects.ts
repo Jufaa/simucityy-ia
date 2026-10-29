@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   hazardHash,
+  type BuildingImpact,
   type HazardKind,
   type StructuralAssessment,
 } from '@simulicity/hazards';
@@ -8,12 +9,16 @@ import type { CityResponse } from './city-types';
 import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
 
 /**
- * Efectos visuales por catástrofe. Capa de presentación: lee la evaluación
- * estructural y el grafo vial, pero no modifica la ciudad ni la simulación.
- * - terremoto: grietas desde el epicentro, edificios dañados y escombros
- * - viento fuerte: estelas de viento animadas, daños y escombros
- * - tsunami: frente de ola que entra desde el oeste (el agua la da FloodEngine)
- * - desborde / lluvia: sin capa propia; el agua y la lluvia ya los representan
+ * Efectos visuales por catástrofe. Capa de presentación: lee el estado
+ * físico (intacto/dañado/derrumbado) que calcula la simulación y lo dibuja,
+ * sin modificar la ciudad ni el solver.
+ * - dañados: rejilla naranja/roja sobre el edificio
+ * - derrumbados: montón de escombros propio que crece al caer + restos en
+ *   las calles cortadas por ese derrumbe
+ * - terremoto: grietas desde el epicentro
+ * - viento: estelas animadas
+ * - tsunami: ola curvada con espuma cuya posición sigue al frente de agua
+ *   real del solver (no un temporizador)
  */
 export function createHazardEffects(
   city: CityResponse,
@@ -25,28 +30,40 @@ export function createHazardEffects(
   const width = city.config.widthInMeters;
   const height = city.config.heightInMeters;
   const ground = city.terrain.elevationInMeters;
-  const damagedById = new Map(
-    assessment.buildings.map((item) => [item.buildingId, item]),
+  const buildingById = new Map(city.buildings.map((b) => [b.id, b]));
+  const nodes = new Map(
+    (city.roadGraph?.nodes ?? []).map((node) => [node.id, node]),
   );
+  const edgeById = new Map(
+    (city.roadGraph?.edges ?? []).map((edge) => [edge.id, edge]),
+  );
+  const disposables: { dispose(): void }[] = [];
+  const own = <T extends { dispose(): void }>(item: T): T => {
+    disposables.push(item);
+    return item;
+  };
 
-  const severeMaterial = new THREE.MeshBasicMaterial({
-    color: 0xd32f2f,
-    wireframe: true,
-  });
-  const moderateMaterial = new THREE.MeshBasicMaterial({
-    color: 0xef7d1a,
-    wireframe: true,
-  });
-  for (const building of city.buildings) {
-    const damage = damagedById.get(building.id);
-    if (!damage?.damaged) continue;
+  // --- Edificios dañados (rejilla) -------------------------------------
+  const severeMaterial = own(
+    new THREE.MeshBasicMaterial({ color: 0xd32f2f, wireframe: true }),
+  );
+  const moderateMaterial = own(
+    new THREE.MeshBasicMaterial({ color: 0xef7d1a, wireframe: true }),
+  );
+  const damagedMeshes = new Map<string, THREE.Mesh>();
+  for (const item of assessment.buildings) {
+    if (!item.damaged) continue;
+    const building = buildingById.get(item.buildingId);
+    if (!building) continue;
     const mesh = new THREE.Mesh(
-      new THREE.BoxGeometry(
-        building.maxCorner.x - building.minCorner.x + 0.5,
-        building.heightInMeters + 0.5,
-        building.maxCorner.y - building.minCorner.y + 0.5,
+      own(
+        new THREE.BoxGeometry(
+          building.maxCorner.x - building.minCorner.x + 0.5,
+          building.heightInMeters + 0.5,
+          building.maxCorner.y - building.minCorner.y + 0.5,
+        ),
       ),
-      damage.severity >= 0.8 ? severeMaterial : moderateMaterial,
+      item.severity >= 0.8 ? severeMaterial : moderateMaterial,
     );
     mesh.name = `hazard-damaged:${building.id}`;
     mesh.position.set(
@@ -54,54 +71,87 @@ export function createHazardEffects(
       buildingBaseHeight(city, building) + building.heightInMeters / 2,
       (building.minCorner.y + building.maxCorner.y) / 2,
     );
-    // Inclinación leve solo en la copia visual de daño severo.
-    if (damage.severity >= 0.8) mesh.rotation.z = 0.025;
+    if (item.severity >= 0.8) mesh.rotation.z = 0.025;
+    mesh.visible = false;
+    damagedMeshes.set(building.id, mesh);
     group.add(mesh);
   }
 
-  // Escombros sobre los tramos bloqueados por daño estructural.
-  const blocked = new Set(assessment.blockedRoadEdgeIds);
-  const nodes = new Map(
-    (city.roadGraph?.nodes ?? []).map((node) => [node.id, node]),
+  // --- Escombros de derrumbes (se crean al primer derrumbe) ------------
+  const rubbleMaterial = own(
+    new THREE.MeshStandardMaterial({ color: 0x8a7f74, roughness: 1 }),
   );
-  const debrisPlacements: { x: number; y: number; z: number; yaw: number }[] =
-    [];
-  for (const edge of city.roadGraph?.edges ?? []) {
-    if (!blocked.has(edge.id)) continue;
-    const from = nodes.get(edge.from);
-    const to = nodes.get(edge.to);
-    if (!from || !to) continue;
+  const dustMaterial = own(
+    new THREE.MeshStandardMaterial({ color: 0xa79a86, roughness: 1 }),
+  );
+  const rubbleChunks = own(new THREE.BoxGeometry(1, 1, 1));
+  const rubbleByBuilding = new Map<string, THREE.Group>();
+  const rubbleGrowth = new Map<string, number>();
+  function rubbleFor(buildingId: string): THREE.Group {
+    const existing = rubbleByBuilding.get(buildingId);
+    if (existing) return existing;
+    const building = buildingById.get(buildingId)!;
+    const pile = new THREE.Group();
+    pile.name = `hazard-rubble:${buildingId}`;
+    const w = building.maxCorner.x - building.minCorner.x;
+    const d = building.maxCorner.y - building.minCorner.y;
+    const base = buildingBaseHeight(city, building);
+    const cx = (building.minCorner.x + building.maxCorner.x) / 2;
+    const cz = (building.minCorner.y + building.maxCorner.y) / 2;
+    // Montón irregular: bloques caídos dentro de la propia parcela.
+    for (let i = 0; i < 6; i++) {
+      const r = hazardHash(`rubble:${buildingId}:${i}`);
+      const chunk = new THREE.Mesh(
+        rubbleChunks,
+        i % 3 === 0 ? dustMaterial : rubbleMaterial,
+      );
+      chunk.position.set(
+        cx + (r - 0.5) * w * 0.8,
+        base + 0.4 + r * Math.min(2.2, building.heightInMeters * 0.12),
+        cz + (hazardHash(`rubble-z:${buildingId}:${i}`) - 0.5) * d * 0.8,
+      );
+      chunk.scale.set(
+        1.6 + r * w * 0.32,
+        0.7 + r * 1.5,
+        1.4 + hazardHash(`rubble-s:${buildingId}:${i}`) * d * 0.3,
+      );
+      chunk.rotation.y = r * Math.PI;
+      chunk.castShadow = chunk.receiveShadow = true;
+      pile.add(chunk);
+    }
+    pile.visible = false;
+    rubbleByBuilding.set(buildingId, pile);
+    group.add(pile);
+    return pile;
+  }
+
+  // --- Restos sobre calles cortadas por derrumbes ----------------------
+  const debrisByEdge = new Map<string, THREE.Group>();
+  function debrisFor(edgeId: string): THREE.Group {
+    const existing = debrisByEdge.get(edgeId);
+    if (existing) return existing;
+    const edge = edgeById.get(edgeId)!;
+    const from = nodes.get(edge.from)!;
+    const to = nodes.get(edge.to)!;
+    const pile = new THREE.Group();
+    pile.name = `hazard-debris:${edgeId}`;
     for (const t of [0.25, 0.5, 0.75]) {
       const x = from.x + (to.x - from.x) * t;
       const z = from.y + (to.y - from.y) * t;
-      debrisPlacements.push({
-        x,
-        y: sampleTerrainHeight(city, x, z) + 0.35,
-        z,
-        yaw: hazardHash(`${edge.id}:${t}`) * Math.PI,
-      });
+      const chunk = new THREE.Mesh(rubbleChunks, rubbleMaterial);
+      chunk.position.set(x, sampleTerrainHeight(city, x, z) + 0.35, z);
+      chunk.scale.set(2.2, 0.7, 1.6);
+      chunk.rotation.y = hazardHash(`${edgeId}:${t}`) * Math.PI;
+      chunk.castShadow = true;
+      pile.add(chunk);
     }
-  }
-  let debris: THREE.InstancedMesh | null = null;
-  if (debrisPlacements.length) {
-    debris = new THREE.InstancedMesh(
-      new THREE.BoxGeometry(2.2, 0.7, 1.6),
-      new THREE.MeshStandardMaterial({ color: 0x8a7f74, roughness: 1 }),
-      debrisPlacements.length,
-    );
-    debris.name = 'hazard-debris';
-    debris.castShadow = true;
-    const transform = new THREE.Object3D();
-    debrisPlacements.forEach((item, index) => {
-      transform.position.set(item.x, item.y, item.z);
-      transform.rotation.set(0, item.yaw, 0);
-      transform.scale.setScalar(0.7 + hazardHash(`debris:${index}`) * 0.7);
-      transform.updateMatrix();
-      debris!.setMatrixAt(index, transform.matrix);
-    });
-    group.add(debris);
+    pile.visible = false;
+    debrisByEdge.set(edgeId, pile);
+    group.add(pile);
+    return pile;
   }
 
+  // --- Grietas del terremoto -------------------------------------------
   if (hazard === 'earthquake') {
     const points: number[] = [];
     const center = { x: width / 2, z: height / 2 };
@@ -109,8 +159,7 @@ export function createHazardEffects(
       const angle = (branch / 7) * Math.PI * 2 + 0.35;
       let x = center.x;
       let z = center.z;
-      const steps = 7;
-      for (let step = 1; step <= steps; step++) {
+      for (let step = 1; step <= 7; step++) {
         const jitter = (hazardHash(`crack:${branch}:${step}`) - 0.5) * 0.35;
         const nextX = center.x + Math.cos(angle + jitter) * step * 16;
         const nextZ = center.z + Math.sin(angle + jitter) * step * 16;
@@ -126,20 +175,20 @@ export function createHazardEffects(
         z = nextZ;
       }
     }
-    const geometry = new THREE.BufferGeometry();
+    const geometry = own(new THREE.BufferGeometry());
     geometry.setAttribute(
       'position',
       new THREE.Float32BufferAttribute(points, 3),
     );
     const cracks = new THREE.LineSegments(
       geometry,
-      new THREE.LineBasicMaterial({ color: 0x2e2118 }),
+      own(new THREE.LineBasicMaterial({ color: 0x2e2118 })),
     );
     cracks.name = 'earthquake-cracks';
     group.add(cracks);
   }
 
-  // Estelas de viento: líneas cortas que cruzan la ciudad hacia el este.
+  // --- Estelas de viento -------------------------------------------------
   let windStreaks: THREE.LineSegments | null = null;
   let windPositions: Float32Array | null = null;
   let windSeeds: Float32Array | null = null;
@@ -149,40 +198,112 @@ export function createHazardEffects(
     for (let i = 0; i < windSeeds.length; i++)
       windSeeds[i] = hazardHash(`wind:${i}`);
     windPositions = new Float32Array(count * 6);
-    const geometry = new THREE.BufferGeometry();
-    const attribute = new THREE.BufferAttribute(windPositions, 3).setUsage(
-      THREE.DynamicDrawUsage,
+    const geometry = own(new THREE.BufferGeometry());
+    geometry.setAttribute(
+      'position',
+      new THREE.BufferAttribute(windPositions, 3).setUsage(
+        THREE.DynamicDrawUsage,
+      ),
     );
-    geometry.setAttribute('position', attribute);
     windStreaks = new THREE.LineSegments(
       geometry,
-      new THREE.LineBasicMaterial({
-        color: 0xf4fbff,
-        transparent: true,
-        opacity: 0.5,
-        depthWrite: false,
-      }),
+      own(
+        new THREE.LineBasicMaterial({
+          color: 0xf4fbff,
+          transparent: true,
+          opacity: 0.5,
+          depthWrite: false,
+        }),
+      ),
     );
     windStreaks.name = 'wind-streaks';
     windStreaks.frustumCulled = false;
     group.add(windStreaks);
   }
 
-  // Frente de ola del tsunami: pared translúcida que cruza desde el oeste.
-  let wave: THREE.Mesh | null = null;
+  // --- Ola del tsunami: superficie curvada con espuma --------------------
+  // La cresta se curva hacia adelante (como una ola rompiendo) y ondula a
+  // lo largo de la costa; la espuma marca cresta y pie. Su posición X la
+  // dicta el frente de agua del solver vía setWaveFront().
+  let wave: THREE.Group | null = null;
+  let waveFoam: THREE.Points | null = null;
+  let waveTargetX = -20;
+  let waveMaxDepth = 0;
   if (hazard === 'tsunami') {
-    wave = new THREE.Mesh(
-      new THREE.BoxGeometry(5, 7, height * 1.05),
-      new THREE.MeshStandardMaterial({
-        color: 0x2e9bc6,
-        transparent: true,
-        opacity: 0.45,
-        roughness: 0.25,
-        depthWrite: false,
-      }),
-    );
+    wave = new THREE.Group();
     wave.name = 'tsunami-wave';
-    wave.position.set(-12, ground + 3.2, height / 2);
+    const segmentsZ = 48;
+    const segmentsY = 5;
+    const waveHeight = 6.5;
+    const positions: number[] = [];
+    const indices: number[] = [];
+    const crestAt = (z: number, yRatio: number) =>
+      Math.sin(yRatio * Math.PI * 0.62) * 2.6 * yRatio +
+      Math.sin(z * 0.045) * 0.8 * yRatio;
+    for (let iz = 0; iz <= segmentsZ; iz++) {
+      const z = -height * 0.55 + (iz / segmentsZ) * height * 1.1;
+      for (let iy = 0; iy <= segmentsY; iy++) {
+        const yRatio = iy / segmentsY;
+        positions.push(crestAt(z, yRatio), yRatio * waveHeight, z);
+      }
+    }
+    for (let iz = 0; iz < segmentsZ; iz++)
+      for (let iy = 0; iy < segmentsY; iy++) {
+        const a = iz * (segmentsY + 1) + iy;
+        const b = a + segmentsY + 1;
+        indices.push(a, b, a + 1, b, b + 1, a + 1);
+      }
+    const geometry = own(new THREE.BufferGeometry());
+    geometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(positions, 3),
+    );
+    geometry.setIndex(indices);
+    geometry.computeVertexNormals();
+    const surface = new THREE.Mesh(
+      geometry,
+      own(
+        new THREE.MeshStandardMaterial({
+          color: 0x2aa4cf,
+          transparent: true,
+          opacity: 0.68,
+          roughness: 0.15,
+          metalness: 0.05,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      ),
+    );
+    surface.name = 'tsunami-wave-surface';
+    wave.add(surface);
+    // Espuma: puntos en la cresta y en el pie de la ola.
+    const foamPositions: number[] = [];
+    for (let iz = 0; iz <= segmentsZ; iz += 2) {
+      const z = -height * 0.55 + (iz / segmentsZ) * height * 1.1;
+      foamPositions.push(crestAt(z, 1) + 0.3, waveHeight + 0.25, z);
+      foamPositions.push(crestAt(z, 0) - 0.6, 0.3, z);
+    }
+    const foamGeometry = own(new THREE.BufferGeometry());
+    foamGeometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(foamPositions, 3),
+    );
+    waveFoam = new THREE.Points(
+      foamGeometry,
+      own(
+        new THREE.PointsMaterial({
+          color: 0xffffff,
+          size: 1.7,
+          transparent: true,
+          opacity: 0.85,
+          depthWrite: false,
+        }),
+      ),
+    );
+    waveFoam.name = 'tsunami-foam';
+    wave.add(waveFoam);
+    wave.position.set(-20, ground + 0.2, height / 2);
+    wave.visible = false;
     group.add(wave);
   }
 
@@ -203,46 +324,83 @@ export function createHazardEffects(
   let disposed = false;
   return {
     group,
+    /** Aplica el estado físico actual de la simulación. */
+    update(
+      impacts: readonly BuildingImpact[],
+      collapsedBlockedRoadIds: readonly string[],
+    ) {
+      const byId = new Map(impacts.map((item) => [item.buildingId, item]));
+      for (const [id, mesh] of damagedMeshes) {
+        const impact = byId.get(id);
+        mesh.visible = impact?.condition === 'damaged';
+      }
+      for (const impact of impacts) {
+        if (impact.condition !== 'collapsed') continue;
+        const pile = rubbleFor(impact.buildingId);
+        if (!pile.visible) {
+          pile.visible = true;
+          rubbleGrowth.set(impact.buildingId, 0);
+          pile.scale.setScalar(0.15);
+        }
+      }
+      for (const [id, pile] of rubbleByBuilding) {
+        if (byId.get(id)?.condition !== 'collapsed') pile.visible = false;
+      }
+      const blocked = new Set(collapsedBlockedRoadIds);
+      for (const edgeId of blocked) debrisFor(edgeId).visible = true;
+      for (const [edgeId, pile] of debrisByEdge)
+        if (!blocked.has(edgeId)) pile.visible = false;
+    },
+    /** Frente de agua real del solver: posición y energía de la ola. */
+    setWaveFront(frontXInMeters: number, maxDepthInMeters: number) {
+      waveTargetX = frontXInMeters;
+      waveMaxDepth = maxDepthInMeters;
+    },
     animate(delta: number, running: boolean) {
       if (!Number.isFinite(delta) || delta <= 0 || disposed) return;
       if (running) elapsed += delta;
       if (windStreaks && running) writeWind();
+      // Los escombros crecen hasta su tamaño en ~0,9 s reales.
+      for (const [id, growth] of rubbleGrowth) {
+        if (growth >= 1) continue;
+        const next = Math.min(1, growth + delta / 0.9);
+        rubbleGrowth.set(id, next);
+        rubbleByBuilding.get(id)?.scale.setScalar(0.15 + 0.85 * next);
+      }
       if (wave) {
-        const progress = Math.min(1, (elapsed * 14) / Math.max(1, width));
-        wave.position.x = -12 + progress * (width + 30);
-        const material = wave.material as THREE.MeshStandardMaterial;
-        material.opacity = 0.45 * (1 - progress * 0.75);
-        wave.visible = running || elapsed > 0;
+        const hasWater = waveMaxDepth > 0.05 && waveTargetX > -10;
+        wave.visible = hasWater;
+        if (hasWater) {
+          // La ola persigue al frente del solver y respira sobre él.
+          wave.position.x +=
+            (waveTargetX - wave.position.x) * Math.min(1, delta * 3);
+          wave.position.y = ground + 0.2 + Math.sin(elapsed * 2.1) * 0.18;
+          const energy = Math.max(0.45, Math.min(2.2, waveMaxDepth * 1.4));
+          wave.scale.set(1, energy, 1);
+          if (waveFoam) {
+            const material = waveFoam.material as THREE.PointsMaterial;
+            material.size = 1.4 + Math.abs(Math.sin(elapsed * 3)) * 0.7;
+          }
+        }
       }
     },
     reset() {
       elapsed = 0;
       writeWind();
+      rubbleGrowth.clear();
+      for (const pile of rubbleByBuilding.values()) pile.visible = false;
+      for (const pile of debrisByEdge.values()) pile.visible = false;
       if (wave) {
-        wave.position.x = -12;
-        (wave.material as THREE.MeshStandardMaterial).opacity = 0.45;
+        wave.position.set(-20, ground + 0.2, height / 2);
+        wave.visible = false;
+        waveTargetX = -20;
+        waveMaxDepth = 0;
       }
     },
     dispose() {
       if (disposed) return;
       disposed = true;
-      const geometries = new Set<THREE.BufferGeometry>();
-      const materials = new Set<THREE.Material>();
-      group.traverse((object) => {
-        if (
-          object instanceof THREE.Mesh ||
-          object instanceof THREE.LineSegments
-        ) {
-          geometries.add(object.geometry);
-          for (const material of Array.isArray(object.material)
-            ? object.material
-            : [object.material])
-            materials.add(material);
-        }
-      });
-      for (const geometry of geometries) geometry.dispose();
-      for (const material of materials) material.dispose();
-      debris?.dispose();
+      for (const item of disposables) item.dispose();
       group.clear();
     },
   };

@@ -23,7 +23,12 @@ export interface EvacuationScenario {
 }
 
 export type EvacuationStatus =
-  'waiting' | 'evacuating' | 'evacuated' | 'stranded';
+  | 'waiting'
+  | 'evacuating'
+  | 'evacuated'
+  | 'stranded'
+  /** Atrapado en su edificio derrumbado: no puede salir ni ser evacuado. */
+  | 'trapped';
 
 export interface EvacuationSnapshot {
   readonly elapsedTimeInSeconds: number;
@@ -42,6 +47,7 @@ export interface EvacuationSnapshot {
   }[];
   readonly evacuatedCount: number;
   readonly strandedCount: number;
+  readonly trappedCount: number;
   readonly waitingCount: number;
   readonly completionTimeInSeconds: number | null;
 }

@@ -13,7 +13,7 @@ type Agent = {
   input: EvacuationCitizenInput;
   position: { x: number; y: number };
   nodeId: string;
-  phase: 'home' | 'connector' | 'node' | 'edge' | 'done';
+  phase: 'home' | 'connector' | 'node' | 'edge' | 'done' | 'trapped';
   status: EvacuationStatus;
   route: Arc[];
   shelter: Shelter | null;
@@ -121,6 +121,26 @@ export class EvacuationEngine {
       .sort((a, b) => compare(a.input.id, b.input.id));
   }
 
+  /**
+   * Atrapa a los ciudadanos que aún están en casa cuando su edificio se
+   * derrumba. Quien ya salió (conector/calle/refugio) no resulta atrapado.
+   * Devuelve cuántos quedaron atrapados en esta llamada.
+   */
+  trapCitizensInBuildings(buildingIds: readonly string[]): number {
+    const buildings = new Set(buildingIds);
+    let trapped = 0;
+    for (const agent of this.agents) {
+      if (agent.phase !== 'home' || !buildings.has(agent.input.homeBuildingId))
+        continue;
+      this.release(agent);
+      agent.phase = 'trapped';
+      agent.status = 'trapped';
+      agent.edge = null;
+      trapped++;
+    }
+    return trapped;
+  }
+
   private release(agent: Agent) {
     if (agent.shelter) agent.shelter.reserved--;
     agent.shelter = null;
@@ -221,7 +241,11 @@ export class EvacuationEngine {
           this.release(agent);
       }
       for (const agent of this.agents) {
-        if (agent.phase === 'done' || agent.input.reactionDelayInSeconds > time)
+        if (
+          agent.phase === 'done' ||
+          agent.phase === 'trapped' ||
+          agent.input.reactionDelayInSeconds > time
+        )
           continue;
         if (agent.phase === 'edge') {
           agent.status = blocked.has(agent.edge!.id)
@@ -342,6 +366,8 @@ export class EvacuationEngine {
       })),
       evacuatedCount,
       strandedCount: this.agents.filter((agent) => agent.status === 'stranded')
+        .length,
+      trappedCount: this.agents.filter((agent) => agent.status === 'trapped')
         .length,
       waitingCount: this.agents.filter((agent) => agent.status === 'waiting')
         .length,

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import * as THREE from 'three';
-import { assessStructuralDamage } from '@simulicity/hazards';
+import { assessStructuralDamage, buildingImpactAt } from '@simulicity/hazards';
 import { createDemoCompatibleScenario } from '../../../../packages/hazards/src/defaults';
 import type { CityResponse } from './city-types';
 import { createCityAtmosphere } from './city-atmosphere';
@@ -44,22 +44,60 @@ function scenarioOf(city: CityResponse) {
   };
 }
 
-it('marks earthquake damage, debris and cracks without changing the city', () => {
+it('marks earthquake damage, then rubble and debris when buildings collapse', () => {
   const city = demoCity();
   const before = JSON.stringify(city);
   const assessment = assessStructuralDamage(scenarioOf(city), 'earthquake');
   const layer = createHazardEffects(city, 'earthquake', assessment);
   expect(layer.group.getObjectByName('earthquake-cracks')).toBeTruthy();
-  for (const id of assessment.damagedBuildingIds)
-    expect(layer.group.getObjectByName(`hazard-damaged:${id}`)).toBeTruthy();
-  if (assessment.blockedRoadEdgeIds.length)
-    expect(layer.group.getObjectByName('hazard-debris')).toBeTruthy();
+  // Al inicio nada derrumbado: sin escombros visibles.
+  layer.update(
+    assessment.buildings.map((item) => buildingImpactAt(item, 'earthquake', 0)),
+    [],
+  );
+  for (const item of assessment.buildings)
+    expect(
+      layer.group.getObjectByName(`hazard-rubble:${item.buildingId}`),
+    ).toBeUndefined();
+  // Al final del evento aparecen daño, derrumbes y calles cortadas.
+  layer.update(
+    assessment.buildings.map((item) =>
+      buildingImpactAt(item, 'earthquake', 3600),
+    ),
+    assessment.blockedRoadEdgeIds,
+  );
+  for (const item of assessment.buildings) {
+    if (item.collapsed)
+      expect(
+        layer.group.getObjectByName(`hazard-rubble:${item.buildingId}`)
+          ?.visible,
+      ).toBe(true);
+    else if (item.damaged)
+      expect(
+        layer.group.getObjectByName(`hazard-damaged:${item.buildingId}`)
+          ?.visible,
+      ).toBe(true);
+  }
+  for (const edgeId of assessment.blockedRoadEdgeIds)
+    expect(
+      layer.group.getObjectByName(`hazard-debris:${edgeId}`)?.visible,
+    ).toBe(true);
+  // Los escombros crecen con la animación.
+  const collapsed = assessment.buildings.find((item) => item.collapsed);
+  if (collapsed) {
+    const pile = layer.group.getObjectByName(
+      `hazard-rubble:${collapsed.buildingId}`,
+    )!;
+    const initial = pile.scale.x;
+    layer.animate(0.45, true);
+    expect(pile.scale.x).toBeGreaterThan(initial);
+  }
   expect(JSON.stringify(city)).toBe(before);
   layer.dispose();
   expect(layer.group.children).toHaveLength(0);
 });
 
-it('animates wind streaks only while running and resets the tsunami wave', () => {
+it('animates wind streaks only while running and the tsunami wave follows the solver front', () => {
   const city = demoCity();
   const scenario = scenarioOf(city);
   const wind = createHazardEffects(
@@ -87,11 +125,21 @@ it('animates wind streaks only while running and resets the tsunami wave', () =>
     assessStructuralDamage(scenario, 'tsunami'),
   );
   const wave = tsunami.group.getObjectByName('tsunami-wave')!;
-  const startX = wave.position.x;
+  const surface = tsunami.group.getObjectByName('tsunami-wave-surface')!;
+  // La ola ya no es una caja: es una superficie curvada con espuma.
+  expect(surface).toBeInstanceOf(THREE.Mesh);
+  expect((surface as THREE.Mesh).geometry).not.toBeInstanceOf(
+    THREE.BoxGeometry,
+  );
+  expect(tsunami.group.getObjectByName('tsunami-foam')).toBeTruthy();
+  expect(wave.visible).toBe(false);
+  tsunami.setWaveFront(120, 1.5);
   tsunami.animate(0.5, true);
-  expect(wave.position.x).toBeGreaterThan(startX);
+  expect(wave.visible).toBe(true);
+  expect(wave.position.x).toBeGreaterThan(-20);
+  expect(wave.position.x).toBeLessThanOrEqual(120);
   tsunami.reset();
-  expect(wave.position.x).toBe(startX);
+  expect(wave.visible).toBe(false);
   tsunami.dispose();
 });
 

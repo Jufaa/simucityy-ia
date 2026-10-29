@@ -204,10 +204,37 @@ export function createHazardPulses(
 
 export interface BuildingDamage {
   readonly buildingId: string;
-  /** 0 = intacto, 1 = daño máximo demostrativo. */
+  /** 0 = intacto, 1 = daño máximo demostrativo (potencial final del evento). */
   readonly severity: number;
   readonly damaged: boolean;
+  /** Derrumbe total: la severidad supera el umbral de colapso del evento. */
+  readonly collapsed: boolean;
+  /**
+   * Segundo simulado del derrumbe. Terremoto: durante/inmediatamente después
+   * de la sacudida. Viento: cuando la rampa de rachas alcanza el umbral.
+   */
+  readonly collapseTimeInSeconds: number | null;
 }
+
+export type BuildingCondition = 'intact' | 'damaged' | 'collapsed';
+
+/** Estado físico de un edificio en un instante de la simulación. */
+export interface BuildingImpact {
+  readonly buildingId: string;
+  readonly condition: BuildingCondition;
+  /** Severidad efectiva a ese instante (el viento crece con las rachas). */
+  readonly severity: number;
+  readonly collapseTimeInSeconds: number | null;
+  readonly cause: HazardKind;
+}
+
+export const COLLAPSE_THRESHOLDS: Readonly<Record<HazardKind, number>> = {
+  rain: 1.01,
+  'river-overflow': 1.01,
+  tsunami: 1.01,
+  earthquake: 0.75,
+  'strong-wind': 0.88,
+};
 
 export interface StructuralAssessment {
   readonly kind: HazardKind;
@@ -253,6 +280,8 @@ export function assessStructuralDamage(
       buildingId: building.id,
       severity: 0,
       damaged: false,
+      collapsed: false,
+      collapseTimeInSeconds: null,
     })),
     damagedBuildingIds: [],
     blockedRoadEdgeIds: [],
@@ -293,15 +322,51 @@ export function assessStructuralDamage(
         severity = (0.22 + 0.85 * heightRatio) * (0.55 + 0.65 * random);
       }
       severity = Math.max(0, Math.min(1, severity * factor));
+      const collapsed = severity >= COLLAPSE_THRESHOLDS[kind];
+      // El terremoto derrumba durante la sacudida y sus réplicas inmediatas
+      // (4-114 s, escalonado por edificio). El viento derrumba cuando la
+      // rampa de rachas (600 s hasta el pico) empuja la severidad efectiva
+      // por encima del umbral: t = umbral / severidadFinal * 600.
+      const collapseTimeInSeconds = !collapsed
+        ? null
+        : kind === 'earthquake'
+          ? 4 + hazardHash(`${seed}:collapse:${building.id}`) * 110
+          : (COLLAPSE_THRESHOLDS[kind] / severity) * 600;
       return {
         buildingId: building.id,
         severity,
         damaged: severity >= DAMAGE_THRESHOLD,
+        collapsed,
+        collapseTimeInSeconds,
       };
     },
   );
   const damaged = buildings.filter((item) => item.damaged);
-  const damagedById = new Map(damaged.map((item) => [item.buildingId, item]));
+  // Los escombros que cortan una calle salen de los edificios derrumbados.
+  const blockedRoadEdgeIds = roadEdgeIdsBlockedByBuildings(
+    scenario,
+    new Set(
+      buildings.filter((item) => item.collapsed).map((item) => item.buildingId),
+    ),
+  );
+  return {
+    kind,
+    buildings,
+    damagedBuildingIds: damaged.map((item) => item.buildingId),
+    blockedRoadEdgeIds,
+    maxSeverity: buildings.reduce(
+      (max, item) => Math.max(max, item.severity),
+      0,
+    ),
+  };
+}
+
+/** Tramos cortados por escombros de un conjunto de edificios derrumbados. */
+export function roadEdgeIdsBlockedByBuildings(
+  scenario: CityScenarioInput,
+  collapsedBuildingIds: ReadonlySet<string>,
+): string[] {
+  if (collapsedBuildingIds.size === 0) return [];
   const nodesById = new Map(
     scenario.roadGraph.nodes.map((node) => [node.id, node]),
   );
@@ -310,9 +375,8 @@ export function assessStructuralDamage(
     const from = nodesById.get(edge.from);
     const to = nodesById.get(edge.to);
     if (!from || !to) continue;
-    // Escombros: un tramo se corta si pasa junto a un edificio dañado.
     const blocked = scenario.buildings.some((building) => {
-      if (!damagedById.has(building.id)) return false;
+      if (!collapsedBuildingIds.has(building.id)) return false;
       const center = {
         x: (building.minCorner.x + building.maxCorner.x) / 2,
         y: (building.minCorner.y + building.maxCorner.y) / 2,
@@ -328,14 +392,79 @@ export function assessStructuralDamage(
     });
     if (blocked) blockedRoadEdgeIds.push(edge.id);
   }
+  return blockedRoadEdgeIds;
+}
+
+/** Severidad efectiva a un instante: el viento crece con la rampa de rachas. */
+export function effectiveSeverityAt(
+  damage: BuildingDamage,
+  kind: HazardKind,
+  elapsedInSeconds: number,
+): number {
+  if (kind === 'strong-wind')
+    return damage.severity * Math.min(1, Math.max(0, elapsedInSeconds) / 600);
+  return damage.severity;
+}
+
+/** Estado físico de un edificio en un instante dado del evento. */
+export function buildingImpactAt(
+  damage: BuildingDamage,
+  kind: HazardKind,
+  elapsedInSeconds: number,
+): BuildingImpact {
+  const severity = effectiveSeverityAt(damage, kind, elapsedInSeconds);
+  const condition: BuildingCondition =
+    damage.collapsed &&
+    damage.collapseTimeInSeconds !== null &&
+    elapsedInSeconds >= damage.collapseTimeInSeconds
+      ? 'collapsed'
+      : severity >= DAMAGE_THRESHOLD
+        ? 'damaged'
+        : 'intact';
   return {
-    kind,
-    buildings,
-    damagedBuildingIds: damaged.map((item) => item.buildingId),
-    blockedRoadEdgeIds,
-    maxSeverity: buildings.reduce(
-      (max, item) => Math.max(max, item.severity),
-      0,
-    ),
+    buildingId: damage.buildingId,
+    condition,
+    severity,
+    collapseTimeInSeconds: damage.collapseTimeInSeconds,
+    cause: kind,
   };
+}
+
+/** Duración de la rampa de rachas del viento, en segundos simulados. */
+export const WIND_RAMP_IN_SECONDS = 600;
+
+/**
+ * Carga equivalente sobre un edificio a partir de la profundidad junto a
+ * él. El solver no calcula velocidad, así que el empuje de la corriente se
+ * aproxima con un factor por evento: el tsunami arrastra (×2,2), el
+ * desborde empuja (×1,3) y la lluvia es agua casi quieta (×1).
+ */
+export function floodImpactLoadInMeters(
+  depthInMeters: number,
+  kind: HazardKind,
+): number {
+  const factor = kind === 'tsunami' ? 2.2 : kind === 'river-overflow' ? 1.3 : 1;
+  return Math.max(0, depthInMeters) * factor;
+}
+
+/**
+ * Profundidad de agua que derrumba un edificio en eventos de agua.
+ * El tsunami golpea con fuerza (0,7 m), el desborde empuja (1,0 m) y la
+ * lluvia sola rara vez derrumba (1,4 m). Varía por edificio (hash estable)
+ * y los edificios bajos son más vulnerables al arrastre.
+ */
+export function floodCollapseDepthInMeters(
+  building: Pick<Building, 'id' | 'heightInMeters'>,
+  kind: HazardKind,
+  seed = 123,
+): number {
+  const base = kind === 'tsunami' ? 0.7 : kind === 'river-overflow' ? 1.0 : 1.4;
+  const variation = hazardHash(`${seed}:flood-collapse:${building.id}`) * 0.3;
+  const lowBuildingPenalty =
+    building.heightInMeters <= 4
+      ? 0.15
+      : building.heightInMeters <= 9
+        ? 0.07
+        : 0;
+  return Math.max(0.3, base + variation - lowBuildingPenalty);
 }

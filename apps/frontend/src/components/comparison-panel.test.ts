@@ -10,10 +10,12 @@ it('labels cumulative and matched metrics and never displays unfinished evacuati
     drainedVolume: 0,
     exposedBuildings: 0,
     damagedBuildings: 0,
+    collapsedBuildings: 0,
     peakBlocked: 0,
     peakDepth: 0,
     evacuated: 0,
     stranded: 0,
+    trapped: 0,
     completionSeconds: null,
   };
   const html = renderToStaticMarkup(
@@ -40,10 +42,12 @@ it('does not imply evacuation is active when population behavior is disabled', (
     drainedVolume: 0,
     exposedBuildings: 0,
     damagedBuildings: 0,
+    collapsedBuildings: 0,
     peakBlocked: 0,
     peakDepth: 0,
     evacuated: 0,
     stranded: 0,
+    trapped: 0,
     completionSeconds: null,
   };
   const html = renderToStaticMarkup(

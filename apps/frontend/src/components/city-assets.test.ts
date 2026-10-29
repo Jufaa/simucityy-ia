@@ -88,6 +88,27 @@ it('fits rotated assets inside hazard bounds at the terrain base, batches parts 
   layer.dispose();
 });
 
+it('collapses a single instanced building toward its base and restores it', () => {
+  const asset = template();
+  const layer = buildCityAssetLayer(city(), templatesFor(asset.group));
+  const batch = layer.group.children.find(
+    (child) => child instanceof THREE.InstancedMesh,
+  ) as THREE.InstancedMesh;
+  const original = new THREE.Matrix4();
+  batch.getMatrixAt(0, original);
+  const heightOf = (matrix: THREE.Matrix4) =>
+    asset.geometry.boundingBox!.clone().applyMatrix4(matrix).max.y;
+  layer.setBuildingCollapse('house-0', 1);
+  const fallen = new THREE.Matrix4();
+  batch.getMatrixAt(0, fallen);
+  expect(heightOf(fallen)).toBeLessThan(heightOf(original) - 3);
+  layer.setBuildingCollapse('house-0', 0);
+  const restored = new THREE.Matrix4();
+  batch.getMatrixAt(0, restored);
+  expect(restored.equals(original)).toBe(true);
+  layer.dispose();
+});
+
 it('owns and disposes geometry, material, textures and instance buffers exactly once', () => {
   const asset = template();
   const spies = [asset.geometry, asset.material, asset.texture].map((item) =>
@@ -241,7 +262,11 @@ it('does not mount or announce stale assets after the scene is replaced', async 
     fallback = new THREE.Group();
   const group = new THREE.Group(),
     dispose = vi.fn();
-  let finish!: (layer: { group: THREE.Group; dispose(): void }) => void;
+  let finish!: (layer: {
+    group: THREE.Group;
+    dispose(): void;
+    setBuildingCollapse(): void;
+  }) => void;
   const states: string[] = [];
   const release = mountCityAssets(
     city(),
@@ -254,7 +279,7 @@ it('does not mount or announce stale assets after the scene is replaced', async 
       }),
   );
   release();
-  finish({ group, dispose });
+  finish({ group, dispose, setBuildingCollapse: () => {} });
   await Promise.resolve();
   await Promise.resolve();
   expect(dispose).toHaveBeenCalledTimes(1);
@@ -274,7 +299,7 @@ it('shows assets only when ready and releases them once before scene traversal',
     scene,
     fallback,
     (s) => states.push(s),
-    async () => ({ group, dispose }),
+    async () => ({ group, dispose, setBuildingCollapse: () => {} }),
   );
   await Promise.resolve();
   expect(group.parent).toBe(scene);

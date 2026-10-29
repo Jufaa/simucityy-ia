@@ -11,7 +11,7 @@ import { createUrbanDetailLayer } from './urban-detail-layer';
 import { createUrbanTextures } from './urban-materials';
 import { generateCityLife } from './city-life-model';
 import { createCityLifeLayer } from './city-life-layer';
-import { mountCityAssets } from './city-assets';
+import { mountCityAssets, type CityAssetLayer } from './city-assets';
 import { CityToolbar } from './city-toolbar';
 import { createOrganicCity } from './organic-city-model';
 import { createOrganicCityLayer } from './organic-city-layer';
@@ -263,8 +263,18 @@ export default function Scene() {
     const fallbackBuildings = createBuildingLayer(city);
     scene.add(fallbackBuildings);
     setAssetStatus(city.organic ? 'loading' : 'procedural');
+    let assetLayer: CityAssetLayer | null = null;
     const releaseAssets = city.organic
-      ? mountCityAssets(city, scene, fallbackBuildings, setAssetStatus)
+      ? mountCityAssets(
+          city,
+          scene,
+          fallbackBuildings,
+          setAssetStatus,
+          undefined,
+          (layer) => {
+            assetLayer = layer;
+          },
+        )
       : () => {};
     const streetLifeLayer = createCityLifeLayer(city, cityLife);
     const civicLayer = createCivicLandmarkLayer(city, civicLandmarks);
@@ -408,6 +418,97 @@ export default function Scene() {
     };
     refreshHazardEffects();
     refreshHazardEffectsRef.current = refreshHazardEffects;
+    // Derrumbe animado de los edificios reales: el progreso (0-1) avanza
+    // en tiempo real hacia el objetivo que dicta el estado físico.
+    const buildingHeightById = new Map(
+      city.buildings.map((b) => [b.id, b.heightInMeters]),
+    );
+    const collapseTargets = new Map<string, number>();
+    const collapseProgress = new Map<string, number>();
+    const fallbackOriginals = new Map<
+      string,
+      { y: number; rotationZ: number; scaleY: number }
+    >();
+    const applyFallbackCollapse = (buildingId: string, progress: number) => {
+      for (const name of [buildingId, `foundation:${buildingId}`]) {
+        const object = fallbackBuildings.getObjectByName(name);
+        if (!object) continue;
+        const key = `${name}:collapse`;
+        if (!fallbackOriginals.has(key))
+          fallbackOriginals.set(key, {
+            y: object.position.y,
+            rotationZ: object.rotation.z,
+            scaleY: object.scale.y,
+          });
+        const original = fallbackOriginals.get(key)!;
+        const height = buildingHeightById.get(buildingId) ?? 6;
+        const direction =
+          [...buildingId].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 2 ===
+          0
+            ? 1
+            : -1;
+        object.position.y = original.y - progress * height * 0.4;
+        object.rotation.z = original.rotationZ + progress * 0.14 * direction;
+        object.scale.y = original.scaleY * (1 - 0.62 * progress);
+      }
+    };
+    const syncCollapseTargets = () => {
+      if (!simulation) return;
+      collapseTargets.clear();
+      for (const impact of simulation.buildingImpacts) {
+        if (impact.condition === 'collapsed')
+          collapseTargets.set(impact.buildingId, 1);
+        else if (impact.condition === 'damaged' && impact.severity >= 0.85)
+          collapseTargets.set(impact.buildingId, 0.18);
+      }
+      hazardEffects?.update(
+        simulation.buildingImpacts,
+        simulation.selectedCollapsedBlockedRoadEdgeIds,
+      );
+      if (hazardKind === 'tsunami' && hazardEffects) {
+        // El frente de la ola es el agua más avanzada del solver.
+        let front = -20;
+        simulation.cells.forEach((cell, index) => {
+          if (
+            (simulation.snapshot.waterDepthInMeters[index] ?? 0) >= 0.12 &&
+            cell.maxX > front
+          )
+            front = cell.maxX;
+        });
+        hazardEffects.setWaveFront(
+          front,
+          simulation.snapshot.maxWaterDepthInMeters,
+        );
+      }
+    };
+    let appliedAssetLayer: CityAssetLayer | null = null;
+    const animateCollapses = (deltaSeconds: number) => {
+      // Si los modelos locales terminan de cargar a mitad de un derrumbe,
+      // reaplicar el progreso ya alcanzado sobre la capa nueva.
+      if (assetLayer !== appliedAssetLayer) {
+        appliedAssetLayer = assetLayer;
+        if (assetLayer)
+          for (const [id, progress] of collapseProgress)
+            assetLayer.setBuildingCollapse(id, progress);
+      }
+      const ids = new Set([
+        ...collapseTargets.keys(),
+        ...collapseProgress.keys(),
+      ]);
+      for (const id of ids) {
+        const target = collapseTargets.get(id) ?? 0;
+        const current = collapseProgress.get(id) ?? 0;
+        if (Math.abs(target - current) < 0.002) continue;
+        const next =
+          current +
+          Math.sign(target - current) *
+            Math.min(Math.abs(target - current), deltaSeconds / 0.9);
+        collapseProgress.set(id, next);
+        applyFallbackCollapse(id, next);
+        assetLayer?.setBuildingCollapse(id, next);
+        if (next === 0 && target === 0) collapseProgress.delete(id);
+      }
+    };
     const stormFog = new THREE.Fog(
       hazardKind === 'earthquake'
         ? 0xd8c9a8
@@ -453,7 +554,9 @@ export default function Scene() {
       if (simulation && simulation.snapshot !== displayedSnapshot) {
         floodLayer?.update(simulation.snapshot);
         displayedSnapshot = simulation.snapshot;
+        syncCollapseTargets();
       }
+      animateCollapses(document.hidden ? 0 : delta);
       worldLayer.animate(document.hidden ? 0 : delta);
       organicLayer?.animate(document.hidden ? 0 : delta);
       atmosphere.animate(document.hidden ? 0 : delta);
@@ -917,10 +1020,18 @@ export default function Scene() {
                   cm
                 </p>
               )}
-              {structural && structural.damagedBuildingIds.length > 0 && (
+              {comparison && comparison[arm].damagedBuildings > 0 && (
                 <p>
-                  Edificios dañados: {structural.damagedBuildingIds.length} ·
-                  Severidad máxima: {(structural.maxSeverity * 100).toFixed(0)}%
+                  Edificios dañados: {comparison[arm].damagedBuildings} ·
+                  Derrumbados: {comparison[arm].collapsedBuildings}
+                  {structural &&
+                    ` · Severidad máxima: ${(structural.maxSeverity * 100).toFixed(0)}%`}
+                </p>
+              )}
+              {comparison && comparison[arm].trapped > 0 && (
+                <p>
+                  Personas atrapadas en derrumbes: {comparison[arm].trapped} ·
+                  Evacuadas: {comparison[arm].evacuated}
                 </p>
               )}
               <p>
@@ -928,7 +1039,8 @@ export default function Scene() {
                 {
                   new Set([
                     ...flood.blockedRoadEdgeIds,
-                    ...(structural?.blockedRoadEdgeIds ?? []),
+                    ...(simulationRef.current
+                      ?.selectedCollapsedBlockedRoadEdgeIds ?? []),
                   ]).size
                 }{' '}
                 · Edificios expuestos: {flood.exposedBuildingIds.length}
@@ -937,7 +1049,8 @@ export default function Scene() {
           )}
           <small>
             Azul: agua · Rojo: tramo bloqueado · Naranja/rojo con rejilla:
-            edificio expuesto o dañado · Gris: escombros.
+            edificio expuesto o dañado · Gris: escombros de derrumbes · Violeta:
+            persona atrapada.
           </small>
           <p style={{ fontSize: 12 }}>
             Personas: {city.citizens?.length ?? 0}. La simulación comienza al

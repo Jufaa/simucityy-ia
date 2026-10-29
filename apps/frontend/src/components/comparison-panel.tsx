@@ -27,6 +27,11 @@ export function ComparisonPanel({
           string | number,
         ][])
       : []),
+    ...(a.collapsedBuildings > 0 || b.collapsedBuildings > 0
+      ? ([
+          ['Edificios derrumbados', a.collapsedBuildings, b.collapsedBuildings],
+        ] as [string, string | number, string | number][])
+      : []),
     ['Edificios expuestos (acum.)', a.exposedBuildings, b.exposedBuildings],
     ['Tramos bloqueados (pico)', a.peakBlocked, b.peakBlocked],
     [
@@ -42,6 +47,7 @@ export function ComparisonPanel({
     ...(evacuationEnabled
       ? ([
           ['Evacuados', `${a.evacuated}/${total}`, `${b.evacuated}/${total}`],
+          ['Atrapados en derrumbes', a.trapped, b.trapped],
           ['Sin ruta / detenidos', a.stranded, b.stranded],
           [
             'Evacuación desde alarma',

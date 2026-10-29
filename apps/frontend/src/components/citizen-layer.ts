@@ -87,6 +87,7 @@ export function createCitizenLayer(city: CityResponse, capacity: number) {
     evacuating: 0x229bff,
     evacuated: 0x33b56b,
     stranded: 0xe6483d,
+    trapped: 0x8e44ad,
   };
   type Motion = {
     position: Point;

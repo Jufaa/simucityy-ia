@@ -86,6 +86,18 @@ The top bar selector **Catástrofe** switches the event without regenerating the
 
 Water events keep using the flood solver, its blocked-road thresholds and the graph evacuation. Earthquakes and strong wind produce no flood water: their damaged buildings and debris-blocked edges feed the same alarm and evacuation, and the **Con mejora** arm models seismic reinforcement / secured roofs (lower damage severity) instead of extra drainage. A gradient sky dome with drifting clouds and per-event fog/light moods keep the scene readable in every state. All coefficients are demonstrative presets, not calibrated forecasts.
 
+### Building collapse and citizen reaction
+
+Every building now has a physical state over time — **intact → damaged → collapsed** — shown in the panel and in 3D (the real building sinks, tilts and compresses while a rubble pile grows on its plot):
+
+- **Earthquake:** damage is instant, collapses (severity ≥ 0.75) fall staggered 4–114 s after the shock. The alarm sounds at second 0; residents of damaged buildings react fastest.
+- **Strong wind:** severity grows with a 600 s gust ramp, so nothing is damaged at first; collapses (≥ 0.88) happen minutes in. People shelter indoors during the gusts and leave afterwards (damaged homes first).
+- **Tsunami / river / rain:** a building collapses when the flood load next to it — depth × current factor (tsunami 2.2, river 1.3, rain 1.0, since the solver has no velocity) — exceeds its per-building resistance (0.7–1.4 m equivalent). The tsunami wave surface is a curved, foamy crest whose position follows the solver's actual water front, not a timer.
+- **Debris:** only collapsed buildings block streets (in addition to water-blocked edges), from the moment they fall; evacuation reroutes around them.
+- **Trapped citizens:** anyone still at home when their building collapses becomes **trapped** (purple): they cannot move or be evacuated and are reported separately from stranded. Reaction delays are adjusted per event (earthquake fastest, wind sheltering, tsunami pre-warning ×0.5, river ×0.8); IDs, homes and mobility never change.
+
+In the default organic city after ~10 simulated minutes this yields, deterministically: earthquake 22 collapsed / 16 trapped, strong wind 27 collapsed / 29 trapped, tsunami 4 collapsed shoreline buildings — the improved arm collapses and traps fewer in every case.
+
 ## Model and limits
 
 In flat mode, the frontend feeds the same generation response to `@simulicity/hazards` and the 3D renderer. Terrain, road-edge IDs and building IDs remain unchanged. Flood state is separate and is not saved or exported.

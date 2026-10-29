@@ -40,6 +40,7 @@ it('places citizens on shared terrain, changes status color and disposes its res
     shelters: [],
     evacuatedCount: 0,
     strandedCount: 0,
+    trappedCount: 0,
     waitingCount: 0,
     completionTimeInSeconds: null,
   };
@@ -62,6 +63,15 @@ it('places citizens on shared terrain, changes status color and disposes its res
   const after = new THREE.Color();
   body.getColorAt(0, after);
   expect(after.equals(color)).toBe(false);
+  // Atrapado: color propio (violeta), distinto de detenido y evacuando.
+  layer.update({
+    ...snapshot,
+    citizens: [{ ...snapshot.citizens[0]!, status: 'trapped' }],
+  });
+  const trapped = new THREE.Color();
+  body.getColorAt(0, trapped);
+  expect(trapped.equals(after)).toBe(false);
+  expect(trapped.getHex()).toBe(0x8e44ad);
   let disposed = 0;
   body.geometry.addEventListener('dispose', () => disposed++);
   layer.dispose();

@@ -2,6 +2,44 @@ import { describe, expect, it } from 'vitest';
 import { EvacuationEngine } from '../src/evacuation-engine';
 import type { EvacuationScenario } from '../src/evacuation-types';
 
+describe('ciudadanos atrapados por derrumbes', () => {
+  it('atrapa solo a quien sigue en casa y el resto evacúa con normalidad', () => {
+    const base = scenario();
+    const engine = new EvacuationEngine({
+      ...base,
+      citizens: [
+        { ...base.citizens[0]!, id: 'lento', reactionDelayInSeconds: 600 },
+        {
+          ...base.citizens[0]!,
+          id: 'rapido',
+          homeBuildingId: 'otra-casa',
+          reactionDelayInSeconds: 0,
+        },
+      ],
+      shelters: [{ id: 'shelter', nodeId: 'd', capacity: 2, active: true }],
+    });
+    // "rapido" sale de inmediato; su casa no es la que se derrumba.
+    engine.advance(30, []);
+    expect(engine.trapCitizensInBuildings(['home'])).toBe(1);
+    expect(engine.trapCitizensInBuildings(['home'])).toBe(0);
+    const mid = engine.getSnapshot();
+    expect(mid.trappedCount).toBe(1);
+    expect(mid.citizens.find((c) => c.id === 'lento')?.status).toBe('trapped');
+    engine.advance(120, []);
+    const end = engine.getSnapshot();
+    expect(end.citizens.find((c) => c.id === 'lento')?.status).toBe('trapped');
+    expect(end.citizens.find((c) => c.id === 'lento')?.position).toEqual({
+      x: -6,
+      y: 0,
+    });
+    expect(end.citizens.find((c) => c.id === 'rapido')?.status).toBe(
+      'evacuated',
+    );
+    expect(end.evacuatedCount + end.trappedCount).toBe(2);
+    expect(end.completionTimeInSeconds).toBeNull();
+  });
+});
+
 function scenario(): EvacuationScenario {
   return {
     roadGraph: {
