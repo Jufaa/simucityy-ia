@@ -34,3 +34,17 @@ it.each([
     material.dispose();
   },
 );
+
+it('supports explicit widths for the organic road and shoulder geometry', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const mesh = createRoadMesh(
+    { id: 'diagonal', start: { x: 0, y: 0 }, end: { x: 30, y: 40 } },
+    2.2,
+    material,
+    8,
+  );
+  expect(mesh.geometry.parameters.depth).toBe(8);
+  expect(mesh.geometry.parameters.width).toBe(50);
+  mesh.geometry.dispose();
+  material.dispose();
+});

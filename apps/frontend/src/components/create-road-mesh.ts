@@ -6,12 +6,13 @@ export function createRoadMesh(
   road: Road,
   groundElevationInMeters: number,
   material: THREE.MeshStandardMaterial,
+  widthInMeters = 6,
 ) {
   const dx = road.end.x - road.start.x;
   const dz = road.end.y - road.start.y;
   const length = Math.hypot(dx, dz);
   const thickness = 0.05;
-  const geometry = new THREE.BoxGeometry(length, thickness, 6);
+  const geometry = new THREE.BoxGeometry(length, thickness, widthInMeters);
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;
 

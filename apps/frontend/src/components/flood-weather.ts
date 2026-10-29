@@ -9,7 +9,7 @@ export function createFloodWeather(
   const group = new THREE.Group();
   group.name = 'storm-weather';
   group.visible = false;
-  const count = 4200;
+  const count = 650;
   const height = Math.max(180, tallestBuilding + 100);
   const width = extent.widthInMeters + 100;
   const depth = extent.heightInMeters + 100;
@@ -29,7 +29,7 @@ export function createFloodWeather(
   const material = new THREE.LineBasicMaterial({
     color: 0xc4e8ff,
     transparent: true,
-    opacity: 0.7,
+    opacity: 0.2,
     depthWrite: false,
   });
   const rain = new THREE.LineSegments(geometry, material);

@@ -53,12 +53,25 @@ export interface CityScenarioInput {
   readonly buildings: readonly Building[];
 }
 
-export type SyntheticReliefMode = 'none' | 'central-basin' | 'west-to-east-slope';
+export type SyntheticReliefMode =
+  'none' | 'central-basin' | 'west-to-east-slope';
 
 export interface FloodPulse {
   readonly row: number;
   readonly column: number;
   readonly depthInMeters: number;
+}
+
+/** Optional local environment; omitted preserves legacy behavior. */
+export interface FloodEnvironment {
+  /** Absolute deck elevation by existing road edge ID; affects road exposure only. */
+  readonly roadDeckElevationsInMeters?: Readonly<Record<string, number>>;
+  /** Static absolute water surface by cell index; not added to solver volume. */
+  readonly permanentWaterSurfaceElevationsInMeters?: Readonly<
+    Record<number, number>
+  >;
+  readonly blockedCellIndices?: readonly number[];
+  readonly additionalDrainRatesMmPerHour?: readonly number[];
 }
 
 export interface FloodConfig {

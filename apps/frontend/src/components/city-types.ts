@@ -1,4 +1,8 @@
-import type { RoadEdge, TerrainGrid } from '@simulicity/hazards';
+import type {
+  EvacuationCitizenInput,
+  RoadEdge,
+  TerrainGrid,
+} from '@simulicity/hazards';
 
 // HTTP view of POST /api/v1/cities/generate. Extended district fields are optional.
 // No importamos de @simulicity/api: el frontend solo depende del contrato HTTP.
@@ -25,6 +29,12 @@ export interface Building {
   minCorner: Point;
   maxCorner: Point;
   heightInMeters: number;
+  /** Optional local rendering pose; min/max corners conservatively contain the rotated shape. */
+  presentation?: {
+    widthInMeters: number;
+    depthInMeters: number;
+    yawInRadians: number;
+  };
   use?: 'residential' | 'commercial';
   architecture?: {
     style: 'house' | 'apartment' | 'shop';
@@ -49,7 +59,32 @@ export interface CityConfig {
   seed?: number;
 }
 
+/** Local generation metadata only; never serialized through the saved-city contract. */
+export interface OrganicGeography {
+  seed: number;
+  lake: { center: Point; radiusX: number; radiusZ: number; level: number };
+  river: { points: Point[]; widthInMeters: number; level: number };
+  bridges: {
+    id: string;
+    roadIds: string[];
+    edgeIds: string[];
+    start: Point;
+    end: Point;
+    deckElevationInMeters: number;
+    widthInMeters: number;
+  }[];
+  neighborhoods: {
+    id: string;
+    name: string;
+    kind: 'center' | 'residential' | 'commercial';
+    center: Point;
+    radiusX: number;
+    radiusZ: number;
+  }[];
+}
+
 export interface CityResponse {
+  organic?: OrganicGeography;
   /** Local view-only relief; not part of the HTTP or saved scenario contract. */
   terrainProfile?: 'basin';
   config: CityConfig;
@@ -84,5 +119,11 @@ export interface CityResponse {
   };
   terrainGrid?: TerrainGrid;
   roadGraph?: { nodes: (Point & { id: string })[]; edges?: RoadEdge[] };
-  shelters?: { id: string; nodeId: string; active: boolean }[];
+  citizens?: EvacuationCitizenInput[];
+  shelters?: {
+    id: string;
+    nodeId: string;
+    active: boolean;
+    capacity?: number;
+  }[];
 }

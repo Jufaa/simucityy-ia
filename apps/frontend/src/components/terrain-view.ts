@@ -6,6 +6,7 @@ import type { Building, CityResponse } from './city-types';
 type TerrainView = {
   terrain: { elevationInMeters: number };
   terrainGrid?: TerrainGrid;
+  organic?: CityResponse['organic'];
 };
 
 /** Local view model only: never serialize this derived grid as the original scenario. */
@@ -66,13 +67,39 @@ export function buildingBaseHeight(
   city: TerrainView,
   building: Pick<Building, 'minCorner' | 'maxCorner'>,
 ) {
-  return Math.max(
+  const corners = Math.max(
     ...[building.minCorner.x, building.maxCorner.x].flatMap((x) =>
       [building.minCorner.y, building.maxCorner.y].map((z) =>
         sampleTerrainHeight(city, x, z),
       ),
     ),
   );
+  if (!city.organic || !city.terrainGrid) return corners;
+  // A level organic pad must also clear interior terrain peaks, not only four corners.
+  const grid = city.terrainGrid;
+  let top = corners;
+  for (let r = 0; r < grid.yCoordinates.length - 1; r++) {
+    if (
+      grid.yCoordinates[r + 1]! < building.minCorner.y ||
+      grid.yCoordinates[r]! > building.maxCorner.y
+    )
+      continue;
+    for (let c = 0; c < grid.xCoordinates.length - 1; c++) {
+      if (
+        grid.xCoordinates[c + 1]! < building.minCorner.x ||
+        grid.xCoordinates[c]! > building.maxCorner.x
+      )
+        continue;
+      top = Math.max(
+        top,
+        grid.elevationsInMeters[r]![c]!,
+        grid.elevationsInMeters[r]![c + 1]!,
+        grid.elevationsInMeters[r + 1]![c]!,
+        grid.elevationsInMeters[r + 1]![c + 1]!,
+      );
+    }
+  }
+  return top;
 }
 
 export function createTerrainGeometry(city: CityResponse) {
@@ -103,6 +130,29 @@ export function createTerrainGeometry(city: CityResponse) {
   geometry.setIndex(indices);
   geometry.computeVertexNormals();
   return geometry;
+}
+
+/** Shared Scene seam: local basins need sampled ground even when land relief is disabled. */
+export function createCityGround(city: CityResponse, material: THREE.Material) {
+  const sampled =
+    city.terrainGrid && (city.organic || city.terrainProfile === 'basin');
+  const geometry = sampled
+    ? createTerrainGeometry(city)
+    : new THREE.PlaneGeometry(
+        city.config.widthInMeters,
+        city.config.heightInMeters,
+      );
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'city-ground';
+  if (!sampled) {
+    mesh.rotation.x = -Math.PI / 2;
+    mesh.position.set(
+      city.config.widthInMeters / 2,
+      city.terrain.elevationInMeters,
+      city.config.heightInMeters / 2,
+    );
+  }
+  return mesh;
 }
 
 /** Drape newly-created surface layers; retain the flat path and shared materials unchanged. */

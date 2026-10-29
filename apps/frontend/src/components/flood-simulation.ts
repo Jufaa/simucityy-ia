@@ -1,4 +1,8 @@
-import { FloodEngine, type CityScenarioInput } from '@simulicity/hazards';
+import {
+  FloodEngine,
+  type FloodEnvironment,
+  type CityScenarioInput,
+} from '@simulicity/hazards';
 
 /** A synchronous controller: one real second represents five simulated minutes. */
 export class FloodSimulation {
@@ -8,13 +12,21 @@ export class FloodSimulation {
   started = false;
   snapshot;
 
-  constructor(private readonly city: CityScenarioInput) {
+  constructor(
+    private readonly city: CityScenarioInput,
+    private readonly environment: FloodEnvironment = {},
+  ) {
     this.engine = this.createEngine();
     this.snapshot = this.engine.getSnapshot();
   }
 
   private createEngine() {
-    return new FloodEngine(this.city, { syntheticRelief: 'none' });
+    return new FloodEngine(
+      this.city,
+      { syntheticRelief: 'none' },
+      [],
+      this.environment,
+    );
   }
 
   get cells() {

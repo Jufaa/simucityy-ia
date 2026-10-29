@@ -115,3 +115,16 @@ it('animates water highlights without altering depth and resets their phase', ()
   expect(water.material.normalMap!.offset.length()).toBe(0);
   layer.dispose();
 });
+
+it('only enables vertex alpha on the reconstructed surface, not uncolored flat boxes', () => {
+  const city = createDemoCompatibleScenario(100, 100, 25);
+  const simulation = new FloodSimulation(city);
+  for (const obstacles of [false, true]) {
+    const layer = createFloodLayer(city, simulation.cells, obstacles);
+    const water = layer.group.getObjectByName(
+      'flood-water',
+    ) as THREE.InstancedMesh<THREE.BoxGeometry, THREE.MeshStandardMaterial>;
+    expect(water.material.vertexColors).toBe(obstacles);
+    layer.dispose();
+  }
+});

@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { createWaterNormals } from './water-normal-map';
 import type {
   CellBounds,
   CityScenarioInput,
@@ -7,37 +8,11 @@ import type {
 import { createReliefWater } from './relief-water';
 import { buildingBaseHeight, drapeSurfaceLayer } from './terrain-view';
 
-/** Tileable normals create moving highlights without displacing the water surface. */
-function createWaterNormals() {
-  const size = 64;
-  const data = new Uint8Array(size * size * 4);
-  const normal = new THREE.Vector3();
-  for (let y = 0; y < size; y++) {
-    for (let x = 0; x < size; x++) {
-      const u = (x / size) * Math.PI * 2;
-      const v = (y / size) * Math.PI * 2;
-      normal
-        .set(0.35 * Math.cos(u * 3 + v * 2), 0.3 * Math.sin(v * 4 - u), 1)
-        .normalize();
-      const offset = (y * size + x) * 4;
-      data[offset] = (normal.x * 0.5 + 0.5) * 255;
-      data[offset + 1] = (normal.y * 0.5 + 0.5) * 255;
-      data[offset + 2] = (normal.z * 0.5 + 0.5) * 255;
-      data[offset + 3] = 255;
-    }
-  }
-  const texture = new THREE.DataTexture(data, size, size);
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.magFilter = texture.minFilter = THREE.LinearFilter;
-  texture.repeat.set(3, 3);
-  texture.needsUpdate = true;
-  return texture;
-}
-
 /** Overlay only: never changes original city meshes or their shared materials. */
 export function createFloodLayer(
   city: CityScenarioInput,
   cells: readonly CellBounds[],
+  obstacles = false,
 ) {
   const group = new THREE.Group();
   group.name = 'flood-overlay';
@@ -47,11 +22,11 @@ export function createFloodLayer(
     new THREE.MeshStandardMaterial({
       color: 0x087dad,
       transparent: true,
-      opacity: 0.88,
+      opacity: 0.72,
       roughness: 0.18,
       metalness: 0.12,
       normalMap: normals,
-      normalScale: new THREE.Vector2(0.7, 0.7),
+      normalScale: new THREE.Vector2(0.12, 0.12),
       depthWrite: false,
     }),
     cells.length,
@@ -60,13 +35,21 @@ export function createFloodLayer(
   water.count = 0;
   water.frustumCulled = false;
   group.add(water);
-  const relief = cells.some(
-    (cell) =>
-      cell.groundElevationInMeters !== cells[0]?.groundElevationInMeters,
-  )
-    ? createReliefWater(city, cells, water.material)
-    : null;
+  const relief =
+    obstacles ||
+    cells.some(
+      (cell) =>
+        cell.groundElevationInMeters !== cells[0]?.groundElevationInMeters,
+    )
+      ? createReliefWater(
+          city,
+          cells,
+          water.material,
+          obstacles ? city.buildings : [],
+        )
+      : null;
   if (relief) group.add(relief.mesh);
+  if (relief) water.material.vertexColors = true;
   const nodes = new Map(city.roadGraph.nodes.map((node) => [node.id, node]));
   const roadMaterial = new THREE.MeshBasicMaterial({ color: 0xe53935 });
   const buildingMaterial = new THREE.MeshBasicMaterial({

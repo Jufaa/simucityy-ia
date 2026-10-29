@@ -3,7 +3,11 @@ import type { CityResponse } from './city-types';
 import { createUrbanTextures } from './urban-materials';
 import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
 
-type BoxPlacement = { position: THREE.Vector3; scale: THREE.Vector3 };
+type BoxPlacement = {
+  position: THREE.Vector3;
+  scale: THREE.Vector3;
+  yaw?: number;
+};
 
 export function createBuildingLayer(city: CityResponse): THREE.Group {
   const group = new THREE.Group();
@@ -56,8 +60,13 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     rails: BoxPlacement[] = [];
   for (const building of city.buildings) {
     const a = building.architecture;
-    const w = building.maxCorner.x - building.minCorner.x,
-      d = building.maxCorner.y - building.minCorner.y;
+    const w =
+        building.presentation?.widthInMeters ??
+        building.maxCorner.x - building.minCorner.x,
+      d =
+        building.presentation?.depthInMeters ??
+        building.maxCorner.y - building.minCorner.y;
+    const yaw = building.presentation?.yawInRadians ?? 0;
     const baseHeight = buildingBaseHeight(city, building);
     const root = new THREE.Group();
     root.name = building.id;
@@ -66,6 +75,11 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       baseHeight,
       (building.minCorner.y + building.maxCorner.y) / 2,
     );
+    root.rotation.y = yaw;
+    const worldAt = (x: number, y: number, z: number) =>
+      new THREE.Vector3(x, y, z)
+        .applyAxisAngle(new THREE.Vector3(0, 1, 0), yaw)
+        .add(root.position);
     const rise = a?.roofRiseInMeters ?? 0,
       h = building.heightInMeters - rise;
     const balcony = a?.balconyDepthInMeters ?? 0;
@@ -175,32 +189,29 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       if (a.style === 'apartment' && balcony > 0)
         for (let floor = 1; floor < a.floors; floor++) {
           const y = baseHeight + (floor * h) / a.floors;
-          const x = root.position.x,
-            z = building.maxCorner.y - balcony / 2;
           slabs.push({
-            position: new THREE.Vector3(x, y, z),
+            position: worldAt(0, y - baseHeight, d / 2 - balcony / 2),
             scale: new THREE.Vector3(w * 0.8, 0.12, balcony),
+            yaw,
           });
           rails.push({
-            position: new THREE.Vector3(
-              x,
-              y + 0.8,
-              building.maxCorner.y - 0.05,
-            ),
+            position: worldAt(0, y - baseHeight + 0.8, d / 2 - 0.05),
             scale: new THREE.Vector3(w * 0.8, 0.07, 0.07),
+            yaw,
           });
           for (const direction of [-1, 1])
             rails.push({
-              position: new THREE.Vector3(
-                x + direction * w * 0.39,
-                y + 0.4,
-                building.maxCorner.y - 0.05,
+              position: worldAt(
+                direction * w * 0.39,
+                y - baseHeight + 0.4,
+                d / 2 - 0.05,
               ),
               scale: new THREE.Vector3(0.07, 0.8, 0.07),
+              yaw,
             });
         }
     }
-    if (city.terrainProfile === 'basin') {
+    if (city.terrainProfile === 'basin' || city.organic) {
       const minimum = Math.min(
         ...[building.minCorner.x, building.maxCorner.x].flatMap((x) =>
           [building.minCorner.y, building.maxCorner.y].map((z) =>
@@ -218,6 +229,7 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         baseHeight - depth / 2,
         root.position.z,
       );
+      foundation.rotation.y = yaw;
       foundation.name = `foundation:${building.id}`;
       foundation.castShadow = foundation.receiveShadow = true;
       group.add(foundation);
@@ -240,6 +252,7 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     placements.forEach((item, index) => {
       transform.position.copy(item.position);
       transform.scale.copy(item.scale);
+      transform.rotation.set(0, item.yaw ?? 0, 0);
       transform.updateMatrix();
       mesh.setMatrixAt(index, transform.matrix);
     });

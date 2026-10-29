@@ -6,6 +6,7 @@ import type {
   CityScenarioInput,
   ExposedBuildingStatus,
   FloodConfig,
+  FloodEnvironment,
   FloodPulse,
   FloodSnapshot,
   RoadEdge,
@@ -40,6 +41,11 @@ export class FloodEngine {
   private readonly mappedEdges: readonly MappedEdge[];
   private readonly mappedBuildings: readonly MappedBuilding[];
 
+  private readonly roadDeckElevations: ReadonlyMap<string, number>;
+  private readonly permanentWaterSurfaces: ReadonlyMap<number, number>;
+  private readonly blockedCells: ReadonlySet<number>;
+  private readonly additionalDrainRates: readonly number[];
+
   private config: FloodConfig;
   private effectiveGroundElevation: Float64Array;
   private currentWaterDepth: Float64Array;
@@ -55,6 +61,7 @@ export class FloodEngine {
     scenario: CityScenarioInput,
     config: Partial<FloodConfig> = {},
     initialPulses: readonly FloodPulse[] = [],
+    environment: FloodEnvironment = {},
   ) {
     const { xCoordinates, yCoordinates, elevationsInMeters } =
       scenario.terrainGrid;
@@ -68,6 +75,71 @@ export class FloodEngine {
     this.columns = xCoordinates.length - 1;
     this.rows = yCoordinates.length - 1;
     this.cellCount = this.rows * this.columns;
+    const knownEdgeIds = new Set(
+      scenario.roadGraph.edges.map((edge) => edge.id),
+    );
+    const decks = new Map<string, number>();
+    for (const [edgeId, elevation] of Object.entries(
+      environment.roadDeckElevationsInMeters ?? {},
+    )) {
+      if (!knownEdgeIds.has(edgeId) || !Number.isFinite(elevation)) {
+        throw new RangeError(
+          'Road deck elevations must be finite and reference existing edge IDs.',
+        );
+      }
+      decks.set(edgeId, elevation);
+    }
+    const surfaces = new Map<number, number>();
+    for (const [key, elevation] of Object.entries(
+      environment.permanentWaterSurfaceElevationsInMeters ?? {},
+    )) {
+      const index = Number(key);
+      if (
+        key.trim() === '' ||
+        !Number.isInteger(index) ||
+        index < 0 ||
+        index >= this.cellCount ||
+        !Number.isFinite(elevation)
+      ) {
+        throw new RangeError(
+          'Permanent water surfaces must be finite and reference integer cell indices inside the grid.',
+        );
+      }
+      surfaces.set(index, elevation);
+    }
+    this.roadDeckElevations = decks;
+    this.permanentWaterSurfaces = surfaces;
+    const blocked = environment.blockedCellIndices ?? [];
+    for (const index of blocked) {
+      if (!Number.isInteger(index) || index < 0 || index >= this.cellCount)
+        throw new RangeError(
+          'Blocked cell index must be an integer inside the grid.',
+        );
+    }
+    const rates = environment.additionalDrainRatesMmPerHour;
+    if (rates !== undefined) {
+      if (rates.length !== this.cellCount)
+        throw new RangeError(
+          'Additional drainage must contain one rate per cell.',
+        );
+      for (const rate of rates) {
+        if (!Number.isFinite(rate) || rate < 0)
+          throw new RangeError(
+            'Additional drainage rates must be finite and nonnegative.',
+          );
+      }
+    }
+    this.blockedCells = new Set(blocked);
+    this.additionalDrainRates = rates === undefined ? [] : [...rates];
+    for (const pulse of initialPulses) {
+      if (
+        pulse.depthInMeters > 0 &&
+        this.blockedCells.has(pulse.row * this.columns + pulse.column)
+      )
+        throw new RangeError(
+          'Initial water cannot be placed in a blocked cell.',
+        );
+    }
     this.xCoords = [...xCoordinates];
     this.yCoords = [...yCoordinates];
 
@@ -278,6 +350,30 @@ export class FloodEngine {
         indices.push(this.findCellIndexAtPoint(centerX, centerY));
       }
 
+      if (this.blockedCells.size > 0) {
+        const open = new Set(
+          indices.filter((index) => !this.blockedCells.has(index)),
+        );
+        for (const index of indices) {
+          if (!this.blockedCells.has(index)) continue;
+          const row = Math.floor(index / this.columns);
+          const column = index % this.columns;
+          for (const [dr, dc] of NEIGHBOR_OFFSETS) {
+            const r = row + dr,
+              c = column + dc;
+            const neighbor = r * this.columns + c;
+            if (
+              r >= 0 &&
+              r < this.rows &&
+              c >= 0 &&
+              c < this.columns &&
+              !this.blockedCells.has(neighbor)
+            )
+              open.add(neighbor);
+          }
+        }
+        return { building, cellIndices: [...open] };
+      }
       return { building, cellIndices: indices };
     });
   }
@@ -302,12 +398,14 @@ export class FloodEngine {
     // 1. Lluvia y drenaje sobre el estado previo
     for (let i = 0; i < this.cellCount; i++) {
       const cell = this.cells[i]!;
+      if (this.blockedCells.has(i)) continue;
       const prevDepth = this.currentWaterDepth[i] ?? 0;
       const withRain = prevDepth + rainDepthMeters;
       this.totalRainVolumeInCubicMeters +=
         rainDepthMeters * cell.areaInSqMeters;
 
-      const actualDrain = Math.min(withRain, drainDepthMeters);
+      const localDrain = ((this.additionalDrainRates[i] ?? 0) / 1000) * dtHours;
+      const actualDrain = Math.min(withRain, drainDepthMeters + localDrain);
       this.totalDrainedVolumeInCubicMeters += actualDrain * cell.areaInSqMeters;
 
       const postSourceDepth = withRain - actualDrain;
@@ -338,6 +436,7 @@ export class FloodEngine {
               continue;
             }
             const nIdx = nr * this.columns + nc;
+            if (this.blockedCells.has(nIdx)) continue;
             const nSurface =
               (this.effectiveGroundElevation[nIdx] ?? 0) +
               (this.currentWaterDepth[nIdx] ?? 0);
@@ -414,7 +513,21 @@ export class FloodEngine {
         let maxD = 0;
         let sumD = 0;
         for (const cIdx of cellIndices) {
-          const d = this.currentWaterDepth[cIdx] ?? 0;
+          const dynamicDepth = this.currentWaterDepth[cIdx] ?? 0;
+          const deck = this.roadDeckElevations.get(edge.id);
+          const permanentSurface = this.permanentWaterSurfaces.get(cIdx);
+          // Keep ordinary roads without metadata on the exact legacy path.
+          const ground = this.effectiveGroundElevation[cIdx] ?? 0;
+          const d =
+            deck === undefined && permanentSurface === undefined
+              ? dynamicDepth
+              : Math.max(
+                  0,
+                  Math.max(
+                    ground + dynamicDepth,
+                    permanentSurface ?? -Infinity,
+                  ) - (deck ?? ground),
+                );
           if (d > maxD) maxD = d;
           sumD += d;
         }

@@ -1,0 +1,82 @@
+{
+  "creator": "Kenney",
+  "license": "CC0-1.0",
+  "licenseUrl": "https://creativecommons.org/publicdomain/zero/1.0/",
+  "retrievedOn": "2026-10-29",
+  "packs": [
+    {
+      "name": "City Kit Suburban",
+      "source": "https://kenney.nl/assets/city-kit-suburban",
+      "archiveSha256": "5869c35cf30b1c87bdb2d197b6d325eebadd2ef08ea27f04797e8e08d77a9a39",
+      "files": [
+        {
+          "path": "suburban/License.txt",
+          "archivePath": "License.txt",
+          "bytes": 706,
+          "sha256": "d778fa769a89a7d9f167bc337fdf8fc2144e47d9abb0c35eb6ad897c0ee24d0a"
+        },
+        {
+          "path": "suburban/building-type-a.glb",
+          "archivePath": "Models/GLB format/building-type-a.glb",
+          "bytes": 98604,
+          "sha256": "49f32e20b9dcd24b1c8f6d6488807b8c8cb684cbb595bfb0bb36ad903e470faa"
+        },
+        {
+          "path": "suburban/building-type-b.glb",
+          "archivePath": "Models/GLB format/building-type-b.glb",
+          "bytes": 146720,
+          "sha256": "a964a10c51bb334be677657fd8fa483531974dd15b4243575990192818e2300e"
+        },
+        {
+          "path": "suburban/building-type-c.glb",
+          "archivePath": "Models/GLB format/building-type-c.glb",
+          "bytes": 99592,
+          "sha256": "86a69f30f1a09461283e158514945ae5cc9d56357b0ddc83a9a3f0eecd113591"
+        },
+        {
+          "path": "suburban/Textures/colormap.png",
+          "archivePath": "Models/GLB format/Textures/colormap.png",
+          "bytes": 11784,
+          "sha256": "9b5de86078c25ef02351a80d35ff3c978693a1044565b73eedd9ae9b5b80665d"
+        }
+      ]
+    },
+    {
+      "name": "City Kit Commercial",
+      "source": "https://kenney.nl/assets/city-kit-commercial",
+      "archiveSha256": "f8b09b081c2bb88bcc126e2dec1cb40fd0dad7e7e591b6c26aaefe96fb35276b",
+      "files": [
+        {
+          "path": "commercial/License.txt",
+          "archivePath": "License.txt",
+          "bytes": 708,
+          "sha256": "c38cee408d022e57e44e49f1cd655c2fe0dc881a07b881276b795215cdc0de69"
+        },
+        {
+          "path": "commercial/building-a.glb",
+          "archivePath": "Models/GLB format/building-a.glb",
+          "bytes": 108936,
+          "sha256": "5cf220f90ee3f21e7abe38055ca409a48aa8ef1d5ffab6e2deb99e5a5e1ed5e0"
+        },
+        {
+          "path": "commercial/building-b.glb",
+          "archivePath": "Models/GLB format/building-b.glb",
+          "bytes": 106408,
+          "sha256": "3b5d3ac0799c024781d92bb15971d42f4f8e380554dc5cf6a40c2f07d948947a"
+        },
+        {
+          "path": "commercial/building-skyscraper-a.glb",
+          "archivePath": "Models/GLB format/building-skyscraper-a.glb",
+          "bytes": 111336,
+          "sha256": "d8339bbb75944ff91d1ec9a70ec6dead71bd98b94a42d3dd0fc1f3b107ddbe85"
+        },
+        {
+          "path": "commercial/Textures/colormap.png",
+          "archivePath": "Models/GLB format/Textures/colormap.png",
+          "bytes": 11002,
+          "sha256": "191bec3889aaaca5018380038fecc129ebb5c2182879a099b7b538b3fa050b5d"
+        }
+      ]
+    }
+  ]
+}

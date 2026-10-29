@@ -1,0 +1,59 @@
+import { expect, it } from 'vitest';
+import { renderToStaticMarkup } from 'react-dom/server';
+import { CityToolbar } from './city-toolbar';
+
+it('keeps compact primary controls and truthful local-asset/automatic simulation status visible', () => {
+  const noop = () => {};
+  const html = renderToStaticMarkup(
+    CityToolbar({
+      buildings: 190,
+      people: 200,
+      seed: 123,
+      organic: true,
+      running: true,
+      ready: true,
+      panelOpen: false,
+      view: 'city',
+      elapsedSeconds: 120,
+      assetStatus: 'ready',
+      onPanelToggle: noop,
+      onRegenerate: noop,
+      onView: noop,
+      onToggle: noop,
+      onReset: noop,
+    }),
+  );
+  expect(html).toContain('Modelos locales CC0');
+  expect(html).toContain('190 edificios');
+  expect(html).toContain('Simulación automática');
+  expect(html).toContain('aria-expanded="false"');
+  expect(html).toContain('Otra ciudad');
+  expect(html).toContain('Pausar');
+});
+
+it('does not pretend failed assets loaded and keeps pause/reset available', () => {
+  const noop = () => {};
+  const html = renderToStaticMarkup(
+    CityToolbar({
+      buildings: 20,
+      people: 2,
+      seed: 1,
+      organic: false,
+      running: false,
+      ready: true,
+      panelOpen: true,
+      view: 'world',
+      elapsedSeconds: 0,
+      assetStatus: 'fallback',
+      onPanelToggle: noop,
+      onRegenerate: noop,
+      onView: noop,
+      onToggle: noop,
+      onReset: noop,
+    }),
+  );
+  expect(html).toContain('Vista procedural de respaldo');
+  expect(html).toContain('Continuar');
+  expect(html).toContain('Reiniciar');
+  expect(html).toContain('aria-expanded="true"');
+});
