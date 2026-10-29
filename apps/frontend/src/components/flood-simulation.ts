@@ -1,7 +1,10 @@
 import {
+  createHazardPulses,
   FloodEngine,
+  hazardPreset,
   type FloodEnvironment,
   type CityScenarioInput,
+  type HazardKind,
 } from '@simulicity/hazards';
 
 /** A synchronous controller: one real second represents five simulated minutes. */
@@ -11,20 +14,33 @@ export class FloodSimulation {
   running = false;
   started = false;
   snapshot;
+  readonly hazard: HazardKind;
 
   constructor(
     private readonly city: CityScenarioInput,
     private readonly environment: FloodEnvironment = {},
+    hazard: HazardKind = 'rain',
   ) {
+    this.hazard = hazard;
     this.engine = this.createEngine();
     this.snapshot = this.engine.getSnapshot();
   }
 
   private createEngine() {
+    const preset = hazardPreset(this.hazard);
     return new FloodEngine(
       this.city,
-      { syntheticRelief: 'none' },
-      [],
+      {
+        syntheticRelief: 'none',
+        rainIntensityMmPerHour: preset.rainIntensityMmPerHour,
+        drainRateMmPerHour: preset.drainRateMmPerHour,
+        flowTransferRatio: preset.flowTransferRatio,
+      },
+      createHazardPulses(
+        this.city,
+        this.hazard,
+        this.environment.blockedCellIndices ?? [],
+      ),
       this.environment,
     );
   }

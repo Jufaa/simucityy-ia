@@ -38,7 +38,28 @@ import {
   createCityGround,
   drapeSurfaceLayer,
 } from './terrain-view';
-import type { CityScenarioInput, FloodSnapshot } from '@simulicity/hazards';
+import {
+  hazardPreset,
+  type CityScenarioInput,
+  type FloodSnapshot,
+  type HazardKind,
+  type StructuralAssessment,
+} from '@simulicity/hazards';
+import { createCityAtmosphere, type AtmosphereMood } from './city-atmosphere';
+import { createHazardEffects } from './hazard-effects';
+
+const HAZARD_MOODS: Record<HazardKind, AtmosphereMood> = {
+  rain: 'storm',
+  'river-overflow': 'storm',
+  tsunami: 'tsunami',
+  earthquake: 'dust',
+  'strong-wind': 'wind',
+};
+const WATER_HAZARDS: readonly HazardKind[] = [
+  'rain',
+  'river-overflow',
+  'tsunami',
+];
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4000';
 const civicLabels = {
@@ -67,6 +88,11 @@ export default function Scene() {
   const [speed, setSpeed] = useState<3 | 30 | 300>(30);
   const speedRef = useRef<3 | 30 | 300>(30);
   const [drainCount, setDrainCount] = useState(0);
+  const [hazardKind, setHazardKind] = useState<HazardKind>('rain');
+  const [structural, setStructural] = useState<StructuralAssessment | null>(
+    null,
+  );
+  const refreshHazardEffectsRef = useRef<(() => void) | null>(null);
   const [flood, setFlood] = useState<FloodSnapshot | null>(null);
   const [floodError, setFloodError] = useState<string | null>(null);
   const [sourceCity, setSourceCity] = useState<CityResponse | null>(null);
@@ -313,7 +339,12 @@ export default function Scene() {
         const people = createStaticPopulation(city);
         simulation = new DistrictSimulation(
           { ...city, citizens: people },
-          { evacuationEnabled: true, alarmMode: 'automatic', autoStart: true },
+          {
+            evacuationEnabled: true,
+            alarmMode: 'automatic',
+            autoStart: true,
+            hazard: hazardKind,
+          },
         );
         simulation.selectArm(armRef.current);
         simulation.setSpeed(30);
@@ -326,13 +357,14 @@ export default function Scene() {
         scene.add(citizenLayer.group, drainLayer.group);
         setComparison(simulation.comparison);
         setAlarmTime(simulation.alarmTime);
+        setStructural(simulation.structural);
         setDrainCount(simulation.drains.length);
         scene.add(floodLayer.group);
         simulationRef.current = simulation;
         setFlood(simulation.snapshot);
         setFloodError(null);
       } catch {
-        setFloodError('No se pudo preparar la inundación para esta ciudad.');
+        setFloodError('No se pudo preparar el evento para esta ciudad.');
       }
     } else {
       setFloodError(
@@ -348,8 +380,40 @@ export default function Scene() {
       ),
     );
     scene.add(weather.group);
+    const atmosphere = createCityAtmosphere(
+      {
+        x: city.config.widthInMeters / 2,
+        z: city.config.heightInMeters / 2,
+      },
+      viewExtent,
+      HAZARD_MOODS[hazardKind],
+    );
+    scene.add(atmosphere.group);
+    // Efectos propios de la catástrofe (daños, escombros, ola, viento).
+    let hazardEffects: ReturnType<typeof createHazardEffects> | null = null;
+    const refreshHazardEffects = () => {
+      if (hazardEffects) {
+        scene.remove(hazardEffects.group);
+        hazardEffects.dispose();
+        hazardEffects = null;
+      }
+      if (simulation) {
+        hazardEffects = createHazardEffects(
+          city,
+          hazardKind,
+          simulation.structural,
+        );
+        scene.add(hazardEffects.group);
+      }
+    };
+    refreshHazardEffects();
+    refreshHazardEffectsRef.current = refreshHazardEffects;
     const stormFog = new THREE.Fog(
-      0xb9cdd4,
+      hazardKind === 'earthquake'
+        ? 0xd8c9a8
+        : hazardKind === 'tsunami'
+          ? 0xaecdd4
+          : 0xb9cdd4,
       viewExtent * 0.55,
       viewExtent * 3.5,
     );
@@ -392,9 +456,17 @@ export default function Scene() {
       }
       worldLayer.animate(document.hidden ? 0 : delta);
       organicLayer?.animate(document.hidden ? 0 : delta);
+      atmosphere.animate(document.hidden ? 0 : delta);
       const active = simulation?.started ?? false;
       const animateStorm = !!simulation?.running && !document.hidden;
-      weather.animate(animateStorm ? delta : 0, active, animateStorm);
+      hazardEffects?.animate(
+        document.hidden ? 0 : delta,
+        animateStorm && active,
+      );
+      // La lluvia visible solo acompaña a lluvia y desborde; el tsunami,
+      // el terremoto y el viento tienen sus propios efectos.
+      const rainy = hazardKind === 'rain' || hazardKind === 'river-overflow';
+      weather.animate(animateStorm ? delta : 0, active && rainy, animateStorm);
       if (animateStorm) floodLayer?.animate(delta);
       if (active !== stormActive) {
         stormActive = active;
@@ -405,6 +477,23 @@ export default function Scene() {
         skyLight.intensity = active ? 1.9 : 2;
       }
       controls.update();
+      // Sacudida breve de cámara al inicio del terremoto (solo visual).
+      if (
+        hazardKind === 'earthquake' &&
+        active &&
+        animateStorm &&
+        simulation &&
+        simulation.snapshot.elapsedTimeInSeconds < 90
+      ) {
+        const t = performance.now() / 1000;
+        const decay = 1 - simulation.snapshot.elapsedTimeInSeconds / 90;
+        camera.position.x += Math.sin(t * 31) * 0.35 * decay;
+        camera.position.y += Math.sin(t * 43) * 0.22 * decay;
+        renderer.render(scene, camera);
+        camera.position.x -= Math.sin(t * 31) * 0.35 * decay;
+        camera.position.y -= Math.sin(t * 43) * 0.22 * decay;
+        return;
+      }
       renderer.render(scene, camera);
     }
     animate(performance.now());
@@ -419,6 +508,13 @@ export default function Scene() {
       worldLayer.dispose();
       scene.remove(weather.group);
       weather.dispose();
+      refreshHazardEffectsRef.current = null;
+      if (hazardEffects) {
+        scene.remove(hazardEffects.group);
+        hazardEffects.dispose();
+      }
+      scene.remove(atmosphere.group);
+      atmosphere.dispose();
       scene.remove(streetLifeLayer.group, civicLayer.group);
       streetLifeLayer.dispose();
       civicLayer.dispose();
@@ -467,7 +563,7 @@ export default function Scene() {
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [city, world, cityLife, civicLandmarks]);
+  }, [city, world, cityLife, civicLandmarks, hazardKind]);
 
   function applyWorldSeed(seed: number) {
     if (seed === worldSeed) return;
@@ -500,6 +596,18 @@ export default function Scene() {
     setFlood(simulation.snapshot);
     setComparison(simulation.comparison);
     setAlarmTime(simulation.alarmTime);
+    setStructural(simulation.structural);
+    refreshHazardEffectsRef.current?.();
+  }
+
+  function applyHazard(kind: HazardKind) {
+    if (kind === hazardKind) return;
+    setRunning(false);
+    setFlood(null);
+    setComparison(null);
+    setAlarmTime(null);
+    setStructural(null);
+    setHazardKind(kind);
   }
 
   if (error) {
@@ -525,6 +633,8 @@ export default function Scene() {
         view={worldView}
         elapsedSeconds={flood?.elapsedTimeInSeconds ?? 0}
         assetStatus={assetStatus}
+        hazard={hazardKind}
+        onHazard={applyHazard}
         onPanelToggle={() => setPanelOpen((open) => !open)}
         onRegenerate={() => {
           setRunning(false);
@@ -685,7 +795,11 @@ export default function Scene() {
             sintéticos; simulación demostrativa, no predicción real.
           </p>
           <hr style={{ margin: '12px 0', borderColor: '#ddd' }} />
-          <strong>Inundación por lluvia</strong>
+          <strong>Catástrofe: {hazardPreset(hazardKind).label}</strong>
+          <p style={{ margin: '8px 0', fontSize: 12, color: '#425466' }}>
+            {hazardPreset(hazardKind).description} Cambiar de catástrofe en la
+            barra superior reinicia el evento con la misma ciudad.
+          </p>
           <label style={{ display: 'block', margin: '8px 0', fontSize: 13 }}>
             Terreno{' '}
             <select
@@ -709,7 +823,15 @@ export default function Scene() {
             </select>
           </label>
           <p style={{ margin: '8px 0', fontSize: 12 }}>
-            Lluvia visible y agua animada · Lluvia: 120 mm/h · Drenaje: 15 mm/h.
+            {hazardKind === 'earthquake' &&
+              `Magnitud ${hazardPreset(hazardKind).magnitude} · daño estructural y escombros. `}
+            {hazardKind === 'strong-wind' &&
+              `Rachas de ${hazardPreset(hazardKind).windSpeedKmh} km/h · daño en edificios altos. `}
+            {hazardKind === 'tsunami' &&
+              `Ola de ${hazardPreset(hazardKind).waveHeightInMeters} m entrando desde el oeste. `}
+            {WATER_HAZARDS.includes(hazardKind) &&
+              hazardKind !== 'tsunami' &&
+              `Agua animada · Lluvia: ${hazardPreset(hazardKind).rainIntensityMmPerHour} mm/h · Drenaje: ${hazardPreset(hazardKind).drainRateMmPerHour} mm/h. `}
             Tiempo acelerado: 1 segundo = {speed / 60} minutos simulados.
           </p>
           <p style={{ fontSize: 12, color: '#425466' }}>
@@ -718,7 +840,7 @@ export default function Scene() {
               : city.terrainProfile === 'basin'
                 ? 'Relieve local sintético con pendiente y depresión central; grilla de 10 m. El agua se acumula primero en zonas bajas.'
                 : 'Terreno plano original con edificios como barreras y absorción diferenciada.'}{' '}
-            La lluvia comienza automáticamente. Cambiar el terreno reinicia la
+            El evento comienza automáticamente. Cambiar el terreno reinicia la
             simulación.
           </p>
           <div
@@ -743,6 +865,8 @@ export default function Scene() {
                     simulation.selectArm(selected);
                     setFlood(simulation.snapshot);
                     setComparison(simulation.comparison);
+                    setStructural(simulation.structural);
+                    refreshHazardEffectsRef.current?.();
                   }
                 }}
               >
@@ -763,14 +887,18 @@ export default function Scene() {
                 }}
               >
                 <option value={3}>3× · caminar</option>
-                <option value={300}>300× · tormenta</option>
+                <option value={300}>300× · evento</option>
                 <option value={30}>30× · detalle</option>
               </select>
             </label>
           </div>
           <p style={{ fontSize: 12 }}>
-            Mejora: {drainCount} sumideros de 0.15 m³/s y absorción adicional de
-            plazas de 60 mm/h en lugar de 15 mm/h.
+            {hazardKind === 'earthquake' &&
+              'Mejora: refuerzo sísmico; reduce la severidad del daño estructural.'}
+            {hazardKind === 'strong-wind' &&
+              'Mejora: techos asegurados; reduce la severidad del daño por viento.'}
+            {WATER_HAZARDS.includes(hazardKind) &&
+              `Mejora: ${drainCount} sumideros de 0.15 m³/s y absorción adicional de plazas de 60 mm/h en lugar de 15 mm/h.`}
           </p>
           {floodError && <p role="alert">{floodError}</p>}
           {flood && (
@@ -783,18 +911,33 @@ export default function Scene() {
                     : 'Lista para iniciar'}{' '}
                 · {Math.floor(flood.elapsedTimeInSeconds / 60)} min simulados
               </p>
+              {WATER_HAZARDS.includes(hazardKind) && (
+                <p>
+                  Agua máxima: {(flood.maxWaterDepthInMeters * 100).toFixed(1)}{' '}
+                  cm
+                </p>
+              )}
+              {structural && structural.damagedBuildingIds.length > 0 && (
+                <p>
+                  Edificios dañados: {structural.damagedBuildingIds.length} ·
+                  Severidad máxima: {(structural.maxSeverity * 100).toFixed(0)}%
+                </p>
+              )}
               <p>
-                Agua máxima: {(flood.maxWaterDepthInMeters * 100).toFixed(1)} cm
-              </p>
-              <p>
-                Tramos bloqueados: {flood.blockedRoadEdgeIds.length} · Edificios
-                expuestos: {flood.exposedBuildingIds.length}
+                Tramos bloqueados:{' '}
+                {
+                  new Set([
+                    ...flood.blockedRoadEdgeIds,
+                    ...(structural?.blockedRoadEdgeIds ?? []),
+                  ]).size
+                }{' '}
+                · Edificios expuestos: {flood.exposedBuildingIds.length}
               </p>
             </div>
           )}
           <small>
-            Azul: agua · Rojo: tramo bloqueado (15 cm) · Naranja: edificio
-            expuesto (20 cm).
+            Azul: agua · Rojo: tramo bloqueado · Naranja/rojo con rejilla:
+            edificio expuesto o dañado · Gris: escombros.
           </small>
           <p style={{ fontSize: 12 }}>
             Personas: {city.citizens?.length ?? 0}. La simulación comienza al
@@ -808,6 +951,14 @@ export default function Scene() {
               comparison={comparison}
               alarmTime={alarmTime}
               total={city.citizens?.length ?? 0}
+              hazardLabel={hazardPreset(hazardKind).label.toLowerCase()}
+              improvementLabel={
+                hazardKind === 'earthquake'
+                  ? 'cambia el refuerzo sísmico'
+                  : hazardKind === 'strong-wind'
+                    ? 'cambian los techos asegurados'
+                    : 'cambia el drenaje'
+              }
             />
           )}
           <p style={{ fontSize: 11 }}>

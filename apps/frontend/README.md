@@ -72,6 +72,20 @@ Evacuated people remain in snapshots. They used to overlap at one exact shelter 
 
 Rain and water highlights freeze while paused. Reset removes rain and water and restores clear-sky lighting. The moving water highlights are decorative normal-map animation: they do not change measured depth or displace the water surface. Rain is a local particle effect, not a roof-collision or drainage simulation.
 
+## Choose the catastrophe
+
+The top bar selector **Catástrofe** switches the event without regenerating the city; changing it restarts the event, the alarm and the evacuation on the same streets and buildings:
+
+| Event               | What drives it                                                                    | Visible effect                                                                            |
+| ------------------- | --------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------- |
+| **Lluvia intensa**  | The original uniform 120 mm/h rain on `FloodEngine`                               | Rain streaks, pooling water, blocked streets                                              |
+| **Desborde de río** | Initial water in the carved channel/lake plus 70 mm/h rain                        | Water spilling from the riverbanks into low neighborhoods                                 |
+| **Tsunami**         | A 1.6 m wave injected at the western (sea) edge, no rain                          | A translucent wave front crossing inland while the solver spreads the water               |
+| **Terremoto**       | Deterministic structural damage around a central epicenter (magnitude 6.8 demo)   | Ground cracks, red/orange damaged buildings, debris-blocked streets, a brief camera shake |
+| **Vientos fuertes** | Deterministic structural damage weighted by building height (110 km/h gusts demo) | Animated wind streaks, damaged tall buildings, debris                                     |
+
+Water events keep using the flood solver, its blocked-road thresholds and the graph evacuation. Earthquakes and strong wind produce no flood water: their damaged buildings and debris-blocked edges feed the same alarm and evacuation, and the **Con mejora** arm models seismic reinforcement / secured roofs (lower damage severity) instead of extra drainage. A gradient sky dome with drifting clouds and per-event fog/light moods keep the scene readable in every state. All coefficients are demonstrative presets, not calibrated forecasts.
+
 ## Model and limits
 
 In flat mode, the frontend feeds the same generation response to `@simulicity/hazards` and the 3D renderer. Terrain, road-edge IDs and building IDs remain unchanged. Flood state is separate and is not saved or exported.
@@ -80,7 +94,7 @@ At 300×, one wall-clock second represents five simulated minutes. The scene beg
 
 The animation loop pauses progress in hidden tabs and caps slow-frame catch-up. There is no separate simulation timer. Reset clears dynamic flood state and restarts automatically; permanent geography remains visible. Missing simulation fields disable the controls without replacing the city with invented data.
 
-This is a simplified demonstration, not an emergency forecast or a hydrodynamic safety model. Building damage, fires and earthquakes are not simulated. Evacuation is a simplified graph model, not real-world safety guidance.
+This is a simplified demonstration, not an emergency forecast or a hydrodynamic safety model. Earthquake and wind damage are deterministic severity scores per building (seeded by building ID), not structural engineering; fires are not simulated. Evacuation is a simplified graph model, not real-world safety guidance.
 
 ## Verify
 

@@ -5,17 +5,28 @@ export function ComparisonPanel({
   alarmTime,
   total,
   evacuationEnabled = true,
+  hazardLabel = 'tormenta',
+  improvementLabel = 'cambia el drenaje',
 }: {
   comparison: DistrictSimulation['comparison'];
   alarmTime: number | null;
   total: number;
   evacuationEnabled?: boolean;
+  hazardLabel?: string;
+  improvementLabel?: string;
 }) {
   const time = (seconds: number | null) =>
     seconds === null ? 'No completada' : `${(seconds / 60).toFixed(1)} min`;
   const a = comparison.before,
     b = comparison.after;
   const rows: [string, string | number, string | number][] = [
+    ...(a.damagedBuildings > 0 || b.damagedBuildings > 0
+      ? ([['Edificios dañados', a.damagedBuildings, b.damagedBuildings]] as [
+          string,
+          string | number,
+          string | number,
+        ][])
+      : []),
     ['Edificios expuestos (acum.)', a.exposedBuildings, b.exposedBuildings],
     ['Tramos bloqueados (pico)', a.peakBlocked, b.peakBlocked],
     [
@@ -45,7 +56,7 @@ export function ComparisonPanel({
       aria-label="Comparación de intervenciones"
       style={{ marginTop: 12, fontSize: 12 }}
     >
-      <strong>La misma tormenta · dos escenarios</strong>
+      <strong>El mismo evento ({hazardLabel}) · dos escenarios</strong>
       {!evacuationEnabled && (
         <p>Personas estáticas · comportamiento automático desactivado.</p>
       )}
@@ -56,7 +67,7 @@ export function ComparisonPanel({
       </p>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <caption style={{ textAlign: 'left', marginBottom: 6 }}>
-          Misma ciudad, lluvia y obstáculos; cambia el drenaje.
+          Misma ciudad y evento; {improvementLabel}.
         </caption>
         <thead>
           <tr>

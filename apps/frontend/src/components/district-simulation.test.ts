@@ -141,6 +141,40 @@ it('can start unattended and automatically raise the hazard alarm without user c
   expect(simulation.evacuation).toEqual(paused);
 });
 
+it('runs a tsunami from the west edge and raises the alarm without rain', () => {
+  const sim = new DistrictSimulation(makeCity(), { hazard: 'tsunami' });
+  expect(sim.hazard).toBe('tsunami');
+  expect(sim.preset.waveHeightInMeters).toBeGreaterThan(0);
+  expect(sim.snapshot.maxWaterDepthInMeters).toBeGreaterThan(0.5);
+  sim.start();
+  sim.advance(24);
+  expect(sim.alarmTime).not.toBeNull();
+  expect(sim.snapshot.balance.totalRainVolumeInCubicMeters).toBe(0);
+});
+
+it('keeps an earthquake dry but damages buildings, blocks roads and evacuates', () => {
+  const sim = new DistrictSimulation(makeCity(), { hazard: 'earthquake' });
+  sim.start();
+  sim.advance(24);
+  expect(sim.snapshot.maxWaterDepthInMeters).toBe(0);
+  expect(sim.comparison.before.damagedBuildings).toBeGreaterThan(0);
+  expect(sim.comparison.after.damagedBuildings).toBeLessThanOrEqual(
+    sim.comparison.before.damagedBuildings,
+  );
+  expect(sim.selectedBlockedRoadEdgeIds.length).toBeGreaterThan(0);
+  expect(sim.alarmTime).not.toBeNull();
+});
+
+it('keeps strong wind dry with structural damage as the hazard', () => {
+  const sim = new DistrictSimulation(makeCity(), { hazard: 'strong-wind' });
+  sim.start();
+  sim.advance(24);
+  expect(sim.snapshot.maxWaterDepthInMeters).toBe(0);
+  expect(sim.preset.windSpeedKmh).toBe(110);
+  expect(sim.structural.buildings.length).toBeGreaterThan(0);
+  expect(sim.alarmTime).not.toBeNull();
+});
+
 it('supports a readable 3x walking speed without changing the shared simulation clock', () => {
   const simulation = new DistrictSimulation(makeCity(), { autoStart: true });
   simulation.setSpeed(3);

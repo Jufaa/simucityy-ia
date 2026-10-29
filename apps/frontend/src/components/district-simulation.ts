@@ -1,9 +1,13 @@
 import {
+  assessStructuralDamage,
   createFloodEnvironment,
   EvacuationEngine,
+  hazardPreset,
   type CityScenarioInput,
   type EvacuationSnapshot,
   type FloodDrain,
+  type HazardKind,
+  type StructuralAssessment,
 } from '@simulicity/hazards';
 import type { CityResponse } from './city-types';
 import { FloodSimulation } from './flood-simulation';
@@ -15,6 +19,7 @@ export interface DistrictSimulationOptions {
   evacuationEnabled?: boolean;
   alarmMode?: 'automatic' | 'manual';
   autoStart?: boolean;
+  hazard?: HazardKind;
 }
 interface Arm {
   flood: FloodSimulation;
@@ -23,6 +28,7 @@ interface Arm {
   exposed: Set<string>;
   peakDepth: number;
   peakBlocked: number;
+  structural: StructuralAssessment;
 }
 
 /** Matched local experiments; all arms advance on one synchronous simulation timeline. */
@@ -33,6 +39,7 @@ export class DistrictSimulation {
   private elapsed = 0;
   private speed = 300;
   readonly drains: readonly FloodDrain[];
+  readonly hazard: HazardKind;
   readonly evacuationEnabled: boolean;
   private readonly alarmMode: 'automatic' | 'manual';
   running = false;
@@ -46,6 +53,7 @@ export class DistrictSimulation {
   ) {
     this.evacuationEnabled = options.evacuationEnabled ?? true;
     this.alarmMode = options.alarmMode ?? 'automatic';
+    this.hazard = options.hazard ?? 'rain';
     if (!city.terrainGrid || !city.roadGraph?.edges)
       throw new Error('Missing simulation grid or graph.');
     this.input = {
@@ -95,7 +103,11 @@ export class DistrictSimulation {
       }),
       ...organicFloodEnvironment(this.city),
     };
-    const flood = new FloodSimulation(this.input, environment);
+    const flood = new FloodSimulation(this.input, environment, this.hazard);
+    const structural = assessStructuralDamage(this.input, this.hazard, {
+      seed: this.city.config.seed ?? 123,
+      reinforced: improved,
+    });
     const shelters = (this.city.shelters ?? []).flatMap((s) =>
       s.capacity === undefined ? [] : [{ ...s, capacity: s.capacity }],
     );
@@ -110,8 +122,26 @@ export class DistrictSimulation {
       people: evacuation.getSnapshot(),
       exposed: new Set(),
       peakDepth: 0,
-      peakBlocked: 0,
+      peakBlocked: structural.blockedRoadEdgeIds.length,
+      structural,
     };
+  }
+
+  get preset() {
+    return hazardPreset(this.hazard);
+  }
+  /** Daño estructural del escenario visible (sin/con mejora). */
+  get structural() {
+    return this.arms[this.selected].structural;
+  }
+  /** Tramos intransitables del brazo: agua (motor) + escombros (daño). */
+  blockedRoadEdgeIds(arm: Arm): readonly string[] {
+    const merged = new Set(arm.flood.snapshot.blockedRoadEdgeIds);
+    for (const id of arm.structural.blockedRoadEdgeIds) merged.add(id);
+    return [...merged];
+  }
+  get selectedBlockedRoadEdgeIds(): readonly string[] {
+    return this.blockedRoadEdgeIds(this.arms[this.selected]);
   }
 
   get snapshot() {
@@ -146,10 +176,7 @@ export class DistrictSimulation {
     if (!this.evacuationEnabled || this.alarmTime !== null) return;
     this.alarmTime = this.elapsed;
     for (const arm of Object.values(this.arms))
-      arm.people = arm.evacuation.advance(
-        0,
-        arm.flood.snapshot.blockedRoadEdgeIds,
-      );
+      arm.people = arm.evacuation.advance(0, this.blockedRoadEdgeIds(arm));
   }
   reset() {
     this.running = this.started = false;
@@ -164,6 +191,7 @@ export class DistrictSimulation {
       rainVolume: arm.flood.snapshot.balance.totalRainVolumeInCubicMeters,
       drainedVolume: arm.flood.snapshot.balance.totalDrainedVolumeInCubicMeters,
       exposedBuildings: arm.exposed.size,
+      damagedBuildings: arm.structural.damagedBuildingIds.length,
       peakBlocked: arm.peakBlocked,
       peakDepth: arm.peakDepth,
       evacuated: arm.people.evacuatedCount,
@@ -186,10 +214,7 @@ export class DistrictSimulation {
       const dt = Math.min(remaining, 60 - this.secondsIntoTick);
       for (const arm of Object.values(this.arms)) {
         if (this.evacuationEnabled && this.alarmTime !== null)
-          arm.people = arm.evacuation.advance(
-            dt,
-            arm.flood.snapshot.blockedRoadEdgeIds,
-          );
+          arm.people = arm.evacuation.advance(dt, this.blockedRoadEdgeIds(arm));
         changed = arm.flood.advance(dt / 300) || changed;
       }
       this.elapsed += dt;
@@ -206,7 +231,7 @@ export class DistrictSimulation {
           );
           arm.peakBlocked = Math.max(
             arm.peakBlocked,
-            snapshot.blockedRoadEdgeIds.length,
+            this.blockedRoadEdgeIds(arm).length,
           );
         }
         if (
@@ -214,8 +239,9 @@ export class DistrictSimulation {
           this.alarmTime === null &&
           Object.values(this.arms).some(
             (arm) =>
-              arm.flood.snapshot.blockedRoadEdgeIds.length ||
-              arm.flood.snapshot.exposedBuildingIds.length,
+              this.blockedRoadEdgeIds(arm).length ||
+              arm.flood.snapshot.exposedBuildingIds.length ||
+              arm.structural.damagedBuildingIds.length,
           )
         )
           this.alarmTime = this.elapsed;
@@ -223,7 +249,7 @@ export class DistrictSimulation {
           for (const arm of Object.values(this.arms))
             arm.people = arm.evacuation.advance(
               0,
-              arm.flood.snapshot.blockedRoadEdgeIds,
+              this.blockedRoadEdgeIds(arm),
             );
       }
     }

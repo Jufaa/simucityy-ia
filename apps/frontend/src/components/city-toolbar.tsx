@@ -1,4 +1,6 @@
 import type { CSSProperties } from 'react';
+import type { HazardKind } from '@simulicity/hazards';
+import { HazardSelector } from './hazard-selector';
 
 const button: CSSProperties = {
   border: '1px solid #d3dfdf',
@@ -33,6 +35,8 @@ export function CityToolbar(props: {
   view: 'world' | 'city';
   elapsedSeconds: number;
   assetStatus: 'loading' | 'ready' | 'fallback' | 'procedural';
+  hazard?: HazardKind;
+  onHazard?(kind: HazardKind): void;
   onPanelToggle(): void;
   onRegenerate(): void;
   onView(view: 'world' | 'city'): void;
@@ -74,6 +78,9 @@ export function CityToolbar(props: {
             {props.seed}
           </div>
         </div>
+        {props.hazard && props.onHazard && (
+          <HazardSelector value={props.hazard} onChange={props.onHazard} />
+        )}
         <div style={{ display: 'flex', gap: 8 }}>
           {props.organic && (
             <button type="button" style={button} onClick={props.onRegenerate}>
