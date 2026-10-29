@@ -1,3 +1,5 @@
+import type { RoadEdge, TerrainGrid } from '@simulicity/hazards';
+
 // HTTP view of POST /api/v1/cities/generate. Extended district fields are optional.
 // No importamos de @simulicity/api: el frontend solo depende del contrato HTTP.
 
@@ -48,6 +50,8 @@ export interface CityConfig {
 }
 
 export interface CityResponse {
+  /** Local view-only relief; not part of the HTTP or saved scenario contract. */
+  terrainProfile?: 'basin';
   config: CityConfig;
   terrain: TerrainConfig;
   roads: Road[];
@@ -78,6 +82,7 @@ export interface CityResponse {
       })[];
     };
   };
-  roadGraph?: { nodes: (Point & { id: string })[] };
+  terrainGrid?: TerrainGrid;
+  roadGraph?: { nodes: (Point & { id: string })[]; edges?: RoadEdge[] };
   shelters?: { id: string; nodeId: string; active: boolean }[];
 }

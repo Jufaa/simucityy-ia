@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CityResponse } from './city-types';
@@ -9,12 +9,35 @@ import { createDistrictLayer } from './create-district-layer';
 import { createBuildingLayer } from './urban-building-layer';
 import { createUrbanDetailLayer } from './urban-detail-layer';
 import { createUrbanTextures } from './urban-materials';
+import { FloodSimulation } from './flood-simulation';
+import { createFloodLayer } from './flood-layer';
+import { createFloodWeather } from './flood-weather';
+import {
+  createReliefCity,
+  createTerrainGeometry,
+  drapeSurfaceLayer,
+} from './terrain-view';
+import type { CityScenarioInput, FloodSnapshot } from '@simulicity/hazards';
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4000';
 
 export default function Scene() {
   const mountRef = useRef<HTMLDivElement>(null);
-  const [city, setCity] = useState<CityResponse | null>(null);
+  const simulationRef = useRef<FloodSimulation | null>(null);
+  const [running, setRunning] = useState(false);
+  const [flood, setFlood] = useState<FloodSnapshot | null>(null);
+  const [floodError, setFloodError] = useState<string | null>(null);
+  const [sourceCity, setSourceCity] = useState<CityResponse | null>(null);
+  const [reliefMode, setReliefMode] = useState(true);
+  const city = useMemo(
+    () =>
+      sourceCity
+        ? reliefMode
+          ? createReliefCity(sourceCity)
+          : sourceCity
+        : null,
+    [sourceCity, reliefMode],
+  );
   const [error, setError] = useState<string | null>(null);
 
   // 1. Pedir la ciudad al backend
@@ -45,7 +68,7 @@ export default function Scene() {
           throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
         }
         const data = (await res.json()) as CityResponse;
-        if (!cancelled) setCity(data);
+        if (!cancelled) setSourceCity(data);
       } catch (e) {
         if (!cancelled) setError(e instanceof Error ? e.message : String(e));
       }
@@ -131,7 +154,8 @@ export default function Scene() {
     dirLight.shadow.camera.updateProjectionMatrix();
     scene.add(dirLight);
     scene.add(dirLight.target);
-    scene.add(new THREE.HemisphereLight(0xe4f2ff, 0x8c8869, 2));
+    const skyLight = new THREE.HemisphereLight(0xe4f2ff, 0x8c8869, 2);
+    scene.add(skyLight);
 
     // Edificios
     scene.add(createBuildingLayer(city));
@@ -148,27 +172,34 @@ export default function Scene() {
     const roadMeshes = city.roads.map((road) =>
       createRoadMesh(road, city.terrain.elevationInMeters, roadMaterial),
     );
-    for (const mesh of roadMeshes) scene.add(mesh);
-    scene.add(createDistrictLayer(city));
-    scene.add(createUrbanDetailLayer(city, textures.concrete));
+    for (const mesh of roadMeshes) scene.add(drapeSurfaceLayer(mesh, city));
+    scene.add(drapeSurfaceLayer(createDistrictLayer(city), city));
+    scene.add(
+      drapeSurfaceLayer(createUrbanDetailLayer(city, textures.concrete), city),
+    );
 
     // Suelo
-    const groundGeometry = new THREE.PlaneGeometry(
-      city.config.widthInMeters,
-      city.config.heightInMeters,
-    );
+    const groundGeometry =
+      city.terrainProfile === 'basin'
+        ? createTerrainGeometry(city)
+        : new THREE.PlaneGeometry(
+            city.config.widthInMeters,
+            city.config.heightInMeters,
+          );
     const groundMaterial = new THREE.MeshStandardMaterial({
       color: textures.grass ? 0xffffff : 0xa6b09a,
       roughness: 1,
       ...(textures.grass ? { map: textures.grass } : {}),
     });
     const ground = new THREE.Mesh(groundGeometry, groundMaterial);
-    ground.rotation.x = -Math.PI / 2;
-    ground.position.set(
-      city.config.widthInMeters / 2,
-      city.terrain.elevationInMeters,
-      city.config.heightInMeters / 2,
-    );
+    if (city.terrainProfile !== 'basin') {
+      ground.rotation.x = -Math.PI / 2;
+      ground.position.set(
+        city.config.widthInMeters / 2,
+        city.terrain.elevationInMeters,
+        city.config.heightInMeters / 2,
+      );
+    }
     scene.add(ground);
     ground.receiveShadow = true;
     const resize = () => {
@@ -178,16 +209,89 @@ export default function Scene() {
     };
     window.addEventListener('resize', resize);
 
+    let simulation: FloodSimulation | null = null;
+    let floodLayer: ReturnType<typeof createFloodLayer> | null = null;
+    if (city.terrainGrid && city.roadGraph?.edges) {
+      try {
+        const input: CityScenarioInput = {
+          terrain: city.terrain,
+          terrainGrid: city.terrainGrid,
+          roadGraph: {
+            nodes: city.roadGraph.nodes,
+            edges: city.roadGraph.edges,
+          },
+          buildings: city.buildings,
+        };
+        simulation = new FloodSimulation(input);
+        floodLayer = createFloodLayer(input, simulation.cells);
+        scene.add(floodLayer.group);
+        simulationRef.current = simulation;
+        setFlood(simulation.snapshot);
+        setFloodError(null);
+      } catch {
+        setFloodError('No se pudo preparar la inundación para esta ciudad.');
+      }
+    } else {
+      setFloodError(
+        'La ciudad no incluye los datos de terreno y calles para simular.',
+      );
+    }
+    const weather = createFloodWeather(
+      city.config,
+      city.terrain.elevationInMeters,
+      city.buildings.reduce(
+        (height, building) => Math.max(height, building.heightInMeters),
+        0,
+      ),
+    );
+    scene.add(weather.group);
+    const stormFog = new THREE.Fog(0x647789, extent * 0.7, extent * 3.5);
+    let stormActive = false;
     let frameId: number;
-    function animate() {
+    let previousTime: number | null = null;
+    let displayedSnapshot: FloodSnapshot | null = null;
+    function animate(time: number) {
       frameId = requestAnimationFrame(animate);
+      // Hidden tabs do not accumulate catch-up work; cap a slow frame to 0.25s.
+      const delta =
+        previousTime === null
+          ? 0
+          : Math.min((time - previousTime) / 1000, 0.25);
+      previousTime = time;
+      if (!document.hidden && simulation?.advance(delta)) {
+        setFlood(simulation.snapshot);
+      }
+      if (simulation && simulation.snapshot !== displayedSnapshot) {
+        floodLayer?.update(simulation.snapshot);
+        displayedSnapshot = simulation.snapshot;
+      }
+      const active = simulation?.started ?? false;
+      const animateStorm = !!simulation?.running && !document.hidden;
+      weather.animate(animateStorm ? delta : 0, active, animateStorm);
+      if (animateStorm) floodLayer?.animate(delta);
+      if (active !== stormActive) {
+        stormActive = active;
+        if (scene.background instanceof THREE.Color)
+          scene.background.set(active ? 0x52677e : 0xcbd5df);
+        scene.fog = active ? stormFog : null;
+        dirLight.intensity = active ? 1.5 : 2.5;
+        skyLight.intensity = active ? 1.4 : 2;
+      }
       controls.update();
       renderer.render(scene, camera);
     }
-    animate();
+    animate(performance.now());
 
     return () => {
       cancelAnimationFrame(frameId);
+      scene.remove(weather.group);
+      weather.dispose();
+      simulation?.pause();
+      simulationRef.current = null;
+      if (floodLayer) {
+        scene.remove(floodLayer.group);
+        floodLayer.dispose();
+      }
       window.removeEventListener('resize', resize);
       const geometries = new Set<THREE.BufferGeometry>();
       const materials = new Set<THREE.Material>();
@@ -217,6 +321,22 @@ export default function Scene() {
     };
   }, [city]);
 
+  function toggleFlood() {
+    const simulation = simulationRef.current;
+    if (!simulation) return;
+    if (simulation.running) simulation.pause();
+    else simulation.start();
+    setRunning(simulation.running);
+  }
+
+  function resetFlood() {
+    const simulation = simulationRef.current;
+    if (!simulation) return;
+    simulation.reset();
+    setRunning(false);
+    setFlood(simulation.snapshot);
+  }
+
   if (error) {
     return (
       <div style={{ padding: 20, color: 'salmon', fontFamily: 'monospace' }}>
@@ -235,7 +355,9 @@ export default function Scene() {
           position: 'absolute',
           top: 16,
           left: 16,
-          maxWidth: 300,
+          maxWidth: 'min(340px, calc(100vw - 32px))',
+          maxHeight: 'calc(100vh - 32px)',
+          overflowY: 'auto',
           padding: 16,
           borderRadius: 12,
           background: 'rgba(255,255,255,0.94)',
@@ -257,9 +379,96 @@ export default function Scene() {
           Casas con techo · Departamentos con balcones · Comercios con vidriera
         </small>
         <p style={{ margin: '8px 0 0', fontSize: 12 }}>
-          Arrastra para girar · Rueda para acercar. Terreno plano y población
-          sintética; sin simulación activa.
+          Arrastra para girar · Rueda para acercar. Terreno y población
+          sintéticos; simulación demostrativa, no predicción real.
         </p>
+        <hr style={{ margin: '12px 0', borderColor: '#ddd' }} />
+        <strong>Inundación por lluvia</strong>
+        <label style={{ display: 'block', margin: '8px 0', fontSize: 13 }}>
+          Terreno{' '}
+          <select
+            aria-label="Tipo de terreno"
+            value={reliefMode ? 'basin' : 'flat'}
+            disabled={!sourceCity?.terrainGrid}
+            onChange={(event) => {
+              setRunning(false);
+              setFlood(null);
+              setReliefMode(event.target.value === 'basin');
+            }}
+          >
+            <option value="basin">Relieve con zona baja · demo</option>
+            <option value="flat">Plano · original</option>
+          </select>
+        </label>
+        <p style={{ margin: '8px 0', fontSize: 12 }}>
+          Lluvia visible y agua animada · Lluvia: 120 mm/h · Drenaje: 15 mm/h.
+          Tiempo acelerado: 1 segundo = 5 minutos simulados.
+        </p>
+        <p style={{ fontSize: 12, color: '#425466' }}>
+          {city.terrainProfile === 'basin'
+            ? 'Relieve local sintético con pendiente y depresión central; grilla de 10 m. El agua se acumula primero en zonas bajas.'
+            : 'Terreno plano: el agua sube uniformemente y alcanza 15 cm en unos 17 segundos reales.'}{' '}
+          Selecciona Iniciar para ver la lluvia. Cambiar el terreno reinicia la
+          simulación.
+        </p>
+        <div style={{ display: 'flex', gap: 8 }}>
+          <button
+            type="button"
+            disabled={!flood || !!floodError}
+            onClick={toggleFlood}
+            style={{
+              padding: '8px 12px',
+              background: '#125d88',
+              color: 'white',
+              border: 0,
+              borderRadius: 6,
+              cursor: 'pointer',
+            }}
+          >
+            {running
+              ? 'Pausar'
+              : simulationRef.current?.started
+                ? 'Continuar'
+                : 'Iniciar inundación'}
+          </button>
+          <button
+            type="button"
+            disabled={!flood || !!floodError}
+            onClick={resetFlood}
+            style={{
+              padding: '8px 12px',
+              border: '1px solid #8498a8',
+              borderRadius: 6,
+              cursor: 'pointer',
+            }}
+          >
+            Reiniciar
+          </button>
+        </div>
+        {floodError && <p role="alert">{floodError}</p>}
+        {flood && (
+          <div role="status" aria-live="off" style={{ fontSize: 13 }}>
+            <p>
+              {running
+                ? 'En marcha'
+                : simulationRef.current?.started
+                  ? 'En pausa'
+                  : 'Lista para iniciar'}{' '}
+              · {Math.floor(flood.elapsedTimeInSeconds / 60)} min simulados
+            </p>
+            <p>
+              Agua máxima: {(flood.maxWaterDepthInMeters * 100).toFixed(1)} cm
+            </p>
+            <p>
+              Tramos bloqueados: {flood.blockedRoadEdgeIds.length} · Edificios
+              expuestos: {flood.exposedBuildingIds.length}
+            </p>
+          </div>
+        )}
+        <small>
+          Azul: agua · Rojo: tramo bloqueado (15 cm) · Naranja: edificio
+          expuesto (20 cm).
+        </small>
       </aside>
     </main>
   );

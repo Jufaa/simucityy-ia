@@ -1,3 +1,3 @@
-export * from './types.js';
-export * from './defaults.js';
-export * from './flood-engine.js';
+export * from './types';
+export * from './defaults';
+export * from './flood-engine';

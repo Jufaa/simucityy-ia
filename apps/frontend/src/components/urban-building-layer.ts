@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { CityResponse } from './city-types';
 import { createUrbanTextures } from './urban-materials';
+import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
 
 type BoxPlacement = { position: THREE.Vector3; scale: THREE.Vector3 };
 
@@ -57,11 +58,12 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     const a = building.architecture;
     const w = building.maxCorner.x - building.minCorner.x,
       d = building.maxCorner.y - building.minCorner.y;
+    const baseHeight = buildingBaseHeight(city, building);
     const root = new THREE.Group();
     root.name = building.id;
     root.position.set(
       (building.minCorner.x + building.maxCorner.x) / 2,
-      city.terrain.elevationInMeters,
+      baseHeight,
       (building.minCorner.y + building.maxCorner.y) / 2,
     );
     const rise = a?.roofRiseInMeters ?? 0,
@@ -172,7 +174,7 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       }
       if (a.style === 'apartment' && balcony > 0)
         for (let floor = 1; floor < a.floors; floor++) {
-          const y = city.terrain.elevationInMeters + (floor * h) / a.floors;
+          const y = baseHeight + (floor * h) / a.floors;
           const x = root.position.x,
             z = building.maxCorner.y - balcony / 2;
           slabs.push({
@@ -197,6 +199,28 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
               scale: new THREE.Vector3(0.07, 0.8, 0.07),
             });
         }
+    }
+    if (city.terrainProfile === 'basin') {
+      const minimum = Math.min(
+        ...[building.minCorner.x, building.maxCorner.x].flatMap((x) =>
+          [building.minCorner.y, building.maxCorner.y].map((z) =>
+            sampleTerrainHeight(city, x, z),
+          ),
+        ),
+      );
+      const depth = baseHeight - minimum + 0.05;
+      const foundation = new THREE.Mesh(
+        new THREE.BoxGeometry(w, depth, d),
+        flatRoof,
+      );
+      foundation.position.set(
+        root.position.x,
+        baseHeight - depth / 2,
+        root.position.z,
+      );
+      foundation.name = `foundation:${building.id}`;
+      foundation.castShadow = foundation.receiveShadow = true;
+      group.add(foundation);
     }
     group.add(root);
   }

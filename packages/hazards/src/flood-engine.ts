@@ -1,4 +1,4 @@
-import { DEFAULT_FLOOD_CONFIG } from './defaults.js';
+import { DEFAULT_FLOOD_CONFIG } from './defaults';
 import type {
   AffectedRoadEdge,
   Building,
@@ -254,7 +254,9 @@ export class FloodEngine {
     });
   }
 
-  private mapBuildingsToCells(buildings: readonly Building[]): MappedBuilding[] {
+  private mapBuildingsToCells(
+    buildings: readonly Building[],
+  ): MappedBuilding[] {
     return buildings.map((building) => {
       const indices: number[] = [];
       for (let i = 0; i < this.cellCount; i++) {
@@ -294,8 +296,7 @@ export class FloodEngine {
     const dtHours = this.config.timeStepInSeconds / 3600;
     const rainDepthMeters =
       (this.config.rainIntensityMmPerHour / 1000) * dtHours;
-    const drainDepthMeters =
-      (this.config.drainRateMmPerHour / 1000) * dtHours;
+    const drainDepthMeters = (this.config.drainRateMmPerHour / 1000) * dtHours;
     const transferRatio = this.config.flowTransferRatio;
 
     // 1. Lluvia y drenaje sobre el estado previo
@@ -303,7 +304,8 @@ export class FloodEngine {
       const cell = this.cells[i]!;
       const prevDepth = this.currentWaterDepth[i] ?? 0;
       const withRain = prevDepth + rainDepthMeters;
-      this.totalRainVolumeInCubicMeters += rainDepthMeters * cell.areaInSqMeters;
+      this.totalRainVolumeInCubicMeters +=
+        rainDepthMeters * cell.areaInSqMeters;
 
       const actualDrain = Math.min(withRain, drainDepthMeters);
       this.totalDrainedVolumeInCubicMeters += actualDrain * cell.areaInSqMeters;
