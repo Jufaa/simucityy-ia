@@ -11,6 +11,12 @@ import { createUrbanDetailLayer } from './urban-detail-layer';
 import { createUrbanTextures } from './urban-materials';
 import { generateCityLife } from './city-life-model';
 import { createCityLifeLayer } from './city-life-layer';
+import { CityTraffic } from './city-traffic-model';
+import { createCityTrafficLayer } from './city-traffic-layer';
+import { createRandomCityProfile } from './random-city-profile';
+import { CityGenerationControls } from './city-generation-controls';
+import { generateCityServices } from './city-services';
+import { FrameMetrics, type FrameMeasurement } from './frame-metrics';
 import { mountCityAssets, type CityAssetLayer } from './city-assets';
 import { CityToolbar } from './city-toolbar';
 import { createOrganicCity } from './organic-city-model';
@@ -69,11 +75,15 @@ const civicLabels = {
   firestation: 'Bomberos',
   municipal: 'Municipalidad',
   market: 'Mercado',
+  museum: 'Museo',
 };
 
 export default function Scene() {
   const mountRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<DistrictSimulation | null>(null);
+  const trafficRef = useRef<CityTraffic | null>(null);
+  const [measurement, setMeasurement] = useState<FrameMeasurement | null>(null);
+  const [trafficCount, setTrafficCount] = useState(0);
   const [running, setRunning] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [assetStatus, setAssetStatus] = useState<
@@ -99,16 +109,22 @@ export default function Scene() {
   const [reliefMode, setReliefMode] = useState(true);
   const [layoutMode, setLayoutMode] = useState<'organic' | 'grid'>('organic');
   const [citySeed, setCitySeed] = useState(123);
+  const [randomizedCity, setRandomizedCity] = useState(false);
   const city = useMemo(
     () =>
       sourceCity
         ? layoutMode === 'organic'
-          ? createOrganicCity(sourceCity, citySeed, { relief: reliefMode }).city
+          ? createOrganicCity(sourceCity, citySeed, {
+              relief: reliefMode,
+              ...(randomizedCity
+                ? { profile: createRandomCityProfile(citySeed) }
+                : {}),
+            }).city
           : reliefMode
             ? createReliefCity(sourceCity)
             : sourceCity
         : null,
-    [sourceCity, reliefMode, layoutMode, citySeed],
+    [sourceCity, reliefMode, layoutMode, citySeed, randomizedCity],
   );
   const [worldSeed, setWorldSeed] = useState(123);
   const cityLife = useMemo(
@@ -118,6 +134,13 @@ export default function Scene() {
   const civicLandmarks = useMemo(
     () => (city ? generateCivicLandmarks(city) : null),
     [city],
+  );
+  const services = useMemo(
+    () =>
+      city && civicLandmarks
+        ? generateCityServices(city, civicLandmarks)
+        : null,
+    [city, civicLandmarks],
   );
   const world = useMemo(
     () => (city ? generateWorld(city, worldSeed) : null),
@@ -276,7 +299,24 @@ export default function Scene() {
           },
         )
       : () => {};
-    const streetLifeLayer = createCityLifeLayer(city, cityLife);
+    const traffic = new CityTraffic(city);
+    trafficRef.current = traffic;
+    setTrafficCount(traffic.vehicles.length);
+    setMeasurement(null);
+    const trafficLayer = createCityTrafficLayer(city);
+    trafficLayer.update(traffic.vehicles);
+    scene.add(trafficLayer.group);
+    // Parked props occupy driving lanes; retain them only without dynamic traffic.
+    const streetLifeLayer = createCityLifeLayer(
+      city,
+      traffic.vehicles.length
+        ? {
+            items: cityLife.items.filter(
+              (item) => !['car', 'taxi', 'van', 'bus'].includes(item.kind),
+            ),
+          }
+        : cityLife,
+    );
     const civicLayer = createCivicLandmarkLayer(city, civicLandmarks);
     scene.add(streetLifeLayer.group, civicLayer.group);
     const organicLayer = city.organic ? createOrganicCityLayer(city) : null;
@@ -523,6 +563,11 @@ export default function Scene() {
     let previousTime: number | null = null;
     let displayedSnapshot: FloodSnapshot | null = null;
     let observedAlarm = false;
+    const frameMetrics = new FrameMetrics();
+    const roadIdByEdge = new Map(
+      city.roadGraph?.edges?.map((edge) => [edge.id, edge.roadId]),
+    );
+    const blockedTrafficRoads = new Set<string>();
     function animate(time: number) {
       frameId = requestAnimationFrame(animate);
       // Hidden tabs do not accumulate catch-up work; cap a slow frame to 0.25s.
@@ -550,6 +595,14 @@ export default function Scene() {
           simulation.arm,
         );
         if (drainLayer) drainLayer.group.visible = simulation.arm === 'after';
+      }
+      if (!document.hidden && simulation?.running) {
+        blockedTrafficRoads.clear();
+        for (const edgeId of simulation.selectedBlockedRoadEdgeIds) {
+          const roadId = roadIdByEdge.get(edgeId);
+          if (roadId) blockedTrafficRoads.add(roadId);
+        }
+        trafficLayer.update(traffic.advance(delta, blockedTrafficRoads));
       }
       if (simulation && simulation.snapshot !== displayedSnapshot) {
         floodLayer?.update(simulation.snapshot);
@@ -580,6 +633,20 @@ export default function Scene() {
         skyLight.intensity = active ? 1.9 : 2;
       }
       controls.update();
+      const renderStarted = performance.now();
+      const recordFrame = () => {
+        if (document.hidden) {
+          frameMetrics.reset();
+          return;
+        }
+        const next = frameMetrics.sample(
+          time,
+          performance.now() - renderStarted,
+          renderer.info.render.calls,
+          renderer.info.render.triangles,
+        );
+        if (next) setMeasurement(next);
+      };
       // Sacudida breve de cámara al inicio del terremoto (solo visual).
       if (
         hazardKind === 'earthquake' &&
@@ -593,11 +660,13 @@ export default function Scene() {
         camera.position.x += Math.sin(t * 31) * 0.35 * decay;
         camera.position.y += Math.sin(t * 43) * 0.22 * decay;
         renderer.render(scene, camera);
+        recordFrame();
         camera.position.x -= Math.sin(t * 31) * 0.35 * decay;
         camera.position.y -= Math.sin(t * 43) * 0.22 * decay;
         return;
       }
       renderer.render(scene, camera);
+      recordFrame();
     }
     animate(performance.now());
 
@@ -621,6 +690,9 @@ export default function Scene() {
       scene.remove(streetLifeLayer.group, civicLayer.group);
       streetLifeLayer.dispose();
       civicLayer.dispose();
+      scene.remove(trafficLayer.group);
+      trafficLayer.dispose();
+      trafficRef.current = null;
       if (organicLayer) {
         scene.remove(organicLayer.group);
         organicLayer.dispose();
@@ -691,6 +763,7 @@ export default function Scene() {
     const simulation = simulationRef.current;
     if (!simulation) return;
     simulation.reset();
+    trafficRef.current?.reset();
     simulation.setSpeed(30);
     speedRef.current = 30;
     setSpeed(30);
@@ -711,6 +784,31 @@ export default function Scene() {
     setAlarmTime(null);
     setStructural(null);
     setHazardKind(kind);
+  }
+
+  function regenerateCity(seed: number, randomProfile = randomizedCity) {
+    if (
+      seed === citySeed &&
+      randomProfile === randomizedCity &&
+      layoutMode === 'organic'
+    ) {
+      resetFlood();
+      return;
+    }
+    setRunning(false);
+    setFlood(null);
+    setComparison(null);
+    setAlarmTime(null);
+    setRandomizedCity(randomProfile);
+    setLayoutMode('organic');
+    setCitySeed(seed);
+  }
+
+  function generateRandomCity() {
+    const values = new Uint32Array(1);
+    crypto.getRandomValues(values);
+    const seed = values[0] ?? 0;
+    regenerateCity(seed === citySeed ? (seed + 1) >>> 0 : seed, true);
   }
 
   if (error) {
@@ -739,13 +837,8 @@ export default function Scene() {
         hazard={hazardKind}
         onHazard={applyHazard}
         onPanelToggle={() => setPanelOpen((open) => !open)}
-        onRegenerate={() => {
-          setRunning(false);
-          setFlood(null);
-          setComparison(null);
-          setAlarmTime(null);
-          setCitySeed((seed) => (seed + 1) >>> 0);
-        }}
+        onRegenerate={() => regenerateCity((citySeed + 1) >>> 0)}
+        onRandom={generateRandomCity}
         onView={(view) => {
           cameraViewRef.current = view;
           setWorldView(view);
@@ -754,6 +847,35 @@ export default function Scene() {
         onToggle={toggleFlood}
         onReset={resetFlood}
       />
+      <output
+        aria-label="Rendimiento de la ciudad"
+        style={{
+          position: 'absolute',
+          top: 104,
+          right: 16,
+          padding: '8px 12px',
+          borderRadius: 10,
+          background: '#f9fcfaf0',
+          color: '#20353a',
+          font: '12px system-ui',
+          pointerEvents: 'none',
+        }}
+      >
+        {measurement ? (
+          <>
+            {measurement.fps.toFixed(0)} FPS ·{' '}
+            {measurement.frameMilliseconds.toFixed(1)} ms/cuadro
+            <br />
+            CPU render: {measurement.renderMilliseconds.toFixed(1)} ms ·{' '}
+            {measurement.drawCalls} draw calls
+            <br />
+            {measurement.triangles.toLocaleString('es')} triángulos ·{' '}
+            {trafficCount} vehículos
+          </>
+        ) : (
+          'Midiendo rendimiento…'
+        )}
+      </output>
       {panelOpen && (
         <aside
           id="city-settings"
@@ -775,6 +897,13 @@ export default function Scene() {
           }}
         >
           <strong>Opciones del simulador</strong>
+          <CityGenerationControls
+            key={`${citySeed}:${randomizedCity}`}
+            seed={citySeed}
+            randomized={randomizedCity}
+            onGenerate={(seed) => regenerateCity(seed)}
+            onRandom={generateRandomCity}
+          />
           {world && (
             <WorldControls
               seed={worldSeed}
@@ -869,17 +998,19 @@ export default function Scene() {
             vidriera
           </small>
           <details style={{ marginTop: 10, fontSize: 12 }}>
-            <summary>Servicios y equipamiento urbano del mock</summary>
+            <summary>Servicios y movilidad urbana</summary>
             <p>
               {civicLandmarks?.assignments
                 .map((item) => civicLabels[item.role])
                 .join(' · ') || 'Sin edificios aptos para servicios visuales'}
             </p>
             <p>
-              Vehículos estáticos:{' '}
-              {cityLife?.items.filter((item) =>
-                ['car', 'taxi', 'van', 'bus'].includes(item.kind),
-              ).length ?? 0}{' '}
+              Vehículos en tránsito: {trafficCount} · Estacionados:{' '}
+              {trafficCount
+                ? 0
+                : (cityLife?.items.filter((item) =>
+                    ['car', 'taxi', 'van', 'bus'].includes(item.kind),
+                  ).length ?? 0)}{' '}
               · Paradas:{' '}
               {cityLife?.items.filter((item) => item.kind === 'bus-stop')
                 .length ?? 0}{' '}
@@ -888,9 +1019,24 @@ export default function Scene() {
                 .length ?? 0}
             </p>
             <p>
-              Arbolado de calle, cestos, hidrantes y equipamiento donde existe
-              espacio libre. Los servicios y vehículos son decorativos; no
-              simulan tránsito, atención pública ni cobertura real.
+              Tránsito cinemático con aceleración, frenado, separación y turnos
+              en cruces. Respeta cierres por agua y escombros. No incluye
+              impactos de cuerpos rígidos ni colisiones con peatones.
+            </p>
+            <strong>Acceso sintético por la red vial</strong>
+            {services?.roles.map((service) => (
+              <p key={service.role}>
+                {civicLabels[service.role]}: {service.facilityCount} sede ·{' '}
+                {service.reachableBuildingCount}/
+                {services.residentialBuildingCount} viviendas conectadas
+                {service.meanDistanceInMeters !== null &&
+                  ` · recorrido medio ${Math.round(service.meanDistanceInMeters)} m`}
+              </p>
+            ))}
+            <p>
+              Accesos estimados al nodo vial más cercano; no se modelan
+              entradas, capacidad, despachos ni seguridad durante la catástrofe.
+              No es cobertura real de servicios.
             </p>
           </details>
           <p style={{ margin: '8px 0 0', fontSize: 12 }}>

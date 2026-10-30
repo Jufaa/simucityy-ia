@@ -37,7 +37,7 @@ function city(): CityResponse {
 }
 
 describe('civic landmarks', () => {
-  it('assigns six unique identities deterministically without mutating the source', () => {
+  it('assigns seven unique identities deterministically without mutating the source', () => {
     const source = city();
     const before = structuredClone(source);
     const model = generateCivicLandmarks(source);
@@ -48,9 +48,10 @@ describe('civic landmarks', () => {
       'firestation',
       'municipal',
       'market',
+      'museum',
     ]);
     expect(new Set(model.assignments.map((item) => item.buildingId)).size).toBe(
-      6,
+      7,
     );
     expect(
       generateCivicLandmarks({
@@ -138,6 +139,8 @@ describe('civic landmarks', () => {
     expect(
       layer.group.getObjectByName('hospital:cross-horizontal'),
     ).toBeDefined();
+    expect(layer.group.getObjectByName('museum:portico-column')).toBeDefined();
+    expect(layer.group.getObjectByName('museum:pediment')).toBeDefined();
     expect(geometries.size).toBeLessThan(5);
     const spies = [...geometries, ...materials].map((resource) =>
       vi.spyOn(resource, 'dispose'),
@@ -167,7 +170,7 @@ describe('civic landmarks', () => {
         )
           textures.add(object.material.map);
       });
-      expect(textures.size).toBe(6);
+      expect(textures.size).toBe(7);
       const spies = [...textures].map((texture) =>
         vi.spyOn(texture, 'dispose'),
       );

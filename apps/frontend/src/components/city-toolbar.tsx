@@ -39,6 +39,7 @@ export function CityToolbar(props: {
   onHazard?(kind: HazardKind): void;
   onPanelToggle(): void;
   onRegenerate(): void;
+  onRandom?(): void;
   onView(view: 'world' | 'city'): void;
   onToggle(): void;
   onReset(): void;
@@ -81,7 +82,12 @@ export function CityToolbar(props: {
         {props.hazard && props.onHazard && (
           <HazardSelector value={props.hazard} onChange={props.onHazard} />
         )}
-        <div style={{ display: 'flex', gap: 8 }}>
+        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {props.onRandom && (
+            <button type="button" style={button} onClick={props.onRandom}>
+              Ciudad aleatoria
+            </button>
+          )}
           {props.organic && (
             <button type="button" style={button} onClick={props.onRegenerate}>
               Otra ciudad

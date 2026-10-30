@@ -2,8 +2,9 @@ import * as THREE from 'three';
 import type { Building, CityResponse } from './city-types';
 import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
 
-export type CivicRole =
-  'hospital' | 'school' | 'police' | 'firestation' | 'municipal' | 'market';
+import { civicRoles, type CivicRole } from './city-services';
+export { civicRoles, type CivicRole } from './city-services';
+
 export interface CivicAssignment {
   buildingId: string;
   role: CivicRole;
@@ -12,14 +13,6 @@ export interface CivicLandmarkModel {
   assignments: CivicAssignment[];
 }
 
-const roles: CivicRole[] = [
-  'hospital',
-  'school',
-  'police',
-  'firestation',
-  'municipal',
-  'market',
-];
 const colors: Record<CivicRole, number> = {
   hospital: 0xe8414c,
   school: 0xf4bd42,
@@ -27,6 +20,7 @@ const colors: Record<CivicRole, number> = {
   firestation: 0xec6135,
   municipal: 0x49a99b,
   market: 0x6bab49,
+  museum: 0xa079b6,
 };
 const labels: Record<CivicRole, string> = {
   hospital: 'CLINIC',
@@ -35,6 +29,7 @@ const labels: Record<CivicRole, string> = {
   firestation: 'FIRE',
   municipal: 'CITY HALL',
   market: 'MARKET',
+  museum: 'MUSEUM',
 };
 
 function suitable(city: CityResponse, building: Building) {
@@ -55,15 +50,16 @@ function suitable(city: CityResponse, building: Building) {
   );
 }
 
-/** Local visual identities, not simulation services or a persisted building kind. */
+/** Local civic identities; synthetic graph access is evaluated separately by city-services. */
 export function generateCivicLandmarks(city: CityResponse): CivicLandmarkModel {
   const candidates = city.buildings.filter((building) =>
     suitable(city, building),
   );
   const selected = new Set<string>();
   const assignments: CivicAssignment[] = [];
-  roles.forEach((role, index) => {
-    const angle = (index / roles.length) * Math.PI * 2;
+  civicRoles.forEach((role, index) => {
+    // Keep the original six assignments stable when adding a museum.
+    const angle = (index / 6) * Math.PI * 2;
     const targetX = city.config.widthInMeters * (0.5 + Math.cos(angle) * 0.3);
     const targetZ = city.config.heightInMeters * (0.5 + Math.sin(angle) * 0.3);
     const score = (building: Building) => {
@@ -298,6 +294,46 @@ export function createCivicLandmarkLayer(
           0.55,
           0.06,
         );
+      } else if (role === 'museum') {
+        for (const offset of [-1.35, -0.45, 0.45, 1.35])
+          add(
+            root,
+            'museum:portico-column',
+            cylinder,
+            0xe2d7c2,
+            offset,
+            0.95,
+            -0.2,
+            0.3,
+            1.9,
+            0.3,
+          );
+        add(
+          root,
+          'museum:entablature',
+          box,
+          0xc4b59a,
+          0,
+          1.95,
+          -0.2,
+          3.4,
+          0.18,
+          1.4,
+        );
+        add(
+          root,
+          'museum:pediment',
+          cone,
+          color,
+          0,
+          2.45,
+          -0.2,
+          3.8,
+          0.85,
+          1.6,
+        );
+        icon('exhibit-frame', 0, 1.95, 1.5, 1.2);
+        icon('exhibit', 0, 1.95, 1.2, 0.9, 0xf4f0df);
       } else {
         for (let stripe = 0; stripe < 8; stripe++) {
           add(

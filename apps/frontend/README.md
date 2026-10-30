@@ -14,6 +14,16 @@ Flood surfaces reconstruct shared-vertex absolute levels from neighboring wet ce
 
 Sources/licenses: [Kenney City Kit Suburban](https://kenney.nl/assets/city-kit-suburban), [Kenney City Kit Commercial](https://kenney.nl/assets/city-kit-commercial), both CC0; [Three.js](https://github.com/mrdoob/three.js/blob/dev/LICENSE), MIT. No additional dependencies or paid services were introduced. This is a coherent stylized city mock, not photorealistic mapping or real flood forecasting.
 
+## Random city, movement and performance
+
+**Ciudad aleatoria** chooses a fresh browser-generated 32-bit seed and a bounded local profile: building target (110–190), park target (2–7), height multiplier, lake size and channel width. Targets are ceilings: dry-ground clearance may produce fewer buildings or parks. The seed and **Perfil aleatorio** mode together reproduce the city; in **Ajustes**, enter the seed and press **Reproducir ciudad**. **Otra ciudad** still advances the seed while retaining the current profile mode. The original default layout is unchanged until random generation is selected. Neither mode uses an LLM; the requested conversational generator is deferred.
+
+Up to **40 moving vehicles** follow directional graph lanes using capped 1/30-second kinematic steps, acceleration, braking, following separation and exclusive intersection reservations. Their clock uses real frame seconds, not the hazard speed multiplier. Roads blocked by water or collapsed-building debris stop traffic; vehicles already on a blocked road freeze rather than teleport. Pause freezes traffic and hazard progression; Reset restores the initial vehicle state. Hidden tabs do not accumulate catch-up time. Segments shorter than 24 m are omitted from the traffic network, so traffic does not cover every road. Parked vehicle props are omitted when moving traffic is present because they occupy the same lanes.
+
+A seventh civic identity, **museum**, adds a columned roof portico. **Servicios y movilidad urbana** reports baseline residential access to each facility through actual directed graph paths, including connected bridges. Building access is estimated at the nearest road node; distances exclude unmodeled entrances. These measurements describe synthetic connectivity, **not capacity, dispatch, response time or safety during a catastrophe**. They are recomputed when the city changes, not on every frame.
+
+The visible performance monitor samples real frame cadence once per second: FPS, average milliseconds per frame, CPU render-submission time, draw calls and triangles. CPU render time is not GPU timing. Values depend on the device, viewport, browser and development/production mode; a displayed counter is not a performance guarantee. Moving vehicles use five fixed-capacity instanced render batches with explicit resource disposal. No new dependencies, paid services or additional destruction engine were added. Existing synthetic hazard damage and evacuation remain active; rigid-body impacts, pedestrian/vehicle collision avoidance and actual public-service dispatch remain out of scope for this milestone.
+
 ## Generate an organic city
 
 The initial layout is now **Orgánico · lago y puente**. A deterministic local model builds winding connected streets on two banks, a carved lake/channel, a bridge, a denser center, lower garden housing, a commercial quarter and dry parks. Buildings remain rectangular individual structures; the developed city footprint is irregular even though the terrain/flood sampling domain stays rectangular.
@@ -42,11 +52,11 @@ Permanent water is separate from rainfall, snapshots and the city-only flood sol
 
 The default 500 m urban district now adds a deterministic, local visual layer over its existing buildings and streets:
 
-- **Civic identities:** health center, school, police, fire station, municipal office and market, assigned to suitable existing flat-roof buildings. Roof symbols/signs and solar panels, AC units or water tanks make services and rooftops readable without adding new building footprints.
+- **Civic identities:** health center, school, police, fire station, municipal office, market and museum, assigned to suitable existing flat-roof buildings. Roof symbols/signs and solar panels, AC units or water tanks make services and rooftops readable without adding new building footprints.
 - **Street life:** parked cars, taxis, delivery vans and occasional buses; bus-stop signs; traffic lights at actual graph junctions; street trees, bins, hydrants, bollards and utility cabinets where clearance permits.
 - **Placement:** derived from actual road/sidewalk geometry and city seed, avoiding building footprints, crossings, building access and existing park features. Narrow sidewalks retain a pedestrian corridor; props are omitted when they do not fit. Standard 2 m sidewalks get signs rather than bus shelters.
 
-Open **Servicios y equipamiento urbano del mock** for the actual service/vehicle/stop/signal inventory. The city camera is the initial view; the world toggle remains available. These services are visual identities and vehicles are static decorations: there is no traffic AI, public-service operation, utility network or real coverage/safety model. Procedural city data, saved JSON, flood inputs and automatic walking/evacuation remain unchanged.
+Open **Servicios y movilidad urbana** for the actual service/vehicle/stop/signal inventory. The city camera is the initial view; the world toggle remains available. Civic identities have synthetic baseline graph-access measurements but no public-service dispatch, utility network or real coverage/safety model. Moving traffic and its limits are described above; street furniture remains decorative. Procedural city data, saved JSON, flood inputs and automatic walking/evacuation remain unchanged.
 
 `city-life-model.ts` owns pure placement, `city-life-layer.ts` owns its instanced rendering resources, and `civic-landmarks.ts` owns civic assignment and rooftop rendering. Both render layers use the shared terrain helpers and explicit idempotent disposal before the main scene cleanup.
 

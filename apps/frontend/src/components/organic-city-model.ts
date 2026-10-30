@@ -1,4 +1,9 @@
 import type { RoadEdge } from '@simulicity/hazards';
+import {
+  createCityRandom,
+  validateCityProfile,
+  type RandomCityProfile,
+} from './random-city-profile';
 import type {
   Block,
   Building,
@@ -7,16 +12,6 @@ import type {
   Point,
   Road,
 } from './city-types';
-
-function randomFrom(seed: number) {
-  let state = seed >>> 0;
-  return () => {
-    state = (state + 0x6d2b79f5) >>> 0;
-    let value = Math.imul(state ^ (state >>> 15), state | 1);
-    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
-    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
-  };
-}
 
 function distanceToSegment(p: Point, a: Point, b: Point): number {
   const dx = b.x - a.x;
@@ -58,13 +53,11 @@ export function waterSurfaceAt(
 export function createOrganicCity(
   source: CityResponse,
   seed: number,
-  options: { relief?: boolean } = {},
+  options: { relief?: boolean; profile?: RandomCityProfile } = {},
 ): { city: CityResponse; geography: OrganicGeography } {
-  if (!Number.isInteger(seed) || seed < 0 || seed > 0xffffffff) {
-    throw new RangeError(
-      'Organic city seed must be an unsigned 32-bit integer.',
-    );
-  }
+  const random = createCityRandom(seed);
+  const profile = options.profile;
+  if (profile) validateCityProfile(profile);
   const width = source.config.widthInMeters;
   const height = source.config.heightInMeters;
   if (
@@ -78,7 +71,6 @@ export function createOrganicCity(
       'Organic city dimensions must be finite, positive and fit one million terrain samples.',
     );
   }
-  const random = randomFrom(seed);
   const scale = Math.min(width, height) / 500;
   const point = (x: number, y: number): Point => ({
     x: x * width,
@@ -89,8 +81,8 @@ export function createOrganicCity(
     seed,
     lake: {
       center: point(0.52 + riverOffset, 0.48),
-      radiusX: 52 * scale,
-      radiusZ: 60 * scale,
+      radiusX: 52 * scale * (profile?.lakeScale ?? 1),
+      radiusZ: 60 * scale * (profile?.lakeScale ?? 1),
       level: 0,
     },
     river: {
@@ -101,7 +93,7 @@ export function createOrganicCity(
         point(0.52 + riverOffset, 0.75),
         point(0.48 + riverOffset, 1),
       ],
-      widthInMeters: 20 * scale,
+      widthInMeters: 20 * scale * (profile?.riverWidthScale ?? 1),
       level: 0,
     },
     bridges: [],
@@ -218,7 +210,11 @@ export function createOrganicCity(
       );
   };
   const buildings: Building[] = [];
-  for (let attempt = 0; attempt < 24000 && buildings.length < 190; attempt++) {
+  for (
+    let attempt = 0;
+    attempt < 24000 && buildings.length < (profile?.buildingTarget ?? 190);
+    attempt++
+  ) {
     const p = point(0.07 + random() * 0.86, 0.09 + random() * 0.83);
     const district = geography.neighborhoods.reduce((best, n) =>
       Math.hypot(
@@ -312,11 +308,15 @@ export function createOrganicCity(
       )
     )
       continue;
-    const floors = center
+    const baseFloors = center
       ? 6 + Math.floor(random() * 7)
       : commercial
         ? 3 + Math.floor(random() * 3)
         : 1 + Math.floor(random() * 2);
+    const floors = Math.max(
+      1,
+      Math.round(baseFloors * (profile?.heightScale ?? 1)),
+    );
     buildings.push({
       id: `organic-building-${buildings.length}`,
       minCorner: a,
@@ -340,7 +340,11 @@ export function createOrganicCity(
     NonNullable<CityResponse['district']>['urban']
   >['amenities'] = [];
   // Find remaining free land instead of replacing occupied blocks with decoration.
-  for (let attempt = 0; attempt < 5000 && parks.length < 4; attempt++) {
+  for (
+    let attempt = 0;
+    attempt < 5000 && parks.length < (profile?.parkTarget ?? 4);
+    attempt++
+  ) {
     const p = point(0.08 + random() * 0.84, 0.09 + random() * 0.82);
     const halfX = (10 + random() * 4) * scale;
     const halfY = (10 + random() * 4) * scale;

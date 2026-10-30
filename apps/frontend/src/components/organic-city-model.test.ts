@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { EvacuationEngine } from '@simulicity/hazards';
 import { createOrganicCity, waterSurfaceAt } from './organic-city-model';
 import type { CityResponse, Point } from './city-types';
+import { createRandomCityProfile } from './random-city-profile';
 
 const source: CityResponse = {
   config: {
@@ -48,6 +49,94 @@ function samples(a: Point, b: Point) {
 }
 
 describe('geography-first organic city', () => {
+  it.each([0, 1, 42, 123, 2026, 0xffffffff])(
+    'keeps random profile seed %s dry, connected and reproducible',
+    (seed) => {
+      const profile = createRandomCityProfile(seed);
+      for (const relief of [false, true]) {
+        const result = createOrganicCity(source, seed, { relief, profile });
+        expect(createOrganicCity(source, seed, { relief, profile })).toEqual(
+          result,
+        );
+        const { city, geography } = result;
+        expect(city.config.seed).toBe(seed);
+        expect(city.buildings.length).toBeGreaterThan(0);
+        expect(city.buildings.length).toBeLessThanOrEqual(
+          profile.buildingTarget,
+        );
+        expect(city.district!.parks.length).toBeLessThanOrEqual(
+          profile.parkTarget,
+        );
+        expect(city.citizens).toHaveLength(source.citizens!.length);
+        expect(reachable(city, city.roadGraph!.nodes[0]!.id).size).toBe(
+          city.roadGraph!.nodes.length,
+        );
+        for (const building of city.buildings)
+          for (const x of [building.minCorner.x, building.maxCorner.x])
+            for (const y of [building.minCorner.y, building.maxCorner.y])
+              expect(waterSurfaceAt(geography, { x, y })).toBeUndefined();
+        for (const road of city.roads) {
+          if (
+            geography.bridges.some((bridge) => bridge.roadIds.includes(road.id))
+          )
+            continue;
+          for (const p of samples(road.start, road.end))
+            expect(waterSurfaceAt(geography, p)).toBeUndefined();
+        }
+      }
+    },
+  );
+
+  it('rejects out-of-budget generation controls instead of silently ignoring them', () => {
+    const profile = createRandomCityProfile(123);
+    for (const key of Object.keys(profile) as (keyof typeof profile)[])
+      for (const value of [NaN, Infinity, -1, 10000])
+        expect(() =>
+          createOrganicCity(source, 123, {
+            profile: { ...profile, [key]: value },
+          }),
+        ).toThrow(RangeError);
+    expect(() =>
+      createOrganicCity(source, 123, {
+        profile: { ...profile, buildingTarget: 110.5 },
+      }),
+    ).toThrow(RangeError);
+  });
+
+  it('applies explicit density, parks, height and water profiles without mutating the source', () => {
+    const before = JSON.stringify(source);
+    const profile = {
+      buildingTarget: 110,
+      parkTarget: 7,
+      heightScale: 0.75,
+      lakeScale: 0.85,
+      riverWidthScale: 0.85,
+    };
+    const { city, geography } = createOrganicCity(source, 42, { profile });
+    const standard = createOrganicCity(source, 42);
+    expect(city.buildings).toHaveLength(110);
+    expect(city.district!.parks).toHaveLength(7);
+    expect(geography.lake.radiusX).toBeCloseTo(52 * profile.lakeScale);
+    expect(geography.river.widthInMeters).toBeCloseTo(
+      20 * profile.riverWidthScale,
+    );
+    expect(
+      Math.max(...city.buildings.map((b) => b.heightInMeters)),
+    ).toBeLessThan(
+      Math.max(...standard.city.buildings.map((b) => b.heightInMeters)),
+    );
+    expect(createOrganicCity(source, 42, { profile })).toEqual({
+      city,
+      geography,
+    });
+    expect(city.citizens?.map((c) => c.id)).toEqual(
+      source.citizens?.map((c) => c.id),
+    );
+    expect(reachable(city, city.roadGraph!.nodes[0]!.id).size).toBe(
+      city.roadGraph!.nodes.length,
+    );
+    expect(JSON.stringify(source)).toBe(before);
+  });
   it('generates a fallback population accepted by the evacuation engine', () => {
     const fallbackSource = structuredClone(source);
     delete fallbackSource.citizens;

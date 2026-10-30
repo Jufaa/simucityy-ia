@@ -57,3 +57,29 @@ it('does not pretend failed assets loaded and keeps pause/reset available', () =
   expect(html).toContain('Reiniciar');
   expect(html).toContain('aria-expanded="true"');
 });
+
+it('offers random generation separately without replacing the existing seed-step action', () => {
+  const noop = () => {};
+  const html = renderToStaticMarkup(
+    CityToolbar({
+      buildings: 120,
+      people: 200,
+      seed: 55,
+      organic: true,
+      running: false,
+      ready: true,
+      panelOpen: false,
+      view: 'city',
+      elapsedSeconds: 0,
+      assetStatus: 'ready',
+      onPanelToggle: noop,
+      onRegenerate: noop,
+      onRandom: noop,
+      onView: noop,
+      onToggle: noop,
+      onReset: noop,
+    }),
+  );
+  expect(html).toContain('Otra ciudad');
+  expect(html).toContain('Ciudad aleatoria');
+});
