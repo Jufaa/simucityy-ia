@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import * as THREE from 'three';
-import { createRoadMesh } from './create-road-mesh';
+import { createRoadLayer, createRoadMesh } from './create-road-mesh';
+import { countChunkInstances } from './instanced-chunks';
 
 it.each([
   { id: 'horizontal', start: { x: 0, y: 50 }, end: { x: 100, y: 50 } },
@@ -34,6 +35,35 @@ it.each([
     material.dispose();
   },
 );
+
+it('renders roads as spatially chunked instances', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const roads = Array.from({ length: 40 }, (_, index) => ({
+    id: `road-${index}`,
+    start: { x: index * 10, y: 0 },
+    end: { x: index * 10, y: 50 },
+  }));
+  const layer = createRoadLayer(roads, 25, material);
+  expect(layer.userData.roadIds).toEqual(roads.map((road) => road.id));
+  expect(countChunkInstances(layer)).toBe(40);
+  // 400 m of roads span several chunks, each independently cullable.
+  let chunks = 0;
+  const centersX: number[] = [];
+  layer.traverse((object) => {
+    if (!(object instanceof THREE.InstancedMesh)) return;
+    chunks++;
+    const matrix = new THREE.Matrix4();
+    for (let i = 0; i < object.count; i++) {
+      object.getMatrixAt(i, matrix);
+      centersX.push(matrix.elements[12]!);
+    }
+    object.geometry.dispose();
+    object.dispose();
+  });
+  expect(chunks).toBeGreaterThan(1);
+  expect(centersX).toContain(20);
+  material.dispose();
+});
 
 it('supports explicit widths for the organic road and shoulder geometry', () => {
   const material = new THREE.MeshStandardMaterial();

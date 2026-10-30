@@ -4,7 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CityResponse } from './city-types';
-import { createRoadMesh } from './create-road-mesh';
+import { createRoadLayer } from './create-road-mesh';
 import { createDistrictLayer } from './create-district-layer';
 import { createBuildingLayer } from './urban-building-layer';
 import { createUrbanDetailLayer } from './urban-detail-layer';
@@ -17,6 +17,9 @@ import { createRandomCityProfile } from './random-city-profile';
 import { CityGenerationControls } from './city-generation-controls';
 import { generateCityServices } from './city-services';
 import { FrameMetrics, type FrameMeasurement } from './frame-metrics';
+import { AdaptivePixelRatio, saveCachedPixelRatio } from './render-quality';
+import { applyCameraMove, isFormFieldEvent } from './camera-move';
+import { collectDetailObjects, detailsVisible } from './detail-culling';
 import { mountCityAssets, type CityAssetLayer } from './city-assets';
 import { CityToolbar } from './city-toolbar';
 import { createOrganicCity } from './organic-city-model';
@@ -228,9 +231,14 @@ export default function Scene() {
     camera.position.set(...pose.position);
     camera.lookAt(...pose.target);
 
+    const quality = new AdaptivePixelRatio(window.devicePixelRatio || 1);
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+    renderer.setPixelRatio(quality.value);
     renderer.shadowMap.enabled = true;
+    // Cached shadow map: the sun and the city are static, so shadows render
+    // once and are reused until a collapse or effect change invalidates them.
+    renderer.shadowMap.autoUpdate = false;
+    let shadowDirty = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1;
@@ -245,7 +253,30 @@ export default function Scene() {
     controls.minDistance = 20;
     controls.maxDistance = viewExtent * 5;
     controls.maxPolarAngle = Math.PI / 2;
+    // Free movement: right-drag/two-finger pan travels across the map and
+    // zoom lands where the cursor points, instead of a fixed orbit centre.
+    controls.enablePan = true;
+    controls.panSpeed = 1.2;
+    controls.screenSpacePanning = false;
+    controls.zoomToCursor = true;
     controls.update();
+    const pressedKeys = new Set<string>();
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey ||
+        isFormFieldEvent(event)
+      )
+        return;
+      pressedKeys.add(event.key.toLowerCase());
+    };
+    const onKeyUp = (event: KeyboardEvent) =>
+      pressedKeys.delete(event.key.toLowerCase());
+    const onBlur = () => pressedKeys.clear();
+    window.addEventListener('keydown', onKeyDown);
+    window.addEventListener('keyup', onKeyUp);
+    window.addEventListener('blur', onBlur);
     focusViewRef.current = (view) => {
       const next = worldCameraPose(world, view);
       camera.position.set(...next.position);
@@ -296,6 +327,7 @@ export default function Scene() {
           undefined,
           (layer) => {
             assetLayer = layer;
+            shadowDirty = true;
           },
         )
       : () => {};
@@ -339,21 +371,22 @@ export default function Scene() {
     const bridgeRoadIds = new Set(
       city.organic?.bridges.flatMap((bridge) => bridge.roadIds),
     );
-    const roadMeshes = city.roads
-      .filter((road) => !bridgeRoadIds.has(road.id))
-      .map((road) =>
-        createRoadMesh(
-          road,
-          city.terrain.elevationInMeters,
-          roadMaterial,
-          city.organic ? (city.district?.roadWidthInMeters ?? 6) : 6,
-        ),
-      );
-    for (const mesh of roadMeshes) scene.add(drapeSurfaceLayer(mesh, city));
-    scene.add(drapeSurfaceLayer(createDistrictLayer(city), city));
-    scene.add(
-      drapeSurfaceLayer(createUrbanDetailLayer(city, textures.concrete), city),
+    const roadLayer = createRoadLayer(
+      city.roads.filter((road) => !bridgeRoadIds.has(road.id)),
+      city.terrain.elevationInMeters,
+      roadMaterial,
+      city.organic ? (city.district?.roadWidthInMeters ?? 6) : 6,
     );
+    scene.add(drapeSurfaceLayer(roadLayer, city));
+    scene.add(drapeSurfaceLayer(createDistrictLayer(city), city));
+    const urbanDetailLayer = createUrbanDetailLayer(city, textures.concrete);
+    scene.add(drapeSurfaceLayer(urbanDetailLayer, city));
+    // Distance culling: sub-metre details render only when zoomed in.
+    const detailObjects = [
+      ...collectDetailObjects(fallbackBuildings),
+      ...collectDetailObjects(urbanDetailLayer),
+    ];
+    let detailsShown = true;
 
     // Suelo
     const groundMaterial = new THREE.MeshStandardMaterial({
@@ -454,6 +487,7 @@ export default function Scene() {
           simulation.structural,
         );
         scene.add(hazardEffects.group);
+        shadowDirty = true;
       }
     };
     refreshHazardEffects();
@@ -522,7 +556,8 @@ export default function Scene() {
       }
     };
     let appliedAssetLayer: CityAssetLayer | null = null;
-    const animateCollapses = (deltaSeconds: number) => {
+    const animateCollapses = (deltaSeconds: number): boolean => {
+      let moved = false;
       // Si los modelos locales terminan de cargar a mitad de un derrumbe,
       // reaplicar el progreso ya alcanzado sobre la capa nueva.
       if (assetLayer !== appliedAssetLayer) {
@@ -544,10 +579,12 @@ export default function Scene() {
           Math.sign(target - current) *
             Math.min(Math.abs(target - current), deltaSeconds / 0.9);
         collapseProgress.set(id, next);
+        moved = true;
         applyFallbackCollapse(id, next);
         assetLayer?.setBuildingCollapse(id, next);
         if (next === 0 && target === 0) collapseProgress.delete(id);
       }
+      return moved;
     };
     const stormFog = new THREE.Fog(
       hazardKind === 'earthquake'
@@ -609,8 +646,10 @@ export default function Scene() {
         displayedSnapshot = simulation.snapshot;
         syncCollapseTargets();
       }
-      animateCollapses(document.hidden ? 0 : delta);
+      const collapsesMoved = animateCollapses(document.hidden ? 0 : delta);
       worldLayer.animate(document.hidden ? 0 : delta);
+      // Building LOD swaps change casters, so the cached shadow map refreshes.
+      if (assetLayer?.update?.(camera.position)) shadowDirty = true;
       organicLayer?.animate(document.hidden ? 0 : delta);
       atmosphere.animate(document.hidden ? 0 : delta);
       const active = simulation?.started ?? false;
@@ -632,7 +671,26 @@ export default function Scene() {
         dirLight.intensity = active ? 2.3 : 2.5;
         skyLight.intensity = active ? 1.9 : 2;
       }
+      applyCameraMove(
+        camera,
+        controls.target,
+        pressedKeys,
+        delta,
+        viewExtent * 0.45 * (pressedKeys.has('shift') ? 3 : 1),
+      );
+      const showDetails = detailsVisible(
+        camera.position.distanceTo(controls.target),
+        viewExtent,
+      );
+      if (showDetails !== detailsShown) {
+        detailsShown = showDetails;
+        for (const object of detailObjects) object.visible = showDetails;
+      }
       controls.update();
+      if (shadowDirty || collapsesMoved) {
+        renderer.shadowMap.needsUpdate = true;
+        shadowDirty = false;
+      }
       const renderStarted = performance.now();
       const recordFrame = () => {
         if (document.hidden) {
@@ -645,7 +703,14 @@ export default function Scene() {
           renderer.info.render.calls,
           renderer.info.render.triangles,
         );
-        if (next) setMeasurement(next);
+        if (next) {
+          setMeasurement(next);
+          const changed = quality.evaluate(next.fps);
+          if (changed !== null) {
+            renderer.setPixelRatio(changed);
+            saveCachedPixelRatio(changed);
+          }
+        }
       };
       // Sacudida breve de cámara al inicio del terremoto (solo visual).
       if (
@@ -668,10 +733,36 @@ export default function Scene() {
       renderer.render(scene, camera);
       recordFrame();
     }
+    // Transform cache: static layers never recompute matrices per frame.
+    // Dynamic roots (people, traffic, water, weather, effects) keep updating.
+    scene.updateMatrixWorld(true);
+    const dynamicRoots = new Set<THREE.Object3D>([
+      trafficLayer.group,
+      weather.group,
+      atmosphere.group,
+      fallbackBuildings,
+    ]);
+    const hazardGroup = () => hazardEffects?.group;
+    for (const root of [
+      citizenLayer?.group,
+      drainLayer?.group,
+      floodLayer?.group,
+      hazardGroup(),
+    ])
+      if (root) dynamicRoots.add(root);
+    const freezeStatic = (object: THREE.Object3D) => {
+      if (dynamicRoots.has(object)) return;
+      object.matrixAutoUpdate = false;
+      for (const child of object.children) freezeStatic(child);
+    };
+    for (const child of [...scene.children]) freezeStatic(child);
     animate(performance.now());
 
     return () => {
       cancelAnimationFrame(frameId);
+      window.removeEventListener('keydown', onKeyDown);
+      window.removeEventListener('keyup', onKeyUp);
+      window.removeEventListener('blur', onBlur);
       releaseAssets();
       focusViewRef.current = null;
       worldLayerRef.current = null;
@@ -1040,8 +1131,10 @@ export default function Scene() {
             </p>
           </details>
           <p style={{ margin: '8px 0 0', fontSize: 12 }}>
-            Arrastra para girar · Rueda para acercar. Terreno y población
-            sintéticos; simulación demostrativa, no predicción real.
+            Arrastra para girar · Arrastra con botón derecho para desplazarte ·
+            Rueda para acercar donde apunta el cursor · WASD/flechas para
+            moverte, Q/E para bajar/subir, Shift para ir más rápido. Terreno y
+            población sintéticos; simulación demostrativa, no predicción real.
           </p>
           <hr style={{ margin: '12px 0', borderColor: '#ddd' }} />
           <strong>Catástrofe: {hazardPreset(hazardKind).label}</strong>

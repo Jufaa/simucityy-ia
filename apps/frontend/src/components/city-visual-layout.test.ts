@@ -83,7 +83,13 @@ it('grounds organic fallback buildings with aligned foundations and adds a clear
   const b = city.buildings[0]!;
   const root = layer.getObjectByName(b.id)!;
   expect(root.rotation.y).toBeCloseTo(b.presentation?.yawInRadians ?? 0);
-  expect(layer.getObjectByName(`foundation:${b.id}`)).toBeDefined();
+  const foundations = layer.getObjectByName('building-foundations')!;
+  const foundationIds: string[] = [];
+  foundations.traverse((object) => {
+    if (object instanceof THREE.InstancedMesh)
+      foundationIds.push(...(object.userData.buildingIds as string[]));
+  });
+  expect(foundationIds).toContain(b.id);
   expect(
     city.district!.urban!.amenities.some((a) => a.kind === 'fountain'),
   ).toBe(true);

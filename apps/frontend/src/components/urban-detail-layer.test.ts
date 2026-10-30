@@ -1,6 +1,7 @@
 import { expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createUrbanDetailLayer } from './urban-detail-layer';
+import { countChunkInstances } from './instanced-chunks';
 import type { CityResponse } from './city-types';
 
 it('uses scenario paths, trees and road markings through instanced geometry', () => {
@@ -54,7 +55,10 @@ it('uses scenario paths, trees and road markings through instanced geometry', ()
   };
   const before = structuredClone(city);
   const layer = createUrbanDetailLayer(city);
-  for (const name of ['park-paths', 'tree-crowns', 'street-crosswalk'])
-    expect(layer.getObjectByName(name)).toBeInstanceOf(THREE.InstancedMesh);
+  for (const name of ['park-paths', 'tree-crowns', 'street-crosswalk']) {
+    const bucket = layer.getObjectByName(name)!;
+    expect(bucket).toBeInstanceOf(THREE.Group);
+    expect(countChunkInstances(bucket)).toBe(1);
+  }
   expect(city).toEqual(before);
 });

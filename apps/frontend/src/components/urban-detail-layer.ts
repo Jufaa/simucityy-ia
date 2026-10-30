@@ -1,5 +1,6 @@
 import * as THREE from 'three';
 import type { CityResponse, Block } from './city-types';
+import { createChunkedInstances } from './instanced-chunks';
 
 type Placement = {
   x: number;
@@ -30,19 +31,20 @@ export function createUrbanDetailLayer(
     shadow = false,
   ) => {
     if (!placements.length) return;
-    const mesh = new THREE.InstancedMesh(geometry, surface, placements.length);
-    mesh.name = name;
-    const transform = new THREE.Object3D();
-    placements.forEach((p, index) => {
-      transform.position.set(p.x, p.y, p.z);
-      transform.scale.set(p.sx, p.sy, p.sz);
-      transform.rotation.set(0, p.rotation ?? 0, 0);
-      transform.updateMatrix();
-      mesh.setMatrixAt(index, transform.matrix);
-    });
-    mesh.castShadow = shadow;
-    mesh.receiveShadow = true;
-    group.add(mesh);
+    group.add(
+      createChunkedInstances({
+        name,
+        geometry,
+        material: surface,
+        placements: placements.map((p) => ({
+          position: new THREE.Vector3(p.x, p.y, p.z),
+          scale: new THREE.Vector3(p.sx, p.sy, p.sz),
+          yaw: p.rotation ?? 0,
+        })),
+        castShadow: shadow,
+        receiveShadow: true,
+      }),
+    );
   };
   const boxes = (
     areas: Block[],

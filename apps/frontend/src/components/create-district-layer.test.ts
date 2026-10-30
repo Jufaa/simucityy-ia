@@ -34,13 +34,30 @@ it('renders parks, sidewalks and shelter locations from the scenario without cha
   const before = structuredClone(city);
   const group = createDistrictLayer(city);
   expect(group.children.map(({ name }) => name)).toEqual([
-    'park',
-    'sidewalk',
-    'shelter',
+    'district-parks',
+    'district-sidewalks',
+    'district-shelters',
   ]);
-  expect(group.getObjectByName('park')?.position.x).toBe(25);
-  expect(group.getObjectByName('shelter')?.position.x).toBe(50);
-  expect(group.getObjectByName('shelter')?.position.z).toBe(0);
+  const centerX = (name: string) => {
+    const mesh = group.getObjectByName(name) as THREE.InstancedMesh;
+    expect(mesh).toBeInstanceOf(THREE.InstancedMesh);
+    expect(mesh.count).toBe(1);
+    const matrix = new THREE.Matrix4();
+    mesh.getMatrixAt(0, matrix);
+    return matrix.elements[12];
+  };
+  expect(centerX('district-parks')).toBe(25);
+  expect(
+    (group.getObjectByName('district-parks') as THREE.InstancedMesh).userData
+      .ids,
+  ).toEqual(['park']);
+  const shelters = group.getObjectByName(
+    'district-shelters',
+  ) as THREE.InstancedMesh;
+  const shelterMatrix = new THREE.Matrix4();
+  shelters.getMatrixAt(0, shelterMatrix);
+  expect(shelterMatrix.elements[12]).toBe(50);
+  expect(shelterMatrix.elements[14]).toBe(0);
   expect(city).toEqual(before);
   group.traverse((object) => {
     if (object instanceof THREE.Mesh) {

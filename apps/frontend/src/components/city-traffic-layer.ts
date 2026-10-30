@@ -24,7 +24,9 @@ export function createCityTrafficLayer(city: CityResponse, capacity = 40) {
     mesh.name = `traffic-${name}`;
     mesh.count = 0;
     mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
-    mesh.castShadow = true;
+    // Vehicles move every frame; casting would leave ghost shadows in the
+    // cached shadow map, and they are barely visible from the air.
+    mesh.castShadow = false;
     // Dynamic matrices move across the city; don't retain a stale initial bound.
     mesh.frustumCulled = false;
     group.add(mesh);

@@ -21,7 +21,7 @@ verificar que anda el request a la apiKey:
   SI TIRA ALGUN ERROR DE CURL AL INGRESAR LA CLAVE PROBAR NO SOLO LEVANTANDO EL BACKEND SINO TODO EL PROYECT
 
 
-  Si estas en windows no sirve nada de lo de arriba s2
+  Si estas en windows no sirve nada de lo de arriba s2 son muy burros los gordo linux
 
   $env:BYOK_MASTER_KEY="0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
   pnpm turbo run dev --env-mode=loose
