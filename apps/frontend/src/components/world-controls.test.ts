@@ -8,8 +8,7 @@ it('labels world generation and its visibility-only controls without implying AI
       seed: 123,
       width: 1850,
       height: 1450,
-      fields: 6,
-      visible: { sea: true, lake: true, fields: true, expansion: true },
+      visible: { sea: true, lake: true },
       view: 'world',
       onGenerate: () => {},
       onLayer: () => {},
@@ -19,10 +18,8 @@ it('labels world generation and its visibility-only controls without implying AI
   for (const label of [
     'Semilla',
     'Generar otro entorno',
-    'Mar',
-    'Lago',
-    'Campos',
-    'Reservas',
+    'Océano',
+    'Lago / río',
     'Vista ciudad',
     'sintético',
   ])

@@ -69,6 +69,32 @@ it('renders permanent sea and lake on their own levels, preserves them through f
   expect(materials.size).toBeGreaterThan(0);
 });
 
+it('renders only the terrain square, the lake/river and the ocean outside the city', () => {
+  const city: CityResponse = {
+    config: {
+      widthInMeters: 200,
+      heightInMeters: 200,
+      streetSpacingInMeters: 50,
+    },
+    terrain: { kind: 'flat', elevationInMeters: 25 },
+    roads: [],
+    blocks: [],
+    buildings: [],
+  };
+  const model = generateWorld(city, 123);
+  expect(model.fields.length).toBeGreaterThan(0);
+  const layer = createWorldLayer(model);
+  expect(Object.keys(layer.layers).sort()).toEqual(['lake', 'sea']);
+  const names: string[] = [];
+  layer.group.traverse((object) => names.push(object.name));
+  expect(names).toContain('world-terrain');
+  expect(names).toContain('permanent-sea');
+  expect(names).toContain('permanent-lake');
+  for (const area of [...model.fields, ...model.buildableAreas])
+    expect(names).not.toContain(area.id);
+  layer.dispose();
+});
+
 it('keeps all city ground corners inside the desktop city-camera viewport', () => {
   const city: CityResponse = {
     config: {

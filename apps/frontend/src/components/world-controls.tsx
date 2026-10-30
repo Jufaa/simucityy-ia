@@ -5,7 +5,6 @@ export function WorldControls({
   seed,
   width,
   height,
-  fields,
   visible,
   view,
   onGenerate,
@@ -16,7 +15,6 @@ export function WorldControls({
   seed: number;
   width: number;
   height: number;
-  fields: number;
   visible: Record<WorldLayerName, boolean>;
   view: WorldCameraView;
   onGenerate: () => void;
@@ -28,10 +26,8 @@ export function WorldControls({
   const [error, setError] = useState(false);
   useEffect(() => setDraft(String(seed)), [seed]);
   const names: Record<WorldLayerName, string> = {
-    sea: 'Mar',
-    lake: 'Lago',
-    fields: 'Campos',
-    expansion: 'Reservas',
+    sea: 'Océano',
+    lake: 'Lago / río',
   };
   return (
     <section
@@ -47,7 +43,7 @@ export function WorldControls({
     >
       <strong>Territorio procedural · sintético</strong>
       <p>
-        {width} × {height} m · {fields} campos · 1 lago · costa y mar
+        {width} × {height} m · río y lago · costa y océano
       </p>
       <form
         onSubmit={(event) => {
@@ -128,10 +124,7 @@ export function WorldControls({
           Vista ciudad
         </button>
       </div>
-      <p>
-        Reservas: terreno libre, sin nuevas construcciones. Las capas solo
-        cambian la vista.
-      </p>
+      <p>Fuera del cuadrado solo se dibujan el río/lago y el océano.</p>
       <small>
         Regenerar el entorno reinicia la simulación; conserva la ciudad
         original. El mar y el lago son permanentes y no alimentan la inundación.

@@ -9,7 +9,6 @@ import {
   buildCityAssetLayer,
   CITY_ASSETS,
   loadCityAssetLayer,
-  lodLevelForDistance,
   mountCityAssets,
 } from './city-assets';
 import type { CityResponse } from './city-types';
@@ -53,12 +52,12 @@ function templatesFor(group: THREE.Object3D) {
   ) as Parameters<typeof buildCityAssetLayer>[1];
 }
 
-it('fits rotated assets inside hazard bounds at the terrain base, batches parts and leaves input unchanged', async () => {
+it('fits rotated assets inside hazard bounds at the terrain base, batches parts and leaves input unchanged', () => {
   const input = city(),
     before = structuredClone(input),
     asset = template();
   const templates = templatesFor(asset.group);
-  const layer = await buildCityAssetLayer(input, templates);
+  const layer = buildCityAssetLayer(input, templates);
   expect(input).toEqual(before);
   expect(layer.group.userData.buildingCount).toBe(3);
   const instances = layer.group.children.filter(
@@ -89,9 +88,9 @@ it('fits rotated assets inside hazard bounds at the terrain base, batches parts 
   layer.dispose();
 });
 
-it('collapses a single instanced building toward its base and restores it', async () => {
+it('collapses a single instanced building toward its base and restores it', () => {
   const asset = template();
-  const layer = await buildCityAssetLayer(city(), templatesFor(asset.group));
+  const layer = buildCityAssetLayer(city(), templatesFor(asset.group));
   const batch = layer.group.children.find(
     (child) => child instanceof THREE.InstancedMesh,
   ) as THREE.InstancedMesh;
@@ -110,49 +109,12 @@ it('collapses a single instanced building toward its base and restores it', asyn
   layer.dispose();
 });
 
-it('assigns buildings to three LOD bands by camera distance', async () => {
-  expect(lodLevelForDistance(10)).toBe(0);
-  expect(lodLevelForDistance(150)).toBe(1);
-  expect(lodLevelForDistance(500)).toBe(2);
-  const asset = template();
-  const layer = await buildCityAssetLayer(city(), templatesFor(asset.group));
-  const counts = (suffix: string) =>
-    layer.group.children
-      .filter(
-        (child): child is THREE.InstancedMesh =>
-          child instanceof THREE.InstancedMesh && child.name.includes(suffix),
-      )
-      .reduce((total, mesh) => total + mesh.count, 0);
-  // No camera update yet: everything starts at full detail.
-  expect(counts(':lod0:')).toBe(3);
-  expect(counts(':lod1:')).toBe(0);
-  expect(counts(':lod2:')).toBe(0);
-  // Far away every building becomes a box impostor.
-  expect(layer.update!(new THREE.Vector3(5000, 500, 5000))).toBe(true);
-  expect(counts(':lod0:')).toBe(0);
-  expect(counts(':lod1:')).toBe(0);
-  expect(counts(':lod2:')).toBe(3);
-  // Close up the full models return, and collapsing still finds its instance.
-  expect(layer.update!(new THREE.Vector3(7, 10, 7))).toBe(true);
-  expect(counts(':lod0:')).toBe(3);
-  const batch = layer.group.children.find(
-    (child) => child instanceof THREE.InstancedMesh,
-  ) as THREE.InstancedMesh;
-  const original = new THREE.Matrix4();
-  batch.getMatrixAt(0, original);
-  layer.setBuildingCollapse('house-0', 1);
-  const fallen = new THREE.Matrix4();
-  batch.getMatrixAt(0, fallen);
-  expect(fallen.equals(original)).toBe(false);
-  layer.dispose();
-});
-
-it('owns and disposes geometry, material, textures and instance buffers exactly once', async () => {
+it('owns and disposes geometry, material, textures and instance buffers exactly once', () => {
   const asset = template();
   const spies = [asset.geometry, asset.material, asset.texture].map((item) =>
     vi.spyOn(item, 'dispose'),
   );
-  const layer = await buildCityAssetLayer(city(), templatesFor(asset.group));
+  const layer = buildCityAssetLayer(city(), templatesFor(asset.group));
   const instanceSpies = layer.group.children
     .filter((child) => child instanceof THREE.InstancedMesh)
     .map((item) => vi.spyOn(item, 'dispose'));
@@ -217,7 +179,7 @@ it('vendors unmodified, hash-verified CC0 files with only local texture dependen
   expect(models).toBe(CITY_ASSETS.length);
 });
 
-it('aggregates repeated models and adds grounded foundations on relief', async () => {
+it('aggregates repeated models and adds grounded foundations on relief', () => {
   const input = city();
   input.buildings = Array.from({ length: 6 }, (_, i) => ({
     ...input.buildings[0]!,
@@ -233,14 +195,13 @@ it('aggregates repeated models and adds grounded foundations on relief', async (
     ],
   };
   const asset = template();
-  const layer = await buildCityAssetLayer(input, templatesFor(asset.group));
+  const layer = buildCityAssetLayer(input, templatesFor(asset.group));
   const foundation = layer.group.getObjectByName(
     'kenney-foundations',
   ) as THREE.InstancedMesh;
   expect(foundation.count).toBe(6);
   const batches = layer.group.children.filter(
-    (node) =>
-      node instanceof THREE.InstancedMesh && node.name.includes(':lod0:'),
+    (node) => node instanceof THREE.InstancedMesh && node !== foundation,
   );
   expect(batches).toHaveLength(3);
   expect(batches.every((batch) => batch.count === 2)).toBe(true);
@@ -282,7 +243,7 @@ it('parses the real GLB geometry with local texture loading delegated to a Node 
       '/models/kenney-city/' + key.split('/')[0] + '/',
     );
     const input = city();
-    const layer = await buildCityAssetLayer(input, templatesFor(gltf.scene));
+    const layer = buildCityAssetLayer(input, templatesFor(gltf.scene));
     expect(new THREE.Box3().setFromObject(layer.group).isEmpty()).toBe(false);
     layer.dispose();
   }

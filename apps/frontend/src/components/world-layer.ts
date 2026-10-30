@@ -1,14 +1,10 @@
 import * as THREE from 'three';
 import type { CityResponse } from './city-types';
-import { createTerrainGeometry, drapeSurfaceLayer } from './terrain-view';
+import { createTerrainGeometry } from './terrain-view';
 import { createWaterNormals } from './water-normal-map';
-import {
-  sampleWorldHeight,
-  type WorldModel,
-  type WorldArea,
-} from './world-model';
+import type { WorldModel } from './world-model';
 
-export type WorldLayerName = 'sea' | 'lake' | 'fields' | 'expansion';
+export type WorldLayerName = 'sea' | 'lake';
 export type WorldCameraView = 'world' | 'city';
 
 export function worldCameraPose(world: WorldModel, view: WorldCameraView) {
@@ -112,30 +108,12 @@ function waterGeometry(world: WorldModel, kind: 'sea' | 'lake') {
   return geometry;
 }
 
-function fieldTexture() {
-  const data = new Uint8Array(16 * 16 * 4);
-  for (let y = 0; y < 16; y++)
-    for (let x = 0; x < 16; x++) {
-      const color = new THREE.Color(x % 8 < 3 ? 0x7f9846 : 0xa28b58);
-      const i = (y * 16 + x) * 4;
-      data[i] = color.r * 255;
-      data[i + 1] = color.g * 255;
-      data[i + 2] = color.b * 255;
-      data[i + 3] = 255;
-    }
-  const texture = new THREE.DataTexture(data, 16, 16);
-  texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
-  texture.repeat.set(9, 6);
-  texture.needsUpdate = true;
-  return texture;
-}
-
-/** Permanent world water and land-use layers never consume or modify FloodSnapshot. */
+/** Permanent world water layers never consume or modify FloodSnapshot. */
 export function createWorldLayer(world: WorldModel) {
   const group = new THREE.Group();
   group.name = 'procedural-world';
   const layers = Object.fromEntries(
-    (['sea', 'lake', 'fields', 'expansion'] as const).map((name) => {
+    (['sea', 'lake'] as const).map((name) => {
       const layer = new THREE.Group();
       layer.name = `world-${name}`;
       group.add(layer);
@@ -220,70 +198,8 @@ export function createWorldLayer(world: WorldModel) {
     mesh.name = `permanent-${kind}`;
     layers[kind].add(mesh);
   }
-  const crops = fieldTexture();
-  const cropMaterial = new THREE.MeshStandardMaterial({
-    map: crops,
-    roughness: 1,
-  });
-  const pastureMaterial = new THREE.MeshStandardMaterial({
-    color: 0x94a665,
-    roughness: 1,
-  });
-  const expansionMaterial = new THREE.MeshStandardMaterial({
-    color: 0xf2c95c,
-    transparent: true,
-    opacity: 0.24,
-    depthWrite: false,
-    roughness: 1,
-  });
-  const borderMaterial = new THREE.LineBasicMaterial({ color: 0x756343 });
-  function areaMesh(area: WorldArea) {
-    const w = area.maxCorner.x - area.minCorner.x,
-      d = area.maxCorner.y - area.minCorner.y;
-    const material =
-      area.kind === 'expansion'
-        ? expansionMaterial
-        : area.kind === 'pasture'
-          ? pastureMaterial
-          : cropMaterial;
-    const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, 0.04, d), material);
-    mesh.name = area.id;
-    mesh.position.set(
-      (area.minCorner.x + area.maxCorner.x) / 2,
-      world.seaLevel + 0.09,
-      (area.minCorner.y + area.maxCorner.y) / 2,
-    );
-    drapeSurfaceLayer(mesh, terrainView);
-    mesh.receiveShadow = true;
-    const layer = area.kind === 'expansion' ? layers.expansion : layers.fields;
-    layer.add(mesh);
-    const corners = [
-      [area.minCorner.x, area.minCorner.y],
-      [area.maxCorner.x, area.minCorner.y],
-      [area.maxCorner.x, area.maxCorner.y],
-      [area.minCorner.x, area.maxCorner.y],
-    ];
-    const line: number[] = [];
-    corners.forEach((a, i) => {
-      const b = corners[(i + 1) % 4]!,
-        steps = Math.ceil(Math.hypot(b[0]! - a[0]!, b[1]! - a[1]!) / 10);
-      for (let n = 0; n < steps; n++)
-        for (const t of [n / steps, (n + 1) / steps]) {
-          const x = a[0]! + (b[0]! - a[0]!) * t,
-            z = a[1]! + (b[1]! - a[1]!) * t;
-          line.push(x, sampleWorldHeight(world, x, z) + 0.14, z);
-        }
-    });
-    const outline = new THREE.LineSegments(
-      new THREE.BufferGeometry().setAttribute(
-        'position',
-        new THREE.Float32BufferAttribute(line, 3),
-      ),
-      borderMaterial,
-    );
-    layer.add(outline);
-  }
-  [...world.fields, ...world.buildableAreas].forEach(areaMesh);
+  // Only the terrain square, the sea (ocean) and the lake/river render;
+  // fields and expansion reserves are no longer drawn around the city.
   return {
     group,
     layers,
@@ -311,7 +227,6 @@ export function createWorldLayer(world: WorldModel) {
       for (const geometry of geometries) geometry.dispose();
       for (const material of materials) material.dispose();
       normals.dispose();
-      crops.dispose();
     },
   };
 }

@@ -160,7 +160,7 @@ export default function Scene() {
   > | null>(null);
   const [worldVisible, setWorldVisible] = useState<
     Record<WorldLayerName, boolean>
-  >({ sea: true, lake: true, fields: true, expansion: true });
+  >({ sea: true, lake: true });
   const worldVisibleRef = useRef(worldVisible);
   const [error, setError] = useState<string | null>(null);
 
@@ -648,8 +648,6 @@ export default function Scene() {
       }
       const collapsesMoved = animateCollapses(document.hidden ? 0 : delta);
       worldLayer.animate(document.hidden ? 0 : delta);
-      // Building LOD swaps change casters, so the cached shadow map refreshes.
-      if (assetLayer?.update?.(camera.position)) shadowDirty = true;
       organicLayer?.animate(document.hidden ? 0 : delta);
       atmosphere.animate(document.hidden ? 0 : delta);
       const active = simulation?.started ?? false;
@@ -1000,7 +998,6 @@ export default function Scene() {
               seed={worldSeed}
               width={world.bounds.maxX - world.bounds.minX}
               height={world.bounds.maxZ - world.bounds.minZ}
-              fields={world.fields.length}
               visible={worldVisible}
               view={worldView}
               onSeed={applyWorldSeed}
