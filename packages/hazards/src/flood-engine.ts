@@ -21,6 +21,23 @@ const NEIGHBOR_OFFSETS: readonly [number, number][] = [
   [0, 1], // este (col + 1)
 ];
 
+/**
+ * Flujo a 8 vecinos con peso 1/√2 en diagonal: con solo 4 vecinos las
+ * esquinas de los edificios (celdas bloqueadas) sellan calles diagonales y
+ * el frente se atasca en la primera manzana. La masa se conserva igual
+ * porque las fracciones repartidas siempre suman el volumen total saliente.
+ */
+const FLOW_OFFSETS: readonly { dr: number; dc: number; weight: number }[] = [
+  { dr: -1, dc: 0, weight: 1 },
+  { dr: 1, dc: 0, weight: 1 },
+  { dr: 0, dc: -1, weight: 1 },
+  { dr: 0, dc: 1, weight: 1 },
+  { dr: -1, dc: -1, weight: Math.SQRT1_2 },
+  { dr: -1, dc: 1, weight: Math.SQRT1_2 },
+  { dr: 1, dc: -1, weight: Math.SQRT1_2 },
+  { dr: 1, dc: 1, weight: Math.SQRT1_2 },
+];
+
 interface MappedEdge {
   readonly edge: RoadEdge;
   readonly cellIndices: readonly number[];
@@ -45,6 +62,11 @@ export class FloodEngine {
   private readonly permanentWaterSurfaces: ReadonlyMap<number, number>;
   private readonly blockedCells: ReadonlySet<number>;
   private readonly additionalDrainRates: readonly number[];
+  private readonly sustainedInflow: {
+    readonly cellIndices: readonly number[];
+    readonly rateInMetersPerSecond: number;
+    readonly durationInSeconds: number;
+  } | null;
 
   private config: FloodConfig;
   private effectiveGroundElevation: Float64Array;
@@ -56,6 +78,7 @@ export class FloodEngine {
   private initialVolumeInCubicMeters = 0;
   private totalRainVolumeInCubicMeters = 0;
   private totalDrainedVolumeInCubicMeters = 0;
+  private totalInflowVolumeInCubicMeters = 0;
 
   constructor(
     scenario: CityScenarioInput,
@@ -131,6 +154,30 @@ export class FloodEngine {
     }
     this.blockedCells = new Set(blocked);
     this.additionalDrainRates = rates === undefined ? [] : [...rates];
+    const inflow = environment.sustainedInflow;
+    if (inflow !== undefined) {
+      if (
+        !Number.isFinite(inflow.rateInMetersPerSecond) ||
+        inflow.rateInMetersPerSecond < 0 ||
+        (inflow.durationInSeconds !== undefined &&
+          (!Number.isFinite(inflow.durationInSeconds) ||
+            inflow.durationInSeconds < 0))
+      )
+        throw new RangeError(
+          'Sustained inflow rate and duration must be finite and nonnegative.',
+        );
+      for (const index of inflow.cellIndices) {
+        if (!Number.isInteger(index) || index < 0 || index >= this.cellCount)
+          throw new RangeError(
+            'Sustained inflow cells must be integer indices inside the grid.',
+          );
+      }
+      this.sustainedInflow = {
+        cellIndices: [...inflow.cellIndices],
+        rateInMetersPerSecond: inflow.rateInMetersPerSecond,
+        durationInSeconds: inflow.durationInSeconds ?? Number.POSITIVE_INFINITY,
+      };
+    } else this.sustainedInflow = null;
     for (const pulse of initialPulses) {
       if (
         pulse.depthInMeters > 0 &&
@@ -413,6 +460,27 @@ export class FloodEngine {
       this.nextWaterDepth[i] = postSourceDepth;
     }
 
+    // 1b. Caudal sostenido (río/mar) durante su ventana de hidrográfica.
+    if (this.sustainedInflow) {
+      const remaining = Math.max(
+        0,
+        this.sustainedInflow.durationInSeconds - this.elapsedTimeInSeconds,
+      );
+      const depth =
+        this.sustainedInflow.rateInMetersPerSecond *
+        Math.min(this.config.timeStepInSeconds, remaining);
+      if (depth > 0)
+        for (const index of this.sustainedInflow.cellIndices) {
+          if (this.blockedCells.has(index)) continue;
+          this.currentWaterDepth[index] =
+            (this.currentWaterDepth[index] ?? 0) + depth;
+          this.nextWaterDepth[index] =
+            (this.nextWaterDepth[index] ?? 0) + depth;
+          this.totalInflowVolumeInCubicMeters +=
+            depth * this.cells[index]!.areaInSqMeters;
+        }
+    }
+
     // 2. Intercambio simultáneo de volumen (m³) entre celdas vecinas
     if (transferRatio > 0) {
       for (let r = 0; r < this.rows; r++) {
@@ -429,7 +497,7 @@ export class FloodEngine {
           const neighborIndices: number[] = [];
           const neighborDiffs: number[] = [];
 
-          for (const [dr, dc] of NEIGHBOR_OFFSETS) {
+          for (const { dr, dc, weight } of FLOW_OFFSETS) {
             const nr = r + dr;
             const nc = c + dc;
             if (nr < 0 || nr >= this.rows || nc < 0 || nc >= this.columns) {
@@ -444,8 +512,8 @@ export class FloodEngine {
 
             if (diff > 0) {
               neighborIndices.push(nIdx);
-              neighborDiffs.push(diff);
-              totalPositiveDiff += diff;
+              neighborDiffs.push(diff * weight);
+              totalPositiveDiff += diff * weight;
             }
           }
 
@@ -506,6 +574,38 @@ export class FloodEngine {
       }
     }
 
+    // Velocidad proxy por celda (Manning, rugosidad urbana n=0.08): nace de
+    // la mayor pendiente de superficie libre hacia un vecino y de la lámina.
+    const flowSpeedInMetersPerSecond = new Float32Array(this.cellCount);
+    for (let r = 0; r < this.rows; r++) {
+      for (let c = 0; c < this.columns; c++) {
+        const idx = r * this.columns + c;
+        const depth = this.currentWaterDepth[idx] ?? 0;
+        if (depth < 0.02) continue;
+        const cell = this.cells[idx]!;
+        const surface = (this.effectiveGroundElevation[idx] ?? 0) + depth;
+        let maxSlope = 0;
+        for (const [dr, dc] of NEIGHBOR_OFFSETS) {
+          const nr = r + dr,
+            nc = c + dc;
+          if (nr < 0 || nr >= this.rows || nc < 0 || nc >= this.columns)
+            continue;
+          const nIdx = nr * this.columns + nc;
+          const nSurface =
+            (this.effectiveGroundElevation[nIdx] ?? 0) +
+            (this.currentWaterDepth[nIdx] ?? 0);
+          const distance =
+            dc !== 0 ? cell.maxX - cell.minX : cell.maxY - cell.minY;
+          const slope = (surface - nSurface) / Math.max(1e-6, distance);
+          if (slope > maxSlope) maxSlope = slope;
+        }
+        flowSpeedInMetersPerSecond[idx] = Math.min(
+          6,
+          (1 / 0.08) * Math.pow(depth, 2 / 3) * Math.sqrt(maxSlope),
+        );
+      }
+    }
+
     // Evaluación de tramos viales por edge.id
     const blockedRoadEdgeIds: string[] = [];
     const roadEdges: AffectedRoadEdge[] = this.mappedEdges.map(
@@ -552,10 +652,13 @@ export class FloodEngine {
       ({ building, cellIndices }) => {
         let maxD = 0;
         let sumD = 0;
+        let maxSpeed = 0;
         for (const cIdx of cellIndices) {
           const d = this.currentWaterDepth[cIdx] ?? 0;
           if (d > maxD) maxD = d;
           sumD += d;
+          const speed = flowSpeedInMetersPerSecond[cIdx] ?? 0;
+          if (speed > maxSpeed) maxSpeed = speed;
         }
         const meanD = cellIndices.length > 0 ? sumD / cellIndices.length : 0;
         const exposed = maxD >= this.config.buildingExposedThresholdInMeters;
@@ -566,6 +669,7 @@ export class FloodEngine {
           buildingId: building.id,
           maxWaterDepthInMeters: maxD,
           meanWaterDepthInMeters: meanD,
+          maxFlowSpeedInMetersPerSecond: maxSpeed,
           exposed,
         };
       },
@@ -573,13 +677,15 @@ export class FloodEngine {
 
     const expectedVolume =
       this.initialVolumeInCubicMeters +
-      this.totalRainVolumeInCubicMeters -
+      this.totalRainVolumeInCubicMeters +
+      this.totalInflowVolumeInCubicMeters -
       this.totalDrainedVolumeInCubicMeters;
 
     const balance: WaterBalance = {
       initialVolumeInCubicMeters: this.initialVolumeInCubicMeters,
       totalRainVolumeInCubicMeters: this.totalRainVolumeInCubicMeters,
       totalDrainedVolumeInCubicMeters: this.totalDrainedVolumeInCubicMeters,
+      totalInflowVolumeInCubicMeters: this.totalInflowVolumeInCubicMeters,
       currentVolumeInCubicMeters,
       volumeBalanceErrorInCubicMeters: Math.abs(
         expectedVolume - currentVolumeInCubicMeters,
@@ -592,6 +698,7 @@ export class FloodEngine {
       rows: this.rows,
       columns: this.columns,
       waterDepthInMeters,
+      flowSpeedInMetersPerSecond,
       roadEdges,
       blockedRoadEdgeIds,
       buildings,

@@ -31,6 +31,40 @@ it('keeps compact primary controls and truthful local-asset/automatic simulation
   expect(html).toContain('Pausar');
 });
 
+it('offers time speed multipliers up to x64 in the main controls', () => {
+  const noop = () => {};
+  const html = renderToStaticMarkup(
+    CityToolbar({
+      buildings: 20,
+      people: 2,
+      seed: 1,
+      organic: true,
+      running: true,
+      ready: true,
+      panelOpen: false,
+      view: 'city',
+      elapsedSeconds: 0,
+      assetStatus: 'ready',
+      timeScale: 2,
+      onTimeScale: noop,
+      onPanelToggle: noop,
+      onRegenerate: noop,
+      onView: noop,
+      onToggle: noop,
+      onReset: noop,
+    }),
+  );
+  expect(html).toContain('Velocidad del tiempo');
+  expect(html).toContain('×1');
+  expect(html).toContain('×2');
+  expect(html).toContain('×4');
+  expect(html).toContain('×8');
+  expect(html).toContain('×16');
+  expect(html).toContain('×32');
+  expect(html).toContain('×64');
+  expect(html).toContain('aria-pressed="true"');
+});
+
 it('does not pretend failed assets loaded and keeps pause/reset available', () => {
   const noop = () => {};
   const html = renderToStaticMarkup(

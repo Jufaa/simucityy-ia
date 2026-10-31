@@ -61,8 +61,8 @@ export const HAZARD_PRESETS: Readonly<Record<HazardKind, HazardPreset>> = {
       'Una ola entra desde el mar (borde oeste) y avanza tierra adentro perdiendo altura.',
     rainIntensityMmPerHour: 0,
     drainRateMmPerHour: 10,
-    flowTransferRatio: 0.6,
-    waveHeightInMeters: 1.6,
+    flowTransferRatio: 0.85,
+    waveHeightInMeters: 2.2,
   },
   earthquake: {
     kind: 'earthquake',
@@ -395,7 +395,14 @@ export function roadEdgeIdsBlockedByBuildings(
   return blockedRoadEdgeIds;
 }
 
-/** Severidad efectiva a un instante: el viento crece con la rampa de rachas. */
+/** Duración de la sacudida principal del terremoto, en segundos simulados. */
+export const QUAKE_RAMP_IN_SECONDS = 30;
+
+/**
+ * Severidad efectiva a un instante: el viento crece con la rampa de rachas
+ * (600 s) y el terremoto durante la sacudida principal (30 s), en vez de
+ * aplicar todo el daño en el primer instante.
+ */
 export function effectiveSeverityAt(
   damage: BuildingDamage,
   kind: HazardKind,
@@ -403,6 +410,11 @@ export function effectiveSeverityAt(
 ): number {
   if (kind === 'strong-wind')
     return damage.severity * Math.min(1, Math.max(0, elapsedInSeconds) / 600);
+  if (kind === 'earthquake')
+    return (
+      damage.severity *
+      Math.min(1, Math.max(0, elapsedInSeconds) / QUAKE_RAMP_IN_SECONDS)
+    );
   return damage.severity;
 }
 
@@ -434,17 +446,21 @@ export function buildingImpactAt(
 export const WIND_RAMP_IN_SECONDS = 600;
 
 /**
- * Carga equivalente sobre un edificio a partir de la profundidad junto a
- * él. El solver no calcula velocidad, así que el empuje de la corriente se
- * aproxima con un factor por evento: el tsunami arrastra (×2,2), el
- * desborde empuja (×1,3) y la lluvia es agua casi quieta (×1).
+ * Carga equivalente sobre un edificio junto a él, en metros de columna de
+ * agua: la profundidad por un factor de arrastre por evento (el tsunami
+ * arrastra ×2,2, el desborde empuja ×1,3, la lluvia es agua casi quieta ×1)
+ * más la altura de velocidad v²/(2g) cuando el solver estima velocidad.
+ * Sin velocidad se comporta exactamente como la versión histórica.
  */
 export function floodImpactLoadInMeters(
   depthInMeters: number,
   kind: HazardKind,
+  flowSpeedInMetersPerSecond = 0,
 ): number {
   const factor = kind === 'tsunami' ? 2.2 : kind === 'river-overflow' ? 1.3 : 1;
-  return Math.max(0, depthInMeters) * factor;
+  const velocityHead =
+    (flowSpeedInMetersPerSecond * flowSpeedInMetersPerSecond) / (2 * 9.81);
+  return Math.max(0, depthInMeters) * factor + Math.max(0, velocityHead);
 }
 
 /**

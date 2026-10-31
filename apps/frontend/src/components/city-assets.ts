@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/examples/jsm/loaders/GLTFLoader.js';
 import type { Building, CityResponse } from './city-types';
 import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
+import { collapsePose } from './collapse-animation';
 
 export const CITY_ASSETS = [
   'suburban/building-type-a.glb',
@@ -128,18 +129,32 @@ export function buildCityAssetLayer(
         if (p === 0) {
           entry.mesh.setMatrixAt(entry.index, entry.original);
         } else {
-          // Hundir hacia la base, comprimir la altura e inclinar: la
-          // instancia cae sobre su propia parcela sin moverse de sitio.
+          // Caída por fases (collapse-animation): pivota sobre una arista
+          // de la base, deriva hacia el lado de la caída y se desploma.
+          const pose = collapsePose(p);
+          const direction = Math.sign(entry.tilt);
+          const pivotX = entry.x + direction * entry.height * 0.18;
+          const pivotZ = entry.z + direction * entry.height * 0.1;
+          const drift = direction * pose.driftFactor * entry.height * 0.07;
           const collapse = new THREE.Matrix4()
-            .makeTranslation(entry.x, entry.base, entry.z)
-            .multiply(new THREE.Matrix4().makeRotationZ(entry.tilt * p))
-            .multiply(new THREE.Matrix4().makeRotationX(entry.tilt * 0.6 * p))
-            .multiply(new THREE.Matrix4().makeScale(1, 1 - 0.68 * p, 1))
+            .makeTranslation(drift, 0, drift * 0.6)
+            .multiply(
+              new THREE.Matrix4().makeTranslation(pivotX, entry.base, pivotZ),
+            )
+            .multiply(
+              new THREE.Matrix4().makeRotationZ(entry.tilt * pose.tiltFactor),
+            )
+            .multiply(
+              new THREE.Matrix4().makeRotationX(
+                entry.tilt * 0.6 * pose.tiltFactor,
+              ),
+            )
+            .multiply(new THREE.Matrix4().makeScale(1, pose.scaleY, 1))
             .multiply(
               new THREE.Matrix4().makeTranslation(
-                -entry.x,
+                -pivotX,
                 -entry.base,
-                -entry.z,
+                -pivotZ,
               ),
             );
           entry.mesh.setMatrixAt(

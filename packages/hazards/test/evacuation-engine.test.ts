@@ -40,6 +40,27 @@ describe('ciudadanos atrapados por derrumbes', () => {
   });
 });
 
+describe('ciudadanos alcanzados por el agua', () => {
+  it('incapacita a quien está en la calle pero no a quien ya llegó al refugio', () => {
+    const base = scenario();
+    const engine = new EvacuationEngine({
+      ...base,
+      citizens: [
+        { ...base.citizens[0]!, id: 'en-casa', reactionDelayInSeconds: 600 },
+        { ...base.citizens[0]!, id: 'en-calle', reactionDelayInSeconds: 0 },
+      ],
+      shelters: [{ id: 'shelter', nodeId: 'd', capacity: 2, active: true }],
+    });
+    engine.advance(5, []);
+    expect(engine.sweepCitizens(['en-calle', 'en-casa'])).toBe(2);
+    expect(engine.sweepCitizens(['en-calle'])).toBe(0);
+    engine.advance(600, []);
+    const snap = engine.getSnapshot();
+    expect(snap.trappedCount).toBe(2);
+    expect(snap.evacuatedCount).toBe(0);
+  });
+});
+
 function scenario(): EvacuationScenario {
   return {
     roadGraph: {

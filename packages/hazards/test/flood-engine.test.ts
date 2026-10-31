@@ -161,3 +161,84 @@ describe('FloodEngine (@simulicity/hazards) - Contrato Integrante A & B', () => 
     expect(snap.buildings.length).toBe(demoScenario.buildings.length);
   });
 });
+
+describe('FloodEngine physics upgrades', () => {
+  it('sustained inflow keeps feeding source cells and conserves volume', () => {
+    const scenario = createDemoCompatibleScenario(200, 200, 50);
+    const engine = new FloodEngine(
+      scenario,
+      {
+        rainIntensityMmPerHour: 0,
+        drainRateMmPerHour: 0,
+        flowTransferRatio: 0.5,
+      },
+      [],
+      {
+        sustainedInflow: {
+          cellIndices: [0],
+          rateInMetersPerSecond: 0.001,
+          durationInSeconds: 120,
+        },
+      },
+    );
+    let snap = engine.step();
+    expect(snap.balance.totalInflowVolumeInCubicMeters).toBeGreaterThan(0);
+    expect(snap.balance.volumeBalanceErrorInCubicMeters).toBeLessThan(1e-6);
+    engine.step();
+    snap = engine.step();
+    // Duration exhausted after two 60 s steps: no more inflow is added.
+    const afterWindow = snap.balance.totalInflowVolumeInCubicMeters ?? 0;
+    snap = engine.step();
+    expect(snap.balance.totalInflowVolumeInCubicMeters).toBeCloseTo(
+      afterWindow,
+    );
+  });
+
+  it('estimates flow speed from depth and surface slope, zero in still water', () => {
+    const scenario = createDemoCompatibleScenario(200, 200, 50);
+    const still = new FloodEngine(
+      scenario,
+      {
+        rainIntensityMmPerHour: 0,
+        drainRateMmPerHour: 0,
+        flowTransferRatio: 0,
+        syntheticRelief: 'none',
+      },
+      [{ row: 1, column: 1, depthInMeters: 1 }],
+    );
+    // A lone pulse on a flat grid spreads a surface slope toward neighbours.
+    const snap = still.step();
+    const speeds = snap.flowSpeedInMetersPerSecond!;
+    expect(speeds.length).toBe(snap.waterDepthInMeters.length);
+    expect(Math.max(...speeds)).toBeGreaterThan(0);
+    const allCells = Array.from({ length: 16 }, (_, i) => ({
+      row: Math.floor(i / 4),
+      column: i % 4,
+      depthInMeters: 1,
+    }));
+    const ponded = new FloodEngine(
+      scenario,
+      {
+        rainIntensityMmPerHour: 0,
+        drainRateMmPerHour: 0,
+        flowTransferRatio: 0,
+        syntheticRelief: 'none',
+      },
+      allCells,
+    ).getSnapshot();
+    // Uniform depth on flat ground has no slope, hence no flow.
+    expect(Math.max(...ponded.flowSpeedInMetersPerSecond!)).toBe(0);
+    const building = snap.buildings[0]!;
+    expect(building.maxFlowSpeedInMetersPerSecond).toBeDefined();
+  });
+
+  it('rejects invalid sustained inflow', () => {
+    const scenario = createDemoCompatibleScenario(200, 200, 50);
+    expect(
+      () =>
+        new FloodEngine(scenario, {}, [], {
+          sustainedInflow: { cellIndices: [9999], rateInMetersPerSecond: 1 },
+        }),
+    ).toThrow(RangeError);
+  });
+});

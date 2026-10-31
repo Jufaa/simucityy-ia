@@ -19,6 +19,7 @@ import { generateCityServices } from './city-services';
 import { FrameMetrics, type FrameMeasurement } from './frame-metrics';
 import { AdaptivePixelRatio, saveCachedPixelRatio } from './render-quality';
 import { applyCameraMove, isFormFieldEvent } from './camera-move';
+import { collapseDurationSeconds, collapseEase } from './collapse-animation';
 import { collectDetailObjects, detailsVisible } from './detail-culling';
 import { mountCityAssets, type CityAssetLayer } from './city-assets';
 import { CityToolbar } from './city-toolbar';
@@ -100,6 +101,9 @@ export default function Scene() {
   const armRef = useRef<ComparisonArm>('before');
   const [speed, setSpeed] = useState<3 | 30 | 300>(30);
   const speedRef = useRef<3 | 30 | 300>(30);
+  // Multiplicador de tiempo visible (×1…×64) sobre el ritmo base.
+  const [timeScale, setTimeScale] = useState<1 | 2 | 4 | 8 | 16 | 32 | 64>(1);
+  const timeScaleRef = useRef<1 | 2 | 4 | 8 | 16 | 32 | 64>(1);
   const [drainCount, setDrainCount] = useState(0);
   const [hazardKind, setHazardKind] = useState<HazardKind>('rain');
   const [structural, setStructural] = useState<StructuralAssessment | null>(
@@ -540,18 +544,40 @@ export default function Scene() {
         simulation.selectedCollapsedBlockedRoadEdgeIds,
       );
       if (hazardKind === 'tsunami' && hazardEffects) {
-        // El frente de la ola es el agua más avanzada del solver.
-        let front = -20;
+        // Perfil del frente por fila del solver: los edificios (celdas
+        // bloqueadas) frenan unas filas más que otras y la ola se dobla.
+        const byRow = new Map<
+          number,
+          { z: number; front: number; depth: number; speed: number }
+        >();
         simulation.cells.forEach((cell, index) => {
-          if (
-            (simulation.snapshot.waterDepthInMeters[index] ?? 0) >= 0.12 &&
-            cell.maxX > front
-          )
-            front = cell.maxX;
+          const depth = simulation.snapshot.waterDepthInMeters[index] ?? 0;
+          if (depth < 0.06) return;
+          const speed =
+            simulation.snapshot.flowSpeedInMetersPerSecond?.[index] ?? 0;
+          const current = byRow.get(cell.row);
+          if (!current)
+            byRow.set(cell.row, {
+              z: (cell.minY + cell.maxY) / 2,
+              front: cell.maxX,
+              depth,
+              speed,
+            });
+          else {
+            current.front = Math.max(current.front, cell.maxX);
+            current.depth = Math.max(current.depth, depth);
+            current.speed = Math.max(current.speed, speed);
+          }
         });
-        hazardEffects.setWaveFront(
-          front,
-          simulation.snapshot.maxWaterDepthInMeters,
+        hazardEffects.setWaveProfile(
+          [...byRow.values()]
+            .sort((a, b) => a.z - b.z)
+            .map((row) => ({
+              zInMeters: row.z,
+              frontXInMeters: row.front,
+              depthInMeters: row.depth,
+              speedInMetersPerSecond: row.speed,
+            })),
         );
       }
     };
@@ -564,7 +590,7 @@ export default function Scene() {
         appliedAssetLayer = assetLayer;
         if (assetLayer)
           for (const [id, progress] of collapseProgress)
-            assetLayer.setBuildingCollapse(id, progress);
+            assetLayer.setBuildingCollapse(id, collapseEase(progress));
       }
       const ids = new Set([
         ...collapseTargets.keys(),
@@ -574,14 +600,20 @@ export default function Scene() {
         const target = collapseTargets.get(id) ?? 0;
         const current = collapseProgress.get(id) ?? 0;
         if (Math.abs(target - current) < 0.002) continue;
+        // Derrumbe progresivo: dura según la altura del edificio y sigue la
+        // curva de collapse-animation (agrietamiento lento, caída acelerada).
+        const duration = collapseDurationSeconds(
+          buildingHeightById.get(id) ?? 8,
+        );
         const next =
           current +
           Math.sign(target - current) *
-            Math.min(Math.abs(target - current), deltaSeconds / 0.9);
+            Math.min(Math.abs(target - current), deltaSeconds / duration);
         collapseProgress.set(id, next);
         moved = true;
-        applyFallbackCollapse(id, next);
-        assetLayer?.setBuildingCollapse(id, next);
+        const eased = target > current ? collapseEase(next) : next;
+        applyFallbackCollapse(id, eased);
+        assetLayer?.setBuildingCollapse(id, eased);
         if (next === 0 && target === 0) collapseProgress.delete(id);
       }
       return moved;
@@ -613,15 +645,15 @@ export default function Scene() {
           ? 0
           : Math.min((time - previousTime) / 1000, 0.25);
       previousTime = time;
-      if (!document.hidden && simulation?.advance(delta)) {
+      const simulationDelta = delta * timeScaleRef.current;
+      if (!document.hidden && simulation?.advance(simulationDelta)) {
         setFlood(simulation.snapshot);
         setComparison(simulation.comparison);
         setAlarmTime(simulation.alarmTime);
         if (!observedAlarm && simulation.alarmTime !== null) {
+          // Antes la alarma forzaba el ritmo base a 3× y la catástrofe
+          // tardaba minutos reales en verse; el ritmo lo manda el usuario.
           observedAlarm = true;
-          simulation.setSpeed(3);
-          speedRef.current = 3;
-          setSpeed(3);
         }
       }
       if (simulation) {
@@ -639,7 +671,9 @@ export default function Scene() {
           const roadId = roadIdByEdge.get(edgeId);
           if (roadId) blockedTrafficRoads.add(roadId);
         }
-        trafficLayer.update(traffic.advance(delta, blockedTrafficRoads));
+        trafficLayer.update(
+          traffic.advance(simulationDelta, blockedTrafficRoads),
+        );
       }
       if (simulation && simulation.snapshot !== displayedSnapshot) {
         floodLayer?.update(simulation.snapshot);
@@ -925,6 +959,11 @@ export default function Scene() {
         assetStatus={assetStatus}
         hazard={hazardKind}
         onHazard={applyHazard}
+        timeScale={timeScale}
+        onTimeScale={(scale) => {
+          timeScaleRef.current = scale;
+          setTimeScale(scale);
+        }}
         onPanelToggle={() => setPanelOpen((open) => !open)}
         onRegenerate={() => regenerateCity((citySeed + 1) >>> 0)}
         onRandom={generateRandomCity}
@@ -1171,7 +1210,8 @@ export default function Scene() {
             {WATER_HAZARDS.includes(hazardKind) &&
               hazardKind !== 'tsunami' &&
               `Agua animada · Lluvia: ${hazardPreset(hazardKind).rainIntensityMmPerHour} mm/h · Drenaje: ${hazardPreset(hazardKind).drainRateMmPerHour} mm/h. `}
-            Tiempo acelerado: 1 segundo = {speed / 60} minutos simulados.
+            Tiempo acelerado: 1 segundo = {(speed * timeScale) / 60} minutos
+            simulados (ritmo base ×{timeScale}).
           </p>
           <p style={{ fontSize: 12, color: '#425466' }}>
             {city.organic

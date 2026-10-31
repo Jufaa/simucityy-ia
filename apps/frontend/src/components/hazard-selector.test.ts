@@ -17,7 +17,7 @@ it('offers every catastrophe with its key parameter and marks the active one', (
     expect(html).toContain(label);
   expect(html).toContain('Magnitud 6.8');
   expect(html).toContain('Rachas 110 km/h');
-  expect(html).toContain('Ola 1.6 m');
+  expect(html).toContain('Ola 2.2 m');
   // Solo el botón activo va presionado.
   expect(html.match(/aria-pressed="true"/g)).toHaveLength(1);
   expect(html.match(/aria-pressed="false"/g)).toHaveLength(4);

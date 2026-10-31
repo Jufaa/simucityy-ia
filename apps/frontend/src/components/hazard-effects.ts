@@ -20,6 +20,14 @@ import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
  * - tsunami: ola curvada con espuma cuya posición sigue al frente de agua
  *   real del solver (no un temporizador)
  */
+/** One solver row of the tsunami front: where the water reached and how hard. */
+export interface WaveProfileSample {
+  readonly zInMeters: number;
+  readonly frontXInMeters: number;
+  readonly depthInMeters: number;
+  readonly speedInMetersPerSecond: number;
+}
+
 export function createHazardEffects(
   city: CityResponse,
   hazard: HazardKind,
@@ -221,47 +229,107 @@ export function createHazardEffects(
     group.add(windStreaks);
   }
 
-  // --- Ola del tsunami: superficie curvada con espuma --------------------
-  // La cresta se curva hacia adelante (como una ola rompiendo) y ondula a
-  // lo largo de la costa; la espuma marca cresta y pie. Su posición X la
-  // dicta el frente de agua del solver vía setWaveFront().
+  // --- Ola del tsunami: superficie que sigue el frente real por filas ----
+  // El solver dicta, para cada fila de la malla, hasta dónde llegó el agua,
+  // con qué profundidad y velocidad (setWaveProfile). La superficie se
+  // deforma con ese perfil: avanza más por las calles, se frena y pierde
+  // altura contra los edificios (celdas bloqueadas) en vez de cruzar la
+  // ciudad como un rectángulo rígido.
   let wave: THREE.Group | null = null;
   let waveFoam: THREE.Points | null = null;
-  let waveTargetX = -20;
-  let waveMaxDepth = 0;
+  let waveGeometry: THREE.BufferGeometry | null = null;
+  let foamGeometry: THREE.BufferGeometry | null = null;
+  const WAVE_SEGMENTS_Z = 48;
+  const WAVE_SEGMENTS_Y = 5;
+  const WAVE_MAX_HEIGHT = 6.5;
+  let waveTargets: { front: number; depth: number; speed: number }[] = [];
+  let waveCurrent: { front: number; depth: number; speed: number }[] = [];
+  let waveVelocity: number[] = [];
+  let waveMaxSpeed = 0;
+  const crestLean = (yRatio: number) =>
+    Math.sin(yRatio * Math.PI * 0.62) * 2.6 * yRatio;
+  const writeWaveGeometry = () => {
+    if (!waveGeometry || !foamGeometry || !waveCurrent.length) return;
+    const positions = waveGeometry.getAttribute(
+      'position',
+    ) as THREE.BufferAttribute;
+    for (let iz = 0; iz <= WAVE_SEGMENTS_Z; iz++) {
+      const current = waveCurrent[iz]!;
+      const z = -height * 0.55 + (iz / WAVE_SEGMENTS_Z) * height * 1.1;
+      // La cresta crece con la profundidad y con la velocidad del frente:
+      // donde el agua golpea un edificio pierde velocidad y se desploma.
+      const energy = Math.max(
+        0.18,
+        Math.min(1.2, 0.22 + current.depth * 0.5 + current.speed * 0.1),
+      );
+      for (let iy = 0; iy <= WAVE_SEGMENTS_Y; iy++) {
+        const yRatio = iy / WAVE_SEGMENTS_Y;
+        const vertex = iz * (WAVE_SEGMENTS_Y + 1) + iy;
+        const churn =
+          Math.sin(elapsed * 2.6 + iz * 0.7) * 0.28 * yRatio +
+          Math.sin(z * 0.045) * 0.8 * yRatio;
+        positions.setXYZ(
+          vertex,
+          current.front + crestLean(yRatio) + churn,
+          yRatio * WAVE_MAX_HEIGHT * energy,
+          z,
+        );
+      }
+    }
+    positions.needsUpdate = true;
+    waveGeometry.computeVertexNormals();
+    const foam = foamGeometry.getAttribute('position') as THREE.BufferAttribute;
+    let foamIndex = 0;
+    for (let iz = 0; iz <= WAVE_SEGMENTS_Z; iz += 2) {
+      const current = waveCurrent[iz]!;
+      const z = -height * 0.55 + (iz / WAVE_SEGMENTS_Z) * height * 1.1;
+      const energy = Math.max(
+        0.18,
+        Math.min(1.2, 0.22 + current.depth * 0.5 + current.speed * 0.1),
+      );
+      foam.setXYZ(
+        foamIndex++,
+        current.front + crestLean(1) + 0.3,
+        WAVE_MAX_HEIGHT * energy + 0.25,
+        z,
+      );
+      foam.setXYZ(foamIndex++, current.front - 0.6, 0.3, z);
+      // Salpicadura por delante del frente, donde rompe contra el suelo
+      // y los primeros edificios.
+      foam.setXYZ(
+        foamIndex++,
+        current.front + 1.6 + Math.sin(elapsed * 3.1 + iz) * 0.5,
+        0.55 + current.speed * 0.22,
+        z,
+      );
+    }
+    foam.needsUpdate = true;
+  };
   if (hazard === 'tsunami') {
     wave = new THREE.Group();
     wave.name = 'tsunami-wave';
-    const segmentsZ = 48;
-    const segmentsY = 5;
-    const waveHeight = 6.5;
     const positions: number[] = [];
     const indices: number[] = [];
-    const crestAt = (z: number, yRatio: number) =>
-      Math.sin(yRatio * Math.PI * 0.62) * 2.6 * yRatio +
-      Math.sin(z * 0.045) * 0.8 * yRatio;
-    for (let iz = 0; iz <= segmentsZ; iz++) {
-      const z = -height * 0.55 + (iz / segmentsZ) * height * 1.1;
-      for (let iy = 0; iy <= segmentsY; iy++) {
-        const yRatio = iy / segmentsY;
-        positions.push(crestAt(z, yRatio), yRatio * waveHeight, z);
-      }
+    for (let iz = 0; iz <= WAVE_SEGMENTS_Z; iz++) {
+      const z = -height * 0.55 + (iz / WAVE_SEGMENTS_Z) * height * 1.1;
+      for (let iy = 0; iy <= WAVE_SEGMENTS_Y; iy++)
+        positions.push(-20, (iy / WAVE_SEGMENTS_Y) * WAVE_MAX_HEIGHT, z);
     }
-    for (let iz = 0; iz < segmentsZ; iz++)
-      for (let iy = 0; iy < segmentsY; iy++) {
-        const a = iz * (segmentsY + 1) + iy;
-        const b = a + segmentsY + 1;
+    for (let iz = 0; iz < WAVE_SEGMENTS_Z; iz++)
+      for (let iy = 0; iy < WAVE_SEGMENTS_Y; iy++) {
+        const a = iz * (WAVE_SEGMENTS_Y + 1) + iy;
+        const b = a + WAVE_SEGMENTS_Y + 1;
         indices.push(a, b, a + 1, b, b + 1, a + 1);
       }
-    const geometry = own(new THREE.BufferGeometry());
-    geometry.setAttribute(
+    waveGeometry = own(new THREE.BufferGeometry());
+    waveGeometry.setAttribute(
       'position',
       new THREE.Float32BufferAttribute(positions, 3),
     );
-    geometry.setIndex(indices);
-    geometry.computeVertexNormals();
+    waveGeometry.setIndex(indices);
+    waveGeometry.computeVertexNormals();
     const surface = new THREE.Mesh(
-      geometry,
+      waveGeometry,
       own(
         new THREE.MeshStandardMaterial({
           color: 0x2aa4cf,
@@ -275,18 +343,35 @@ export function createHazardEffects(
       ),
     );
     surface.name = 'tsunami-wave-surface';
+    surface.frustumCulled = false;
     wave.add(surface);
+    // Segunda cresta del tren de olas: misma superficie, 9 m detrás y al
+    // 58 % de altura, más transparente.
+    const trail = new THREE.Mesh(
+      waveGeometry,
+      own(
+        new THREE.MeshStandardMaterial({
+          color: 0x2aa4cf,
+          transparent: true,
+          opacity: 0.3,
+          roughness: 0.2,
+          metalness: 0.05,
+          side: THREE.DoubleSide,
+          depthWrite: false,
+        }),
+      ),
+    );
+    trail.name = 'tsunami-wave-trail';
+    trail.frustumCulled = false;
+    trail.position.x = -9;
+    trail.scale.y = 0.58;
+    wave.add(trail);
     // Espuma: puntos en la cresta y en el pie de la ola.
-    const foamPositions: number[] = [];
-    for (let iz = 0; iz <= segmentsZ; iz += 2) {
-      const z = -height * 0.55 + (iz / segmentsZ) * height * 1.1;
-      foamPositions.push(crestAt(z, 1) + 0.3, waveHeight + 0.25, z);
-      foamPositions.push(crestAt(z, 0) - 0.6, 0.3, z);
-    }
-    const foamGeometry = own(new THREE.BufferGeometry());
+    const foamCount = (Math.floor(WAVE_SEGMENTS_Z / 2) + 1) * 3;
+    foamGeometry = own(new THREE.BufferGeometry());
     foamGeometry.setAttribute(
       'position',
-      new THREE.Float32BufferAttribute(foamPositions, 3),
+      new THREE.Float32BufferAttribute(new Float32Array(foamCount * 3), 3),
     );
     waveFoam = new THREE.Points(
       foamGeometry,
@@ -301,8 +386,9 @@ export function createHazardEffects(
       ),
     );
     waveFoam.name = 'tsunami-foam';
+    waveFoam.frustumCulled = false;
     wave.add(waveFoam);
-    wave.position.set(-20, ground + 0.2, height / 2);
+    wave.position.set(0, ground + 0.2, height / 2);
     wave.visible = false;
     group.add(wave);
   }
@@ -351,35 +437,108 @@ export function createHazardEffects(
       for (const [edgeId, pile] of debrisByEdge)
         if (!blocked.has(edgeId)) pile.visible = false;
     },
-    /** Frente de agua real del solver: posición y energía de la ola. */
-    setWaveFront(frontXInMeters: number, maxDepthInMeters: number) {
-      waveTargetX = frontXInMeters;
-      waveMaxDepth = maxDepthInMeters;
+    /**
+     * Frente de agua real del solver por filas: la ola interpola su perfil
+     * (avance, profundidad y velocidad por z) hacia estos objetivos.
+     */
+    setWaveProfile(samples: readonly WaveProfileSample[]) {
+      if (!wave) return;
+      waveTargets = [];
+      waveMaxSpeed = 0;
+      for (let iz = 0; iz <= WAVE_SEGMENTS_Z; iz++) {
+        const z = (iz / WAVE_SEGMENTS_Z) * height;
+        // Interpola el perfil del solver en la z de este segmento.
+        let sample = samples.at(-1);
+        for (let i = 0; i < samples.length; i++) {
+          const current = samples[i]!;
+          if (current.zInMeters >= z || i === samples.length - 1) {
+            const previous = samples[i - 1];
+            if (previous && current.zInMeters > previous.zInMeters) {
+              const t =
+                (z - previous.zInMeters) /
+                (current.zInMeters - previous.zInMeters);
+              sample = {
+                zInMeters: z,
+                frontXInMeters:
+                  previous.frontXInMeters +
+                  (current.frontXInMeters - previous.frontXInMeters) *
+                    Math.max(0, Math.min(1, t)),
+                depthInMeters:
+                  previous.depthInMeters +
+                  (current.depthInMeters - previous.depthInMeters) *
+                    Math.max(0, Math.min(1, t)),
+                speedInMetersPerSecond:
+                  previous.speedInMetersPerSecond +
+                  (current.speedInMetersPerSecond -
+                    previous.speedInMetersPerSecond) *
+                    Math.max(0, Math.min(1, t)),
+              };
+            } else sample = current;
+            break;
+          }
+        }
+        waveTargets.push({
+          front: sample?.frontXInMeters ?? -20,
+          depth: sample?.depthInMeters ?? 0,
+          speed: sample?.speedInMetersPerSecond ?? 0,
+        });
+        waveMaxSpeed = Math.max(
+          waveMaxSpeed,
+          sample?.speedInMetersPerSecond ?? 0,
+        );
+      }
+      if (!waveCurrent.length)
+        // La ola entra desde fuera de la costa y barre hacia el frente,
+        // no aparece ya colocada sobre la primera fila de edificios.
+        waveCurrent = waveTargets.map(() => ({
+          front: -20,
+          depth: 0,
+          speed: 0,
+        }));
+      waveVelocity = waveTargets.map(() => 0);
     },
     animate(delta: number, running: boolean) {
       if (!Number.isFinite(delta) || delta <= 0 || disposed) return;
       if (running) elapsed += delta;
       if (windStreaks && running) writeWind();
-      // Los escombros crecen hasta su tamaño en ~0,9 s reales.
+      // Los escombros crecen hasta su tamaño en ~2,2 s, al ritmo del derrumbe.
       for (const [id, growth] of rubbleGrowth) {
         if (growth >= 1) continue;
-        const next = Math.min(1, growth + delta / 0.9);
+        const next = Math.min(1, growth + delta / 2.2);
         rubbleGrowth.set(id, next);
         rubbleByBuilding.get(id)?.scale.setScalar(0.15 + 0.85 * next);
       }
       if (wave) {
-        const hasWater = waveMaxDepth > 0.05 && waveTargetX > -10;
+        const hasWater = waveTargets.some(
+          (target) => target.depth > 0.05 && target.front > -10,
+        );
         wave.visible = hasWater;
-        if (hasWater) {
-          // La ola persigue al frente del solver y respira sobre él.
-          wave.position.x +=
-            (waveTargetX - wave.position.x) * Math.min(1, delta * 3);
+        if (hasWater && waveCurrent.length) {
+          // Cada tramo persigue su frente del solver con un resorte
+          // subamortiguado: la ola acelera, sobrepasa un poco y se asienta
+          // contra los edificios en vez de deslizarse a velocidad constante.
+          const blend = Math.min(1, delta * 3);
+          const step = Math.min(delta, 0.05);
+          for (let iz = 0; iz < waveCurrent.length; iz++) {
+            const current = waveCurrent[iz]!;
+            const target = waveTargets[iz]!;
+            let velocity = waveVelocity[iz] ?? 0;
+            velocity +=
+              ((target.front - current.front) * 7 - velocity * 3.2) * step;
+            velocity = Math.max(-60, Math.min(60, velocity));
+            waveVelocity[iz] = velocity;
+            current.front += velocity * step;
+            current.depth += (target.depth - current.depth) * blend;
+            current.speed += (target.speed - current.speed) * blend;
+          }
+          writeWaveGeometry();
           wave.position.y = ground + 0.2 + Math.sin(elapsed * 2.1) * 0.18;
-          const energy = Math.max(0.45, Math.min(2.2, waveMaxDepth * 1.4));
-          wave.scale.set(1, energy, 1);
           if (waveFoam) {
             const material = waveFoam.material as THREE.PointsMaterial;
-            material.size = 1.4 + Math.abs(Math.sin(elapsed * 3)) * 0.7;
+            material.size =
+              1.3 +
+              Math.min(1.2, waveMaxSpeed * 0.25) +
+              Math.abs(Math.sin(elapsed * 3)) * 0.6;
           }
         }
       }
@@ -391,10 +550,12 @@ export function createHazardEffects(
       for (const pile of rubbleByBuilding.values()) pile.visible = false;
       for (const pile of debrisByEdge.values()) pile.visible = false;
       if (wave) {
-        wave.position.set(-20, ground + 0.2, height / 2);
+        wave.position.set(0, ground + 0.2, height / 2);
         wave.visible = false;
-        waveTargetX = -20;
-        waveMaxDepth = 0;
+        waveTargets = [];
+        waveCurrent = [];
+        waveVelocity = [];
+        waveMaxSpeed = 0;
       }
     },
     dispose() {

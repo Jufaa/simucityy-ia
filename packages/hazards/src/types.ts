@@ -72,6 +72,17 @@ export interface FloodEnvironment {
   >;
   readonly blockedCellIndices?: readonly number[];
   readonly additionalDrainRatesMmPerHour?: readonly number[];
+  /**
+   * Caudal sostenido que entra por celdas fuente (cauce del río o borde de
+   * mar): suma profundidad a ritmo constante durante la duración dada.
+   * Modela la hidrográfica del desborde y el tren de olas del tsunami, en
+   * vez de un único pulso inicial que se disipa.
+   */
+  readonly sustainedInflow?: {
+    readonly cellIndices: readonly number[];
+    readonly rateInMetersPerSecond: number;
+    readonly durationInSeconds?: number;
+  };
 }
 
 export interface FloodConfig {
@@ -119,6 +130,8 @@ export interface ExposedBuildingStatus {
   readonly buildingId: string;
   readonly maxWaterDepthInMeters: number;
   readonly meanWaterDepthInMeters: number;
+  /** Velocidad máxima estimada del flujo junto al edificio (m/s). */
+  readonly maxFlowSpeedInMetersPerSecond?: number;
   readonly exposed: boolean;
 }
 
@@ -126,8 +139,10 @@ export interface WaterBalance {
   readonly initialVolumeInCubicMeters: number;
   readonly totalRainVolumeInCubicMeters: number;
   readonly totalDrainedVolumeInCubicMeters: number;
+  /** Volumen aportado por el caudal sostenido (río/mar), si lo hubo. */
+  readonly totalInflowVolumeInCubicMeters?: number;
   readonly currentVolumeInCubicMeters: number;
-  /** Error absoluto de conservación de volumen (m³): |initial + rain - drained - current| */
+  /** Error absoluto de conservación de volumen (m³): |initial + rain + inflow - drained - current| */
   readonly volumeBalanceErrorInCubicMeters: number;
 }
 
@@ -138,6 +153,13 @@ export interface FloodState {
   readonly columns: number;
   /** Profundidad de agua en metros por celda [row * columns + column] */
   readonly waterDepthInMeters: Float32Array;
+  /**
+   * Velocidad estimada del flujo por celda (m/s), derivada de la profundidad
+   * y la pendiente de la superficie libre con la fórmula de Manning
+   * (rugosidad urbana). Es un proxy diagnóstico: el solver es difusivo y no
+   * resuelve momento, pero permite estimar arrastre sobre edificios y personas.
+   */
+  readonly flowSpeedInMetersPerSecond?: Float32Array;
   /** Estado de todos los tramos del grafo vial (identificados por edge.id) */
   readonly roadEdges: readonly AffectedRoadEdge[];
   /** Lista rápida de IDs de tramos bloqueados/inundados (waterDepth >= roadFloodedThresholdInMeters) */

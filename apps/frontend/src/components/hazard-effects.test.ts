@@ -133,11 +133,43 @@ it('animates wind streaks only while running and the tsunami wave follows the so
   );
   expect(tsunami.group.getObjectByName('tsunami-foam')).toBeTruthy();
   expect(wave.visible).toBe(false);
-  tsunami.setWaveFront(120, 1.5);
-  tsunami.animate(0.5, true);
+  // Perfil desigual: el frente avanza más por el sur que por el norte,
+  // como cuando los edificios frenan unas filas del solver más que otras.
+  const heightInMeters = city.config.heightInMeters;
+  tsunami.setWaveProfile([
+    {
+      zInMeters: 0,
+      frontXInMeters: 140,
+      depthInMeters: 1.5,
+      speedInMetersPerSecond: 2,
+    },
+    {
+      zInMeters: heightInMeters / 2,
+      frontXInMeters: 120,
+      depthInMeters: 1.2,
+      speedInMetersPerSecond: 1.5,
+    },
+    {
+      zInMeters: heightInMeters,
+      frontXInMeters: 60,
+      depthInMeters: 0.9,
+      speedInMetersPerSecond: 1,
+    },
+  ]);
+  // La ola entra con inercia (resorte): hacen falta varios frames para que
+  // el frente recorra la costa hasta su objetivo.
+  for (let frame = 0; frame < 120; frame++) tsunami.animate(1 / 30, true);
   expect(wave.visible).toBe(true);
-  expect(wave.position.x).toBeGreaterThan(-20);
-  expect(wave.position.x).toBeLessThanOrEqual(120);
+  const positions = (surface as THREE.Mesh).geometry.getAttribute('position');
+  let maxX = -Infinity,
+    minX = Infinity;
+  for (let i = 0; i < positions.count; i++) {
+    maxX = Math.max(maxX, positions.getX(i));
+    minX = Math.min(minX, positions.getX(i));
+  }
+  // La superficie se dobla: no todos los tramos llegan al mismo frente.
+  expect(maxX).toBeGreaterThan(100);
+  expect(maxX - minX).toBeGreaterThan(30);
   tsunami.reset();
   expect(wave.visible).toBe(false);
   tsunami.dispose();

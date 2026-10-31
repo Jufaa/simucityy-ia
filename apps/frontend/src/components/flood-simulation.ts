@@ -28,6 +28,36 @@ export class FloodSimulation {
 
   private createEngine() {
     const preset = hazardPreset(this.hazard);
+    const pulses = createHazardPulses(
+      this.city,
+      this.hazard,
+      this.environment.blockedCellIndices ?? [],
+    );
+    // El pulso inicial no basta: el río sigue aportando caudal durante su
+    // hidrográfica y el tsunami llega en un tren de olas por el borde oeste.
+    const columns = Math.max(1, this.city.terrainGrid.xCoordinates.length - 1);
+    const sustainedInflow =
+      this.environment.sustainedInflow ??
+      (this.hazard === 'river-overflow' && pulses.length
+        ? {
+            // Hidrográfica larga: el cauce sigue subiendo durante horas y
+            // el agua termina acumulándose sobre los barrios bajos.
+            cellIndices: pulses.map((p) => p.row * columns + p.column),
+            rateInMetersPerSecond: 0.0002,
+            durationInSeconds: 21600,
+          }
+        : this.hazard === 'tsunami' && pulses.length
+          ? {
+              // Tren de olas sostenido: sin aporte continuo el frente se
+              // diluye por debajo del umbral visible y se atasca en la
+              // primera fila de edificios.
+              cellIndices: pulses
+                .filter((p) => p.column <= 1)
+                .map((p) => p.row * columns + p.column),
+              rateInMetersPerSecond: 0.0016,
+              durationInSeconds: 5400,
+            }
+          : undefined);
     return new FloodEngine(
       this.city,
       {
@@ -36,12 +66,10 @@ export class FloodSimulation {
         drainRateMmPerHour: preset.drainRateMmPerHour,
         flowTransferRatio: preset.flowTransferRatio,
       },
-      createHazardPulses(
-        this.city,
-        this.hazard,
-        this.environment.blockedCellIndices ?? [],
-      ),
-      this.environment,
+      pulses,
+      sustainedInflow
+        ? { ...this.environment, sustainedInflow }
+        : this.environment,
     );
   }
 

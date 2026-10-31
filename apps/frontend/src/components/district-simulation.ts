@@ -37,6 +37,8 @@ interface Arm {
   /** Edificio -> segundo simulado de su derrumbe (estructural o por agua). */
   collapsedAt: Map<string, number>;
   collapseSeverity: Map<string, number>;
+  /** Daño acumulado por agua (0-1): el derrumbe llega por duración, no al instante. */
+  floodDamage: Map<string, number>;
   blockedCache: { collapsedCount: number; roadIds: string[] };
 }
 
@@ -154,6 +156,7 @@ export class DistrictSimulation {
       structural,
       collapsedAt: new Map(),
       collapseSeverity: new Map(),
+      floodDamage: new Map(),
       blockedCache: { collapsedCount: -1, roadIds: [] },
     };
   }
@@ -208,18 +211,26 @@ export class DistrictSimulation {
       const structural = damageByBuilding.get(building.id);
       if (structural && structural.severity > 0)
         return buildingImpactAt(structural, this.hazard, this.elapsed);
-      const depth =
-        floodByBuilding.get(building.id)?.maxWaterDepthInMeters ?? 0;
+      const status = floodByBuilding.get(building.id);
+      const depth = status?.maxWaterDepthInMeters ?? 0;
       const threshold = floodCollapseDepthInMeters(
         building,
         this.hazard,
         this.city.config.seed ?? 123,
       );
-      const load = floodImpactLoadInMeters(depth, this.hazard);
+      const load = floodImpactLoadInMeters(
+        depth,
+        this.hazard,
+        status?.maxFlowSpeedInMetersPerSecond ?? 0,
+      );
+      const damage = arm.floodDamage.get(building.id) ?? 0;
       return {
         buildingId: building.id,
-        condition: depth >= 0.2 ? ('damaged' as const) : ('intact' as const),
-        severity: Math.min(0.59, load / threshold),
+        condition:
+          depth >= 0.2 || damage > 0.12
+            ? ('damaged' as const)
+            : ('intact' as const),
+        severity: Math.min(0.59, Math.max(load / threshold, damage)),
         collapseTimeInSeconds: null,
         cause: this.hazard,
       };
@@ -289,7 +300,13 @@ export class DistrictSimulation {
     if (this.evacuationEnabled) arm.people = arm.evacuation.getSnapshot();
   }
 
-  /** Derrumbes por agua: la profundidad del motor supera la resistencia. */
+  /**
+   * Derrumbes por agua con daño progresivo: cada minuto de evaluación la
+   * carga (profundidad + altura de velocidad) por encima del 55 % de la
+   * resistencia acumula daño; al llegar a 1 el edificio cae. Un golpe con
+   * el doble de la resistencia derrumba al instante. El daño no se cura
+   * cuando el agua baja.
+   */
   private processFloodCollapses(arm: Arm) {
     const buildingById = new Map(
       this.input.buildings.map((building) => [building.id, building]),
@@ -306,17 +323,65 @@ export class DistrictSimulation {
       const load = floodImpactLoadInMeters(
         status.maxWaterDepthInMeters,
         this.hazard,
+        status.maxFlowSpeedInMetersPerSecond ?? 0,
       );
-      if (load < threshold) continue;
+      const ratio = load / threshold;
+      if (ratio <= 0.55) continue;
+      const damage =
+        (arm.floodDamage.get(status.buildingId) ?? 0) +
+        (ratio >= 2 ? 1 : (ratio - 0.55) * (60 / 240));
+      arm.floodDamage.set(status.buildingId, damage);
+      if (damage < 1) continue;
       arm.collapsedAt.set(status.buildingId, this.elapsed);
       arm.collapseSeverity.set(
         status.buildingId,
-        Math.min(1, Math.max(0.6, load / threshold)),
+        Math.min(1, Math.max(0.6, ratio)),
       );
       if (this.evacuationEnabled)
         arm.evacuation.trapCitizensInBuildings([status.buildingId]);
     }
     if (this.evacuationEnabled) arm.people = arm.evacuation.getSnapshot();
+  }
+
+  /**
+   * Personas alcanzadas por la corriente: con lámina y velocidad cuyo
+   * producto supera el límite de estabilidad (más bajo si la movilidad es
+   * reducida), o con agua por encima de 1,1 m, quedan incapacitadas donde
+   * estén — en casa, en el conector o en mitad de la calle.
+   */
+  private processCitizenWaterExposure(arm: Arm) {
+    if (!this.evacuationEnabled) return;
+    const snapshot = arm.flood.snapshot;
+    const grid = this.city.terrainGrid;
+    if (!grid) return;
+    const locate = (axis: readonly number[], value: number) => {
+      const next = axis.findIndex((x, i) => i > 0 && x > value);
+      return next < 0 ? axis.length - 2 : Math.max(0, next - 1);
+    };
+    const mobilityById = new Map(
+      (this.city.citizens ?? []).map((citizen) => [
+        citizen.id,
+        citizen.mobilityFactor,
+      ]),
+    );
+    const swept: string[] = [];
+    for (const citizen of arm.people.citizens) {
+      if (citizen.status === 'evacuated' || citizen.status === 'trapped')
+        continue;
+      const column = locate(grid.xCoordinates, citizen.position.x);
+      const row = locate(grid.yCoordinates, citizen.position.y);
+      const index = row * snapshot.columns + column;
+      const depth = snapshot.waterDepthInMeters[index] ?? 0;
+      if (depth < 0.35) continue;
+      const speed = snapshot.flowSpeedInMetersPerSecond?.[index] ?? 0;
+      const stabilityLimit = 0.3 + 0.45 * (mobilityById.get(citizen.id) ?? 1);
+      if (depth >= 1.1 || depth * speed >= stabilityLimit)
+        swept.push(citizen.id);
+    }
+    if (swept.length) {
+      arm.evacuation.sweepCitizens(swept);
+      arm.people = arm.evacuation.getSnapshot();
+    }
   }
   pause() {
     this.running = false;
@@ -391,8 +456,10 @@ export class DistrictSimulation {
       remaining -= dt;
       if (this.secondsIntoTick >= 60 - 1e-8) {
         this.secondsIntoTick = 0;
-        for (const arm of Object.values(this.arms))
+        for (const arm of Object.values(this.arms)) {
           this.processFloodCollapses(arm);
+          this.processCitizenWaterExposure(arm);
+        }
         for (const arm of Object.values(this.arms)) {
           const snapshot = arm.flood.snapshot;
           snapshot.exposedBuildingIds.forEach((id) => arm.exposed.add(id));

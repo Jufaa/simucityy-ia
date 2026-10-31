@@ -152,6 +152,34 @@ it('runs a tsunami from the west edge and raises the alarm without rain', () => 
   expect(sim.snapshot.balance.totalRainVolumeInCubicMeters).toBe(0);
 });
 
+it('pushes the tsunami front across most of the city instead of stalling at the first buildings', () => {
+  const sim = new DistrictSimulation(createReliefCity(makeCity()), {
+    hazard: 'tsunami',
+  });
+  sim.start();
+  sim.advance(30);
+  let front = -20;
+  sim.cells.forEach((cell, index) => {
+    if ((sim.snapshot.waterDepthInMeters[index] ?? 0) >= 0.06)
+      front = Math.max(front, cell.maxX);
+  });
+  // La ciudad mide 200 m: el frente supera el 75 % del recorrido.
+  expect(front).toBeGreaterThan(150);
+});
+
+it('keeps accumulating river water over time until houses are exposed', () => {
+  const sim = new DistrictSimulation(createReliefCity(makeCity()), {
+    hazard: 'river-overflow',
+  });
+  sim.start();
+  sim.advance(20);
+  const earlyMean = sim.snapshot.meanWaterDepthInMeters;
+  const earlyExposed = sim.snapshot.exposedBuildingIds.length;
+  sim.advance(40);
+  expect(sim.snapshot.meanWaterDepthInMeters).toBeGreaterThan(earlyMean);
+  expect(sim.snapshot.exposedBuildingIds.length).toBeGreaterThan(earlyExposed);
+});
+
 it('collapses shoreline buildings under tsunami load and reroutes evacuation', () => {
   const sim = new DistrictSimulation(makeCity(), { hazard: 'tsunami' });
   sim.start();

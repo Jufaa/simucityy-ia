@@ -141,6 +141,31 @@ export class EvacuationEngine {
     return trapped;
   }
 
+  /**
+   * Ciudadanos alcanzados por el agua (o por otro peligro puntual): quedan
+   * incapacitados donde están, como los atrapados por un derrumbe. No
+   * afecta a quien ya llegó al refugio ni a quien ya estaba atrapado.
+   * Devuelve cuántos fueron alcanzados en esta llamada.
+   */
+  sweepCitizens(citizenIds: readonly string[]): number {
+    const ids = new Set(citizenIds);
+    let swept = 0;
+    for (const agent of this.agents) {
+      if (
+        !ids.has(agent.input.id) ||
+        agent.phase === 'done' ||
+        agent.phase === 'trapped'
+      )
+        continue;
+      this.release(agent);
+      agent.phase = 'trapped';
+      agent.status = 'trapped';
+      agent.edge = null;
+      swept++;
+    }
+    return swept;
+  }
+
   private release(agent: Agent) {
     if (agent.shelter) agent.shelter.reserved--;
     agent.shelter = null;

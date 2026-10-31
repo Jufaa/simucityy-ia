@@ -37,6 +37,8 @@ export function CityToolbar(props: {
   assetStatus: 'loading' | 'ready' | 'fallback' | 'procedural';
   hazard?: HazardKind;
   onHazard?(kind: HazardKind): void;
+  timeScale?: 1 | 2 | 4 | 8 | 16 | 32 | 64;
+  onTimeScale?(scale: 1 | 2 | 4 | 8 | 16 | 32 | 64): void;
   onPanelToggle(): void;
   onRegenerate(): void;
   onRandom?(): void;
@@ -154,6 +156,31 @@ export function CityToolbar(props: {
           {props.running ? 'Simulación automática' : 'En pausa'} ·{' '}
           {Math.floor(props.elapsedSeconds / 60)} min
         </span>
+        {props.onTimeScale && (
+          <span
+            role="group"
+            aria-label="Velocidad del tiempo"
+            style={{ display: 'flex', gap: 4, alignItems: 'center' }}
+          >
+            <span style={{ padding: '0 4px', color: '#60787a' }}>Tiempo</span>
+            {([1, 2, 4, 8, 16, 32, 64] as const).map((scale) => (
+              <button
+                key={scale}
+                type="button"
+                aria-pressed={(props.timeScale ?? 1) === scale}
+                style={{
+                  ...button,
+                  padding: '8px 9px',
+                  background:
+                    (props.timeScale ?? 1) === scale ? '#e2eeeb' : '#fff',
+                }}
+                onClick={() => props.onTimeScale!(scale)}
+              >
+                ×{scale}
+              </button>
+            ))}
+          </span>
+        )}
         <button
           type="button"
           disabled={!props.ready}
