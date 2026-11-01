@@ -17,6 +17,24 @@ import {
 import type { CityResponse } from './city-types';
 import { FloodSimulation } from './flood-simulation';
 import { sampleTerrainHeight } from './terrain-view';
+import { sampleRoadSurfaceHeight } from './road-surface';
+
+/**
+ * Profundidad que realmente moja a una persona: la superficie del agua
+ * menos la superficie sobre la que está de pie. Sobre el tablero de un
+ * puente la lámina del cauce puede ser enorme y aun así no tocarla hasta
+ * que el agua supera el tablero.
+ */
+export function citizenEffectiveDepthInMeters(
+  depthInMeters: number,
+  cellGroundElevationInMeters: number,
+  standingSurfaceInMeters: number,
+): number {
+  return Math.max(
+    0,
+    cellGroundElevationInMeters + depthInMeters - standingSurfaceInMeters,
+  );
+}
 import { organicFloodEnvironment } from './organic-flood-environment';
 
 export type ComparisonArm = 'before' | 'after';
@@ -371,7 +389,22 @@ export class DistrictSimulation {
       const column = locate(grid.xCoordinates, citizen.position.x);
       const row = locate(grid.yCoordinates, citizen.position.y);
       const index = row * snapshot.columns + column;
-      const depth = snapshot.waterDepthInMeters[index] ?? 0;
+      // Sobre el puente manda el tablero: el agua del cauce no alcanza a
+      // la persona hasta que la superficie supera la calzada.
+      const depth = citizenEffectiveDepthInMeters(
+        snapshot.waterDepthInMeters[index] ?? 0,
+        arm.flood.cells[index]?.groundElevationInMeters ??
+          sampleTerrainHeight(
+            this.city,
+            citizen.position.x,
+            citizen.position.y,
+          ),
+        sampleRoadSurfaceHeight(
+          this.city,
+          citizen.position.x,
+          citizen.position.y,
+        ),
+      );
       if (depth < 0.35) continue;
       const speed = snapshot.flowSpeedInMetersPerSecond?.[index] ?? 0;
       const stabilityLimit = 0.3 + 0.45 * (mobilityById.get(citizen.id) ?? 1);

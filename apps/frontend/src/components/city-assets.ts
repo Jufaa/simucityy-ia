@@ -151,6 +151,27 @@ export function buildCityAssetLayer(
             )
             .multiply(new THREE.Matrix4().makeScale(1, pose.scaleY, 1))
             .multiply(
+              // Cizalla: la coronación se desplaza sobre la base.
+              new THREE.Matrix4().set(
+                1,
+                direction * pose.shearFactor,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+              ),
+            )
+            .multiply(
               new THREE.Matrix4().makeTranslation(
                 -pivotX,
                 -entry.base,

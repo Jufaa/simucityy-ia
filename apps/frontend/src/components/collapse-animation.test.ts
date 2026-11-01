@@ -20,13 +20,22 @@ it('creeps first, then falls with gravitational acceleration', () => {
 });
 
 it('poses the fall in phases: lean on the base edge, then pancake down', () => {
-  expect(collapsePose(0)).toEqual({ tiltFactor: 0, scaleY: 1, driftFactor: 0 });
+  expect(collapsePose(0)).toEqual({
+    tiltFactor: 0,
+    scaleY: 1,
+    driftFactor: 0,
+    shearFactor: 0,
+  });
   const mid = collapsePose(0.5);
   // A mitad de caída ya se inclinó bastante pero apenas se comprimió.
   expect(mid.tiltFactor).toBeGreaterThan(0.5);
   expect(mid.scaleY).toBeGreaterThan(0.85);
   const end = collapsePose(1);
   expect(end.scaleY).toBeCloseTo(0.32);
+  expect(end.shearFactor).toBeCloseTo(0.22);
+  // El rebote de impacto comprime por debajo de la tendencia al asentarse.
+  const trendMidpoint = (collapsePose(0.85).scaleY + end.scaleY) / 2;
+  expect(collapsePose(0.925).scaleY).toBeLessThan(trendMidpoint);
   // Al final la inclinación se asienta sobre los escombros.
   expect(end.tiltFactor).toBeLessThan(collapsePose(0.8).tiltFactor);
   expect(end.driftFactor).toBe(1);

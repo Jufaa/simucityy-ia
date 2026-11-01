@@ -2,7 +2,10 @@ import { expect, it } from 'vitest';
 import { generateCityScenario } from '../../../backend/src/modules/cities/city-scenario-generator';
 import type { CityResponse } from './city-types';
 import { createReliefCity } from './terrain-view';
-import { DistrictSimulation } from './district-simulation';
+import {
+  citizenEffectiveDepthInMeters,
+  DistrictSimulation,
+} from './district-simulation';
 
 const makeCity = (): CityResponse =>
   JSON.parse(
@@ -21,6 +24,15 @@ const makeCity = (): CityResponse =>
       }),
     ),
   );
+
+it('does not drown people standing on a bridge deck until water overtops it', () => {
+  // Cauce a -3 m con 4 m de agua: la superficie (1 m) no llega al tablero (2.2 m).
+  expect(citizenEffectiveDepthInMeters(4, -3, 2.2)).toBe(0);
+  // El agua supera el tablero por 0,8 m: ahí sí alcanza a la persona.
+  expect(citizenEffectiveDepthInMeters(6, -3, 2.2)).toBeCloseTo(0.8);
+  // A ras de suelo la profundidad efectiva es la del solver.
+  expect(citizenEffectiveDepthInMeters(0.7, 25, 25)).toBeCloseTo(0.7);
+});
 
 it('runs matched independent arms with bounded mitigation and preserves pause/reset and source bytes', () => {
   const city = createReliefCity(makeCity()),

@@ -68,6 +68,35 @@ it('renders clipped permanent water and a separate bridge deck, and disposes own
     ).toBeLessThanOrEqual(geography.lake.level + 1e-4);
   }
   expect(layer.group.getObjectByName('bridge:organic-bridge')).toBeDefined();
+  // Cada extremo del puente apoya en un estribo bajo el tablero, sin
+  // losas superpuestas sobre las calles de llegada.
+  const abutments: THREE.Object3D[] = [];
+  layer.group.traverse((object) => {
+    if (object.name === 'bridge-abutment') abutments.push(object);
+    expect(object.name).not.toBe('bridge-approach');
+  });
+  expect(abutments).toHaveLength(2);
+  layer.group.updateMatrixWorld(true);
+  for (const abutment of abutments) {
+    const bounds = new THREE.Box3().setFromObject(abutment);
+    // El estribo queda bajo la cara inferior del tablero (deck - 0,44 m),
+    // nunca sobre la calzada.
+    expect(bounds.max.y).toBeLessThanOrEqual(
+      geography.bridges[0]!.deckElevationInMeters - 0.4,
+    );
+  }
+  // Terraplenes de césped rellenan bajo los extremos sin superar el tablero.
+  const embankments: THREE.Object3D[] = [];
+  layer.group.traverse((object) => {
+    if (object.name === 'bridge-embankment') embankments.push(object);
+  });
+  expect(embankments).toHaveLength(2);
+  for (const embankment of embankments) {
+    const bounds = new THREE.Box3().setFromObject(embankment);
+    expect(bounds.max.y).toBeLessThanOrEqual(
+      geography.bridges[0]!.deckElevationInMeters + 0.03,
+    );
+  }
   let disposed = 0;
   water.geometry.addEventListener('dispose', () => disposed++);
   layer.animate(0.1);

@@ -61,6 +61,23 @@ describe('ciudadanos alcanzados por el agua', () => {
   });
 });
 
+describe('cruzar un tramo que se corta a mitad de camino', () => {
+  it('quien ya está sobre el puente termina de cruzarlo en vez de congelarse', () => {
+    const base = scenario();
+    const engine = new EvacuationEngine(base);
+    // Sale de casa, llega al nodo a y entra en el tramo ab.
+    engine.advance(20, []);
+    const onBridge = engine.getSnapshot().citizens[0]!;
+    expect(onBridge.status).toBe('evacuating');
+    expect(onBridge.currentEdgeId).toBe('ab');
+    const positionBeforeBlock = { ...onBridge.position };
+    // El tramo se corta con el ciudadano encima: sigue hasta el refugio.
+    const end = engine.advance(120, ['ab']);
+    expect(end.citizens[0]!.position).not.toEqual(positionBeforeBlock);
+    expect(end.citizens[0]!.status).toBe('evacuated');
+  });
+});
+
 function scenario(): EvacuationScenario {
   return {
     roadGraph: {
@@ -170,7 +187,7 @@ describe('EvacuationEngine', () => {
     expect(new EvacuationEngine(oneWay).advance(10, []).strandedCount).toBe(1);
   });
 
-  it('stops exactly mid-edge on closure, preserves reservation and resumes when reopened', () => {
+  it('finishes crossing a mid-edge closure and keeps its shelter reservation', () => {
     const input = scenario();
     input.citizens = [
       {
@@ -183,18 +200,14 @@ describe('EvacuationEngine', () => {
     const engine = new EvacuationEngine(input);
     const moving = engine.advance(5, []);
     expect(moving.citizens[0]!.position).toEqual({ x: 6, y: 0 });
-    const stopped = engine.advance(10, ['ab']);
-    expect(stopped.citizens[0]).toMatchObject({
-      position: { x: 6, y: 0 },
-      status: 'stranded',
-    });
-    expect(stopped.shelters[0]!.reserved).toBe(1);
-    expect(stopped.completionTimeInSeconds).toBeNull();
-    expect(engine.advance(5, []).citizens[0]!.position).toEqual({
-      x: 12,
-      y: 0,
-    });
-    expect(engine.advance(10, []).evacuatedCount).toBe(1);
+    // El tramo se corta con el ciudadano encima (como un puente que se
+    // inunda tras él): termina de cruzarlo en vez de congelarse a mitad.
+    const crossing = engine.advance(10, ['ab']);
+    expect(crossing.citizens[0]!.position.x).toBeGreaterThan(6);
+    expect(crossing.citizens[0]!.status).toBe('evacuating');
+    expect(crossing.shelters[0]!.reserved).toBe(1);
+    expect(crossing.completionTimeInSeconds).toBeNull();
+    expect(engine.advance(30, []).evacuatedCount).toBe(1);
   });
 
   it('replans a remaining blocked route at a node rather than entering the closed edge', () => {

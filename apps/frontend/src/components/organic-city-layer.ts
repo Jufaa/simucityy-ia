@@ -74,6 +74,9 @@ export function createOrganicCityLayer(city: CityResponse) {
     const paint = own(
       new THREE.MeshStandardMaterial({ color: 0xf1dfad, roughness: 0.8 }),
     );
+    const grass = own(
+      new THREE.MeshStandardMaterial({ color: 0x74925c, roughness: 1 }),
+    );
     const bridgeRoads = new Set(geography.bridges.flatMap((b) => b.roadIds));
     // Wide thin shoulders sit below the separately rendered asphalt, never across the water.
     for (const road of city.roads) {
@@ -150,6 +153,55 @@ export function createOrganicCityLayer(city: CityResponse) {
       }
       for (let z = -length / 2 + 3; z < length / 2; z += 8)
         part('bridge-lane-mark', paint, 0, 0.015, z, 0.14, 0.025, 3);
+      // Estribos bajo cada extremo del tablero: apoyan el puente sobre el
+      // terreno sin tocar la superficie de las calles (nada de losas
+      // superpuestas en la conexión; la calzada llega al nudo a la misma
+      // cota que el tablero).
+      for (const side of [-1, 1] as const) {
+        const nodePoint = side === 1 ? bridge.end : bridge.start;
+        const groundAtEnd = sampleTerrainHeight(city, nodePoint.x, nodePoint.y);
+        const supportHeight = Math.max(
+          0.3,
+          bridge.deckElevationInMeters - 0.44 - groundAtEnd,
+        );
+        const abutment = new THREE.Mesh(box, concrete);
+        abutment.name = 'bridge-abutment';
+        abutment.scale.set(bridge.widthInMeters * 0.82, supportHeight, 2.4);
+        abutment.position.set(
+          0,
+          -0.44 - supportHeight / 2,
+          side * (length / 2 - 1.2),
+        );
+        abutment.castShadow = abutment.receiveShadow = true;
+        root.add(abutment);
+        // Terraplén de césped bajo el extremo: rellena el hueco entre el
+        // tablero plano y el terreno en pendiente para que no se vea el
+        // césped "dentro" del puente ni un corte flotante al llegar.
+        const embankLength = Math.min(13, length * 0.3);
+        const axisX = (bridge.end.x - bridge.start.x) / length;
+        const axisZ = (bridge.end.y - bridge.start.y) / length;
+        const far = {
+          x: nodePoint.x + axisX * side * embankLength,
+          y: nodePoint.y + axisZ * side * embankLength,
+        };
+        const topFar =
+          sampleTerrainHeight(city, far.x, far.y) -
+          bridge.deckElevationInMeters +
+          0.02;
+        const topNear = -0.06;
+        const embankment = new THREE.Mesh(box, grass);
+        embankment.name = 'bridge-embankment';
+        embankment.scale.set(bridge.widthInMeters * 1.06, 1.4, embankLength);
+        embankment.position.set(
+          0,
+          (topNear + topFar) / 2 - 0.7,
+          side * (length / 2 + embankLength / 2 - 1),
+        );
+        embankment.rotation.x =
+          -side * Math.atan2(topFar - topNear, embankLength);
+        embankment.castShadow = embankment.receiveShadow = true;
+        root.add(embankment);
+      }
       for (const t of [0.3, 0.7]) {
         const x = bridge.start.x + (bridge.end.x - bridge.start.x) * t;
         const z = bridge.start.y + (bridge.end.y - bridge.start.y) * t;

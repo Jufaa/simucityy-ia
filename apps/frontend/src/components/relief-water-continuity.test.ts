@@ -67,6 +67,53 @@ it('joins adjacent thin slope cells at one reconstructed shared edge, not two te
   layer.mesh.geometry.dispose();
 });
 
+it('runs the water sheet under buildings so they emerge and submerge with the level', () => {
+  const base = createDemoCompatibleScenario(2, 2, 1);
+  const building = {
+    id: 'fallen',
+    minCorner: { x: 0.6, y: 0.6 },
+    maxCorner: { x: 1.4, y: 1.4 },
+    heightInMeters: 6,
+  };
+  const city = {
+    ...base,
+    terrainGrid: {
+      ...base.terrainGrid,
+      elevationsInMeters: [
+        [0, 0, 0],
+        [0, 0, 0],
+        [0, 0, 0],
+      ],
+    },
+    buildings: [building],
+  };
+  const engine = new FloodEngine(city, { syntheticRelief: 'none' });
+  const cells = engine.getCells();
+  const snapshot = {
+    ...engine.getSnapshot(),
+    waterDepthInMeters: new Float32Array(cells.length).fill(1),
+  };
+  const layer = createReliefWater(city, cells, new THREE.MeshBasicMaterial());
+  const insideFootprint = () => {
+    const points = layer.mesh.geometry.getAttribute('position');
+    let inside = 0;
+    for (let i = 0; i < layer.mesh.geometry.drawRange.count; i++)
+      if (
+        points.getX(i) > 0.7 &&
+        points.getX(i) < 1.3 &&
+        points.getZ(i) > 0.7 &&
+        points.getZ(i) < 1.3
+      )
+        inside++;
+    return inside;
+  };
+  // La lámina pasa bajo el edificio: hay agua dentro de la huella, así el
+  // edificio (en pie o derrumbado) emerge del agua y se sumerge al subir.
+  layer.update(snapshot);
+  expect(insideFootprint()).toBeGreaterThan(0);
+  layer.mesh.geometry.dispose();
+});
+
 it('shares diagonal-slope corners, retains upward normals and clears dry cells on reset', () => {
   const { city, cells, snapshot, layer } = fixture(
     [
@@ -128,52 +175,19 @@ it('averages absolute surfaces rather than depths and excludes dry neighbors', (
   layer.mesh.geometry.dispose();
 });
 
-it('keeps crossed overlapping building masks clear with fixed reusable attributes', () => {
-  const {
-    city,
-    cells,
-    snapshot,
-    layer: unused,
-  } = fixture(
+it('keeps fixed reusable attributes within budget on repeated updates', () => {
+  const { snapshot, layer } = fixture(
     [
       [0, 0],
       [0, 0],
     ],
     [1],
   );
-  unused.mesh.geometry.dispose();
-  const buildings = Array.from({ length: 12 }, (_, i) => {
-    const offset = 0.1 + Math.floor(i / 2) * 0.13;
-    return {
-      id: `strip-${i}`,
-      minCorner: { x: i % 2 ? 0 : offset, y: i % 2 ? offset : 0 },
-      maxCorner: { x: i % 2 ? 1 : offset + 0.04, y: i % 2 ? offset + 0.04 : 1 },
-      heightInMeters: 3,
-    };
-  });
-  const layer = createReliefWater(
-    city,
-    cells,
-    new THREE.MeshBasicMaterial(),
-    buildings,
-  );
   const geometry = layer.mesh.geometry;
   const points = geometry.getAttribute('position');
   layer.update(snapshot);
   expect(geometry.drawRange.count).toBeGreaterThan(0);
   expect(geometry.drawRange.count).toBeLessThanOrEqual(points.count);
-  for (let i = 0; i < geometry.drawRange.count; i += 3) {
-    const x = (points.getX(i) + points.getX(i + 1) + points.getX(i + 2)) / 3;
-    const z = (points.getZ(i) + points.getZ(i + 1) + points.getZ(i + 2)) / 3;
-    for (const building of buildings) {
-      expect(
-        x > building.minCorner.x + 1e-6 &&
-          x < building.maxCorner.x - 1e-6 &&
-          z > building.minCorner.y + 1e-6 &&
-          z < building.maxCorner.y - 1e-6,
-      ).toBe(false);
-    }
-  }
   layer.update(snapshot);
   expect(geometry.getAttribute('position')).toBe(points);
   geometry.dispose();

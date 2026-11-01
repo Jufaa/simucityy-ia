@@ -312,8 +312,12 @@ export function assessStructuralDamage(
           Math.hypot(center.x - epicenter.x, center.y - epicenter.y) /
           maxDistance;
         const heightFactor = Math.min(1, building.heightInMeters / 40) * 0.2;
+        // Atenuación fuerte con la distancia (la energía sísmica se reparte
+        // sobre un frente cada vez mayor): lejos del epicentro el daño cae
+        // por debajo del umbral y el edificio queda intacto, no "afectado".
+        const attenuation = Math.pow(1 - distanceRatio, 1.6);
         severity =
-          (1.12 - 0.62 * distanceRatio) * (0.62 + 0.55 * random) +
+          (0.18 + 1.15 * attenuation) * (0.62 + 0.55 * random) +
           heightFactor -
           0.28;
       } else {

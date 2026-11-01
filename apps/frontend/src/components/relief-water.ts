@@ -1,48 +1,10 @@
 import * as THREE from 'three';
 import type {
-  Building,
   CellBounds,
   CityScenarioInput,
   FloodSnapshot,
 } from '@simulicity/hazards';
 import { sampleTerrainHeight } from './terrain-view';
-
-function halfPlane(
-  polygon: THREE.Vector3[],
-  axis: 'x' | 'z',
-  value: number,
-  greater: boolean,
-) {
-  const output: THREE.Vector3[] = [];
-  const inside = (p: THREE.Vector3) =>
-    greater ? p[axis] >= value : p[axis] <= value;
-  polygon.forEach((a, i) => {
-    const b = polygon[(i + 1) % polygon.length]!;
-    if (inside(a)) output.push(a);
-    if (inside(a) !== inside(b))
-      output.push(a.clone().lerp(b, (value - a[axis]) / (b[axis] - a[axis])));
-  });
-  return output;
-}
-
-/** Subtract a rectangle into disjoint outside strips, retaining wall boundaries. */
-function outsideBuilding(polygon: THREE.Vector3[], building: Building) {
-  let remaining = polygon;
-  const pieces: THREE.Vector3[][] = [];
-  const boundaries: ['x' | 'z', number, boolean][] = [
-    ['x', building.minCorner.x, true],
-    ['x', building.maxCorner.x, false],
-    ['z', building.minCorner.y, true],
-    ['z', building.maxCorner.y, false],
-  ];
-  for (const [axis, value, greater] of boundaries) {
-    const outside = halfPlane(remaining, axis, value, !greater);
-    if (outside.length >= 3) pieces.push(outside);
-    remaining = halfPlane(remaining, axis, value, greater);
-    if (!remaining.length) break;
-  }
-  return pieces;
-}
 
 /**
  * Render-only reconstruction: incident wet cells contribute their absolute solver
@@ -81,30 +43,22 @@ export function reconstructWaterLevels(
   return levels;
 }
 
-/** Clip a continuous display sheet against the visible terrain and building masks. */
+/**
+ * Clip a continuous display sheet against the visible terrain only. The
+ * sheet runs underneath buildings on purpose: clipping it to each (often
+ * rotated) footprint left a dry ring around every building and the water
+ * never touched the walls. Buildings are opaque, so the submerged part of
+ * the sheet is hidden by the building itself and the waterline reads on
+ * the facade; collapsed buildings get covered the same way.
+ */
 export function createReliefWater(
   city: CityScenarioInput,
   cells: readonly CellBounds[],
   material: THREE.Material,
-  excludedBuildings: readonly Building[] = [],
 ) {
-  const masks = cells.map((cell) =>
-    excludedBuildings.filter(
-      (building) =>
-        building.minCorner.x < cell.maxX &&
-        building.maxCorner.x > cell.minX &&
-        building.minCorner.y < cell.maxY &&
-        building.maxCorner.y > cell.minY,
-    ),
-  );
-  // The 2n x/z rectangle boundaries partition a cell into at most (2n+1)^2
-  // tiles. A tile intersected with either clipped terrain triangle has at most
-  // seven vertices (five fan triangles). This bounds all disjoint mask pieces,
-  // including overlapping footprints; fixed attributes avoid orphaned GPU buffers.
-  const capacity = masks.reduce(
-    (sum, buildings) => sum + 30 * (2 * buildings.length + 1) ** 2,
-    0,
-  );
+  // Each cell emits two terrain-clipped triangles; a clipped triangle fans
+  // into at most 6 vertices. Fixed attributes avoid orphaned GPU buffers.
+  const capacity = cells.length * 18;
   const positions = new Float32Array(capacity * 3);
   const uv = new Float32Array(capacity * 2);
   const normals = new Float32Array(capacity * 3);
@@ -137,11 +91,7 @@ export function createReliefWater(
       let vertices = 0;
       const levels = reconstructWaterLevels(city, cells, snapshot);
       const columns = city.terrainGrid.xCoordinates.length;
-      function triangle(
-        points: THREE.Vector3[],
-        surfaces: number[],
-        footprints: readonly Building[],
-      ) {
+      function triangle(points: THREE.Vector3[], surfaces: number[]) {
         const clipped: THREE.Vector3[] = [];
         for (let i = 0; i < 3; i++) {
           const a = points[i]!,
@@ -161,11 +111,7 @@ export function createReliefWater(
                 .lerp(surfaceB, clearanceA / (clearanceA - clearanceB)),
             );
         }
-        let polygons = clipped.length >= 3 ? [clipped] : [];
-        for (const building of footprints)
-          polygons = polygons.flatMap((polygon) =>
-            outsideBuilding(polygon, building),
-          );
+        const polygons = clipped.length >= 3 ? [clipped] : [];
         for (const polygon of polygons)
           for (let i = 1; i < polygon.length - 1; i++) {
             const a = polygon[0]!,
@@ -211,8 +157,8 @@ export function createReliefWater(
           lb = levels[corner + 1]!;
         const ld = levels[corner + columns]!,
           le = levels[corner + columns + 1]!;
-        triangle([a, d, b], [la, ld, lb], masks[index]!);
-        triangle([b, d, e], [lb, ld, le], masks[index]!);
+        triangle([a, d, b], [la, ld, lb]);
+        triangle([b, d, e], [lb, ld, le]);
       });
       geometry.setDrawRange(0, vertices);
       geometry.getAttribute('position').needsUpdate = true;

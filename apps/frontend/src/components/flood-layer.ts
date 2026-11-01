@@ -41,12 +41,7 @@ export function createFloodLayer(
       (cell) =>
         cell.groundElevationInMeters !== cells[0]?.groundElevationInMeters,
     )
-      ? createReliefWater(
-          city,
-          cells,
-          water.material,
-          obstacles ? city.buildings : [],
-        )
+      ? createReliefWater(city, cells, water.material)
       : null;
   if (relief) group.add(relief.mesh);
   if (relief) water.material.vertexColors = true;

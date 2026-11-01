@@ -91,6 +91,18 @@ it('marks earthquake damage, then rubble and debris when buildings collapse', ()
     const initial = pile.scale.x;
     layer.animate(0.45, true);
     expect(pile.scale.x).toBeGreaterThan(initial);
+    // Y dejan una mancha de tierra y restos esparcidos sobre el suelo,
+    // más ancha que la huella del edificio.
+    const apron = layer.group.getObjectByName(
+      `hazard-debris-ground:${collapsed.buildingId}`,
+    ) as THREE.Mesh;
+    expect(apron).toBeInstanceOf(THREE.Mesh);
+    const building = city.buildings.find((b) => b.id === collapsed.buildingId)!;
+    const footprint = Math.max(
+      building.maxCorner.x - building.minCorner.x,
+      building.maxCorner.y - building.minCorner.y,
+    );
+    expect(Math.max(apron.scale.x, apron.scale.y)).toBeGreaterThan(footprint);
   }
   expect(JSON.stringify(city)).toBe(before);
   layer.dispose();
@@ -131,7 +143,8 @@ it('animates wind streaks only while running and the tsunami wave follows the so
   expect((surface as THREE.Mesh).geometry).not.toBeInstanceOf(
     THREE.BoxGeometry,
   );
-  expect(tsunami.group.getObjectByName('tsunami-foam')).toBeTruthy();
+  // Sin puntos de espuma: se veían como puntos blancos flotando.
+  expect(tsunami.group.getObjectByName('tsunami-foam')).toBeUndefined();
   expect(wave.visible).toBe(false);
   // Perfil desigual: el frente avanza más por el sur que por el norte,
   // como cuando los edificios frenan unas filas del solver más que otras.
@@ -170,6 +183,10 @@ it('animates wind streaks only while running and the tsunami wave follows the so
   // La superficie se dobla: no todos los tramos llegan al mismo frente.
   expect(maxX).toBeGreaterThan(100);
   expect(maxX - minX).toBeGreaterThan(30);
+  // Un solo cuerpo: sin malla trasera separada, y la sección incluye la
+  // cola trasera (vértices muy por detrás del frente) unida a la cresta.
+  expect(tsunami.group.getObjectByName('tsunami-wave-trail')).toBeUndefined();
+  expect(minX).toBeLessThan(maxX - 8);
   tsunami.reset();
   expect(wave.visible).toBe(false);
   tsunami.dispose();

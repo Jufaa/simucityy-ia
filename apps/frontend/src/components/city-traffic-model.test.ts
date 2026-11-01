@@ -50,6 +50,19 @@ const city: CityResponse = {
 };
 
 describe('bounded synthetic urban traffic', () => {
+  it('lets vehicles already on a blocked road clear it instead of freezing mid-span', () => {
+    const traffic = new CityTraffic(city);
+    for (let i = 0; i < 90; i++) traffic.advance(1 / 30);
+    const onWest = traffic.vehicles.filter((v) => v.roadId === 'west');
+    expect(onWest.length).toBeGreaterThan(0);
+    const before = new Map(onWest.map((v) => [v.id, `${v.x},${v.z}`]));
+    for (let i = 0; i < 90; i++) traffic.advance(1 / 30, new Set(['west']));
+    const moved = traffic.vehicles.filter(
+      (v) => before.has(v.id) && before.get(v.id) !== `${v.x},${v.z}`,
+    );
+    expect(moved.length).toBeGreaterThan(0);
+  });
+
   it('accelerates reproducibly without changing source or old snapshots', () => {
     const original = structuredClone(city);
     const a = new CityTraffic(city),
@@ -89,16 +102,18 @@ describe('bounded synthetic urban traffic', () => {
     expect(traffic.vehicles).toEqual(bounded.vehicles);
   });
 
-  it('stops traffic on closed roads and never enters a closed next road', () => {
+  it('clears closed roads without ever entering a closed next road', () => {
     const traffic = new CityTraffic(city);
     const initial = traffic.vehicles;
     for (let i = 0; i < 2000; i++)
-      traffic.advance(1 / 30, new Set(['west', 'east']));
+      traffic.advance(1 / 30, new Set(['west', 'east', 'north']));
+    // Nadie entró en otra calle: cada vehículo sigue en su calle de salida,
+    // avanzando hasta el final del tramo cortado (como al salir de un puente).
     for (const vehicle of traffic.vehicles) {
       const start = initial.find((v) => v.id === vehicle.id)!;
-      if (start.roadId !== 'north') expect(vehicle).toEqual(start);
-      else expect(vehicle.roadId).toBe('north');
+      expect(vehicle.roadId).toBe(start.roadId);
     }
+    expect(traffic.vehicles.some((v) => v.distanceInMeters > 0)).toBe(true);
     const stopped = traffic.vehicles;
     traffic.advance(0.25, new Set(['west', 'east', 'north']));
     expect(

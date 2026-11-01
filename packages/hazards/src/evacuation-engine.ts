@@ -273,9 +273,11 @@ export class EvacuationEngine {
         )
           continue;
         if (agent.phase === 'edge') {
-          agent.status = blocked.has(agent.edge!.id)
-            ? 'stranded'
-            : 'evacuating';
+          // Quien ya está sobre el tramo (p. ej. sobre el tablero de un
+          // puente) lo termina de cruzar aunque se corte detrás de él:
+          // el planificador ya evita ENTRAR en tramos cortados, pero
+          // nadie se queda congelado a mitad del puente.
+          agent.status = 'evacuating';
           continue;
         }
         if (!agent.shelter && !this.plan(agent, blocked)) {

@@ -147,6 +147,20 @@ describe('hazard scenarios', () => {
     }
   });
 
+  it('el daño sísmico decae con la distancia: lejos del epicentro no hay afectados', () => {
+    const scenario = createDemoCompatibleScenario(500, 500, 25);
+    const quake = assessStructuralDamage(scenario, 'earthquake');
+    const byId = new Map(quake.buildings.map((b) => [b.buildingId, b]));
+    // El edificio de la esquina (lejos del epicentro central) queda intacto
+    // incluso al final del evento; el central sí puede resultar dañado.
+    const corner = byId.get('bldg-corner-high')!;
+    expect(buildingImpactAt(corner, 'earthquake', 3600).condition).toBe(
+      'intact',
+    );
+    const center = byId.get('bldg-center-low')!;
+    expect(center.severity).toBeGreaterThan(corner.severity);
+  });
+
   it('solo los derrumbes cortan calles con escombros', () => {
     const scenario = createDemoCompatibleScenario(500, 500, 25);
     const quake = assessStructuralDamage(scenario, 'earthquake');
@@ -161,17 +175,12 @@ describe('hazard scenarios', () => {
         ),
       ),
     );
-    // Un edificio solo dañado (no derrumbado) no corta ninguna calle.
-    const damagedOnly = quake.buildings.find(
-      (item) => item.damaged && !item.collapsed,
-    );
-    if (damagedOnly)
-      expect(
-        roadEdgeIdsBlockedByBuildings(
-          scenario,
-          new Set([damagedOnly.buildingId]),
-        ),
-      ).toEqual([]);
+    // Un edificio que no se derrumba no corta ninguna calle: el conjunto
+    // oficial solo se alimenta de derrumbados (igualdad verificada arriba).
+    const corner = quake.buildings.find(
+      (item) => item.buildingId === 'bldg-corner-high',
+    )!;
+    expect(corner.collapsed).toBe(false);
   });
 
   it('el agua derrumba a profundidades distintas por evento y edificio', () => {

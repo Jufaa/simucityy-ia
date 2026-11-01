@@ -3,7 +3,7 @@ import * as THREE from 'three';
 import { FloodEngine, createDemoCompatibleScenario } from '@simulicity/hazards';
 import { createFloodLayer } from './flood-layer';
 
-it('masks partial building footprints in flat water without changing the legacy path', () => {
+it('runs flat water under building footprints without changing the legacy path', () => {
   const base = createDemoCompatibleScenario(100, 100, 25);
   const building = {
     id: 'partial',
@@ -19,13 +19,15 @@ it('masks partial building footprints in flat water without changing the legacy 
   const mesh = layer.group.getObjectByName('flood-surface') as THREE.Mesh;
   expect(mesh.visible).toBe(true);
   const p = mesh.geometry.getAttribute('position');
+  let insideFootprint = 0;
   for (let i = 0; i < mesh.geometry.drawRange.count; i += 3) {
     const x = (p.getX(i) + p.getX(i + 1) + p.getX(i + 2)) / 3,
       z = (p.getZ(i) + p.getZ(i + 1) + p.getZ(i + 2)) / 3;
-    expect(x > 7 + 1e-6 && x < 19 - 1e-6 && z > 8 + 1e-6 && z < 20 - 1e-6).toBe(
-      false,
-    );
+    if (x > 7 && x < 19 && z > 8 && z < 20) insideFootprint++;
   }
+  // La lámina pasa bajo el edificio: la huella está cubierta y el edificio
+  // emerge del agua (antes quedaba un anillo seco alrededor).
+  expect(insideFootprint).toBeGreaterThan(0);
   const legacy = createFloodLayer(city, engine.getCells());
   legacy.update(engine.getSnapshot());
   expect(legacy.group.getObjectByName('flood-surface')).toBeUndefined();

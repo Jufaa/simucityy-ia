@@ -175,10 +175,9 @@ export class CityTraffic {
     }
     for (const vehicle of this.state) {
       const lane = vehicle.lane;
-      if (blockedRoadIds.has(lane.roadId)) {
-        vehicle.speed = 0;
-        continue;
-      }
+      // Un vehículo ya dentro de un tramo cortado (p. ej. sobre el puente)
+      // sigue hasta salir de él; lo que no puede es ENTRAR en otro tramo
+      // cortado, y eso ya lo filtra la elección de carril siguiente.
       const candidates = (this.outgoing.get(lane.to) ?? []).filter(
         (next) => !blockedRoadIds.has(next.roadId),
       );
