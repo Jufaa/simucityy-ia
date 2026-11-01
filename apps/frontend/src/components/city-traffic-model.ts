@@ -1,4 +1,9 @@
 import type { CityResponse } from './city-types';
+import {
+  signalAxis,
+  signalJunctionIds,
+  signalStateAt,
+} from './traffic-signals';
 
 export interface TrafficVehicle {
   readonly id: string;
@@ -53,8 +58,20 @@ export class CityTraffic {
   private readonly reservations = new Map<string, string>();
   private state: Vehicle[] = [];
   private accumulated = 0;
+  private elapsed = 0;
+  private readonly signalsEnabled: boolean;
+  private readonly signalJunctions: ReadonlySet<string>;
+  private readonly signalSeed: number;
 
-  constructor(city: CityResponse, options: { maxVehicles?: number } = {}) {
+  constructor(
+    city: CityResponse,
+    options: { maxVehicles?: number; signalsEnabled?: boolean } = {},
+  ) {
+    this.signalsEnabled = options.signalsEnabled ?? false;
+    this.signalJunctions = this.signalsEnabled
+      ? signalJunctionIds(city)
+      : new Set();
+    this.signalSeed = city.config.seed ?? 1;
     const nodes = new Map(city.roadGraph?.nodes.map((node) => [node.id, node]));
     for (const edge of city.roadGraph?.edges ?? []) {
       const from = nodes.get(edge.from),
@@ -125,6 +142,10 @@ export class CityTraffic {
     });
   }
 
+  get elapsedTimeInSeconds(): number {
+    return this.elapsed;
+  }
+
   advance(
     deltaSeconds: number,
     blockedRoadIds: ReadonlySet<string> = EMPTY_ROADS,
@@ -139,6 +160,7 @@ export class CityTraffic {
       steps++
     ) {
       this.step(blockedRoadIds);
+      this.elapsed += STEP;
       this.accumulated -= STEP;
     }
     return this.vehicles;
@@ -148,6 +170,7 @@ export class CityTraffic {
     this.state = this.initial.map((vehicle) => ({ ...vehicle }));
     this.reservations.clear();
     this.accumulated = 0;
+    this.elapsed = 0;
   }
 
   private step(blockedRoadIds: ReadonlySet<string>): void {
@@ -197,10 +220,23 @@ export class CityTraffic {
       const entryClear = nextVehicles.every(
         (other) => other.id === vehicle.id || other.distance >= GAP + CLEARANCE,
       );
-      const owner = this.reservations.get(lane.to);
       const remaining = lane.length - vehicle.distance;
+      // Once a vehicle has crossed the stop line, it clears its reserved junction
+      // even when the phase changes. Approaching vehicles release red reservations.
+      const signalAllows =
+        !this.signalJunctions.has(lane.to) ||
+        signalStateAt(lane.to, this.elapsed, this.signalSeed)[
+          signalAxis(lane.dx, lane.dz)
+        ] === 'green' ||
+        (vehicle.junction === lane.to && remaining < CLEARANCE);
+      if (!signalAllows && vehicle.junction === lane.to) {
+        this.reservations.delete(lane.to);
+        vehicle.junction = null;
+      }
+      const owner = this.reservations.get(lane.to);
       if (
         remaining < 20 &&
+        signalAllows &&
         next &&
         entryClear &&
         (!owner || owner === vehicle.id) &&
@@ -210,7 +246,10 @@ export class CityTraffic {
         vehicle.junction = lane.to;
       }
       const canCross =
-        next && entryClear && this.reservations.get(lane.to) === vehicle.id;
+        next &&
+        signalAllows &&
+        entryClear &&
+        this.reservations.get(lane.to) === vehicle.id;
       const leader = leaderById.get(vehicle.id);
       let available = leader
         ? Math.max(0, leader.distance - vehicle.distance - GAP)

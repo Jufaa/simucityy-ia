@@ -6,6 +6,8 @@ import {
 } from '@simulicity/hazards';
 
 const detail = (kind: HazardKind): string => {
+  if (kind === 'fire') return 'Propagación localizada';
+  if (kind === 'tornado') return 'Corredor móvil';
   const preset = HAZARD_PRESETS[kind];
   if (preset.magnitude !== undefined) return `Magnitud ${preset.magnitude}`;
   if (preset.windSpeedKmh !== undefined)

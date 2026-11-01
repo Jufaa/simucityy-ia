@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import type { CityResponse } from './city-types';
 import { CityTraffic } from './city-traffic-model';
+import { signalStateAt } from './traffic-signals';
 
 const city: CityResponse = {
   config: {
@@ -144,4 +145,60 @@ describe('bounded synthetic urban traffic', () => {
     delete withoutGraph.roadGraph;
     expect(new CityTraffic(withoutGraph).vehicles).toEqual([]);
   });
+});
+
+it('opts into real signal stopping and restarts from a resettable real-time clock', () => {
+  const traffic = new CityTraffic(city, { signalsEnabled: true });
+  expect(traffic.elapsedTimeInSeconds).toBe(0);
+  let redStop = false,
+    resumed = false;
+  const stopped = new Set<string>();
+  for (let i = 0; i < 3000; i++) {
+    const before = traffic.vehicles;
+    const beforeState = signalStateAt('c', traffic.elapsedTimeInSeconds, 19);
+    traffic.advance(1 / 30);
+    const state = signalStateAt('c', traffic.elapsedTimeInSeconds, 19);
+    for (const person of traffic.vehicles) {
+      const approach =
+        person.laneId === 'wc:forward' ||
+        person.laneId === 'ce:reverse' ||
+        person.laneId === 'nc:forward';
+      const axis = person.roadId === 'north' ? 'north-south' : 'east-west';
+      if (
+        approach &&
+        state[axis] !== 'green' &&
+        Math.abs(person.distanceInMeters - 92) < 0.01 &&
+        person.speedInMetersPerSecond === 0
+      ) {
+        redStop = true;
+        stopped.add(person.id);
+      }
+      const previous = before.find((item) => item.id === person.id);
+      if (
+        approach &&
+        previous?.laneId === person.laneId &&
+        previous.distanceInMeters <= 92 + 1e-7 &&
+        beforeState[axis] !== 'green'
+      )
+        expect(person.distanceInMeters).toBeLessThanOrEqual(92 + 1e-7);
+      const inJunction = traffic.vehicles.filter(
+        (v) => Math.hypot(v.x - 100, v.z - 100) < 4.5,
+      );
+      expect(inJunction).toHaveLength(Math.min(inJunction.length, 1));
+      if (
+        stopped.has(person.id) &&
+        previous &&
+        (person.laneId !== previous.laneId ||
+          person.distanceInMeters > previous.distanceInMeters + 0.01)
+      )
+        resumed = true;
+    }
+  }
+  expect(redStop).toBe(true);
+  expect(resumed).toBe(true);
+  const time = traffic.elapsedTimeInSeconds;
+  for (const delta of [0, -1, NaN, Infinity]) traffic.advance(delta);
+  expect(traffic.elapsedTimeInSeconds).toBe(time);
+  traffic.reset();
+  expect(traffic.elapsedTimeInSeconds).toBe(0);
 });

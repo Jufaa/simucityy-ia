@@ -4,6 +4,7 @@ import { createCityLifeLayer } from './city-life-layer';
 import { generateCityLife } from './city-life-model';
 import type { CityResponse } from './city-types';
 import { sampleTerrainHeight } from './terrain-view';
+import { signalLensColor, signalStateAt } from './traffic-signals';
 
 it('grounds upright batched geometry and releases every owned resource exactly once', () => {
   const city: CityResponse = {
@@ -89,4 +90,101 @@ it('owns empty-layer geometry cleanup without inventing scene objects', () => {
     layer.dispose();
     layer.dispose();
   }).not.toThrow();
+});
+
+it('uses the same junction phase for visible perpendicular heads without reallocating colors', () => {
+  const city: CityResponse = {
+    config: {
+      widthInMeters: 200,
+      heightInMeters: 200,
+      streetSpacingInMeters: 100,
+      seed: 19,
+    },
+    terrain: { kind: 'flat', elevationInMeters: 0 },
+    roads: [],
+    blocks: [],
+    buildings: [],
+    roadGraph: {
+      nodes: [
+        { id: 'w', x: 0, y: 100 },
+        { id: 'c', x: 100, y: 100 },
+        { id: 'e', x: 200, y: 100 },
+        { id: 'n', x: 100, y: 0 },
+      ],
+      edges: [
+        {
+          id: 'wc',
+          roadId: 'w',
+          from: 'w',
+          to: 'c',
+          lengthInMeters: 100,
+          bidirectional: true,
+        },
+        {
+          id: 'ce',
+          roadId: 'e',
+          from: 'c',
+          to: 'e',
+          lengthInMeters: 100,
+          bidirectional: true,
+        },
+        {
+          id: 'nc',
+          roadId: 'n',
+          from: 'n',
+          to: 'c',
+          lengthInMeters: 100,
+          bidirectional: true,
+        },
+      ],
+    },
+  };
+  const model = {
+    items: [-1, 1].map((side) => ({
+      kind: 'traffic-light' as const,
+      x: 100 + side * 3.35,
+      z: 103.35,
+      ground: 0,
+      rotation: 0,
+      length: 0.55,
+      width: 0.6,
+      color: 0,
+      bounds: {
+        id: `light-${side}`,
+        minCorner: { x: 95, y: 100 },
+        maxCorner: { x: 105, y: 106 },
+      },
+    })),
+  };
+  const layer = createCityLifeLayer(city, model, { signalsEnabled: true });
+  const lenses = layer.group.getObjectByName(
+    'city-life-signal-lenses',
+  ) as THREE.InstancedMesh;
+  const buffer = lenses.instanceColor;
+  const verify = (time: number) => {
+    layer.updateSignals(time);
+    const state = signalStateAt('c', time, 19);
+    for (let head = 0; head < 2; head++)
+      for (const [lens, color] of (
+        ['red', 'amber', 'green'] as const
+      ).entries()) {
+        const actual = new THREE.Color();
+        lenses.getColorAt(head * 3 + lens, actual);
+        expect(actual.getHex()).toBe(
+          signalLensColor(
+            state[head === 0 ? 'north-south' : 'east-west'],
+            color,
+          ),
+        );
+      }
+  };
+  verify(0);
+  verify(14);
+  verify(28);
+  expect(lenses.instanceColor).toBe(buffer);
+  const spy = vi.spyOn(lenses, 'dispose');
+  layer.dispose();
+  layer.dispose();
+  layer.updateSignals(17);
+  expect(spy).toHaveBeenCalledTimes(1);
 });

@@ -37,7 +37,10 @@ const overlaps = (a: Block, b: Block, gap = 0) =>
   a.maxCorner.y > b.minCorner.y - gap;
 
 /** Static view-only dressing. No road graph, citizen or persisted scenario changes. */
-export function generateCityLife(city: CityResponse): CityLifeModel {
+export function generateCityLife(
+  city: CityResponse,
+  options: { prioritizeSignals?: boolean } = {},
+): CityLifeModel {
   const items: CityLifeItem[] = [];
   const district = city.district;
   if (!district) return { items };
@@ -117,6 +120,51 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
       color,
     });
   };
+  const placeSignals = () => {
+    if (district.sidewalkWidthInMeters >= 2)
+      for (const node of nodes) {
+        if (
+          node.x < 10 ||
+          node.y < 10 ||
+          node.x > city.config.widthInMeters - 10 ||
+          node.y > city.config.heightInMeters - 10
+        )
+          continue;
+        const directions = new Set<string>();
+        for (const road of roads) {
+          const dx = road.end.x - road.start.x,
+            dz = road.end.y - road.start.y,
+            l2 = dx * dx + dz * dz;
+          if (!l2) continue;
+          const t =
+            ((node.x - road.start.x) * dx + (node.y - road.start.y) * dz) / l2;
+          if (
+            t < 0 ||
+            t > 1 ||
+            Math.hypot(
+              node.x - road.start.x - t * dx,
+              node.y - road.start.y - t * dz,
+            ) > 0.1
+          )
+            continue;
+          if (t > 0.001)
+            directions.add(`${Math.round(Math.atan2(-dz, -dx) * 100)}`);
+          if (t < 0.999)
+            directions.add(`${Math.round(Math.atan2(dz, dx) * 100)}`);
+        }
+        if (directions.size >= 3)
+          for (const side of [-1, 1])
+            add(
+              'traffic-light',
+              node.x + side * (roadHalf + 0.35),
+              node.y + (roadHalf + 0.35),
+              0,
+              0.55,
+              0.6,
+            );
+      }
+  };
+  if (options.prioritizeSignals) placeSignals();
   for (const road of roads) {
     if (items.length >= 600) break;
     const dx = road.end.x - road.start.x,
@@ -208,47 +256,6 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
       }
     }
   }
-  if (district.sidewalkWidthInMeters >= 2)
-    for (const node of nodes) {
-      if (
-        node.x < 10 ||
-        node.y < 10 ||
-        node.x > city.config.widthInMeters - 10 ||
-        node.y > city.config.heightInMeters - 10
-      )
-        continue;
-      const directions = new Set<string>();
-      for (const road of roads) {
-        const dx = road.end.x - road.start.x,
-          dz = road.end.y - road.start.y,
-          l2 = dx * dx + dz * dz;
-        if (!l2) continue;
-        const t =
-          ((node.x - road.start.x) * dx + (node.y - road.start.y) * dz) / l2;
-        if (
-          t < 0 ||
-          t > 1 ||
-          Math.hypot(
-            node.x - road.start.x - t * dx,
-            node.y - road.start.y - t * dz,
-          ) > 0.1
-        )
-          continue;
-        if (t > 0.001)
-          directions.add(`${Math.round(Math.atan2(-dz, -dx) * 100)}`);
-        if (t < 0.999)
-          directions.add(`${Math.round(Math.atan2(dz, dx) * 100)}`);
-      }
-      if (directions.size >= 3)
-        for (const side of [-1, 1])
-          add(
-            'traffic-light',
-            node.x + side * (roadHalf + 0.35),
-            node.y + (roadHalf + 0.35),
-            0,
-            0.55,
-            0.6,
-          );
-    }
+  if (!options.prioritizeSignals) placeSignals();
   return { items };
 }

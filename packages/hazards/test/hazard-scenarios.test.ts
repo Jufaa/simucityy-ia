@@ -11,17 +11,21 @@ import {
   hazardPreset,
   isHazardKind,
   roadEdgeIdsBlockedByBuildings,
+  hazardWarningTimeInSeconds,
+  tornadoPathAt,
   type CityScenarioInput,
 } from '../src/index.js';
 
 describe('hazard scenarios', () => {
-  it('expone las cinco catástrofes pedidas con presets coherentes', () => {
+  it('exposes the original five hazards plus distinct fire and tornado presets', () => {
     expect(HAZARD_KINDS).toEqual([
       'rain',
       'river-overflow',
       'tsunami',
       'earthquake',
       'strong-wind',
+      'fire',
+      'tornado',
     ]);
     expect(hazardPreset('rain').rainIntensityMmPerHour).toBe(120);
     expect(hazardPreset('tsunami').waveHeightInMeters).toBeGreaterThan(0);
@@ -216,5 +220,133 @@ describe('hazard scenarios', () => {
     expect(
       assessStructuralDamage(scenario, 'strong-wind', { seed: 7 }),
     ).toEqual(wind);
+  });
+});
+
+describe('localized timed hazards', () => {
+  const base = createDemoCompatibleScenario(500, 500, 25);
+  const scenario: CityScenarioInput = {
+    ...base,
+    buildings: Array.from({ length: 100 }, (_, index) => ({
+      id: `house-${index}`,
+      minCorner: {
+        x: 15 + (index % 10) * 48,
+        y: 15 + Math.floor(index / 10) * 48,
+      },
+      maxCorner: {
+        x: 27 + (index % 10) * 48,
+        y: 27 + Math.floor(index / 10) * 48,
+      },
+      heightInMeters: 9,
+    })),
+  };
+
+  for (const kind of ['fire', 'tornado'] as const) {
+    it(`${kind} has no water, deterministic localized impacts and warning before arrival`, () => {
+      const original = JSON.stringify(scenario);
+      const assessment = assessStructuralDamage(scenario, kind, { seed: 4 });
+      expect(createHazardPulses(scenario, kind)).toEqual([]);
+      expect(hazardPreset(kind).rainIntensityMmPerHour).toBe(0);
+      expect(assessment).toEqual(
+        assessStructuralDamage(scenario, kind, { seed: 4 }),
+      );
+      const affected = assessment.buildings.filter(
+        (building) => building.severity > 0,
+      );
+      expect(affected.length).toBeGreaterThan(0);
+      expect(affected.length).toBeLessThan(scenario.buildings.length);
+      const onsets = affected.map(
+        (building) => building.impactStartTimeInSeconds!,
+      );
+      expect(onsets.every((time) => Number.isFinite(time) && time >= 30)).toBe(
+        true,
+      );
+      expect(new Set(onsets).size).toBeGreaterThan(1);
+      expect(hazardWarningTimeInSeconds(kind, assessment)).toBe(
+        Math.max(0, Math.min(...onsets) - 15),
+      );
+      expect(assessment.buildings.some((building) => building.collapsed)).toBe(
+        true,
+      );
+      for (const building of assessment.buildings) {
+        const arrival = building.impactStartTimeInSeconds;
+        expect(buildingImpactAt(building, kind, 0).severity).toBe(0);
+        if (arrival !== undefined) {
+          expect(
+            buildingImpactAt(building, kind, arrival - 0.01).condition,
+          ).toBe('intact');
+          expect(buildingImpactAt(building, kind, arrival).severity).toBe(0);
+        }
+        if (building.collapseTimeInSeconds !== null) {
+          expect(building.collapseTimeInSeconds).toBeGreaterThan(arrival!);
+          expect(
+            buildingImpactAt(
+              building,
+              kind,
+              building.collapseTimeInSeconds - 0.01,
+            ).condition,
+          ).not.toBe('collapsed');
+          expect(
+            buildingImpactAt(building, kind, building.collapseTimeInSeconds)
+              .condition,
+          ).toBe('collapsed');
+        }
+      }
+      const reinforced = assessStructuralDamage(scenario, kind, {
+        seed: 4,
+        reinforced: true,
+      });
+      expect(reinforced.maxSeverity).toBeLessThan(assessment.maxSeverity);
+      expect(
+        reinforced.buildings.filter((building) => building.collapsed).length,
+      ).toBeLessThanOrEqual(
+        assessment.buildings.filter((building) => building.collapsed).length,
+      );
+      expect(JSON.stringify(scenario)).toBe(original);
+    });
+  }
+
+  it('fire ignition starts at an actual seeded building and changes with seed', () => {
+    const a = assessStructuralDamage(scenario, 'fire', { seed: 4 });
+    const b = assessStructuralDamage(scenario, 'fire', { seed: 99 });
+    expect(
+      a.buildings.filter(
+        (building) => building.impactStartTimeInSeconds === 30,
+      ),
+    ).toHaveLength(1);
+    expect(a).not.toEqual(b);
+    expect(a.damagedBuildingIds).not.toEqual(
+      assessStructuralDamage(scenario, 'tornado', { seed: 4 })
+        .damagedBuildingIds,
+    );
+  });
+
+  it('tornado follows one moving corridor with inactive before/after boundaries', () => {
+    const before = tornadoPathAt(scenario, 29, 4);
+    const start = tornadoPathAt(scenario, 30, 4);
+    const middle = tornadoPathAt(scenario, 120, 4);
+    const end = tornadoPathAt(scenario, 210, 4);
+    expect(before.active).toBe(false);
+    expect(start.active).toBe(true);
+    expect(middle.x).toBeGreaterThan(start.x);
+    expect(end.x).toBeGreaterThan(middle.x);
+    expect(tornadoPathAt(scenario, 211, 4).active).toBe(false);
+    expect(middle.radiusInMeters).toBeLessThan(50);
+    expect(tornadoPathAt(scenario, 120, 4)).toEqual(middle);
+    for (const kind of [
+      'rain',
+      'river-overflow',
+      'tsunami',
+      'earthquake',
+      'strong-wind',
+    ] as const) {
+      const assessment = assessStructuralDamage(scenario, kind);
+      expect(hazardWarningTimeInSeconds(kind, assessment)).toBeNull();
+      expect(
+        assessment.buildings.every(
+          (building) => !('impactStartTimeInSeconds' in building),
+        ),
+      ).toBe(true);
+    }
   });
 });

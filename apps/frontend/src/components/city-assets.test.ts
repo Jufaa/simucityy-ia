@@ -88,6 +88,55 @@ it('fits rotated assets inside hazard bounds at the terrain base, batches parts 
   layer.dispose();
 });
 
+it('adds restrained deterministic facade variation without splitting instance batches', () => {
+  const input = city();
+  input.buildings = Array.from({ length: 6 }, (_, index) => ({
+    ...input.buildings[index % input.buildings.length]!,
+    id: `apartment-${index}`,
+    architecture: {
+      style: 'apartment' as const,
+      floors: 4,
+      roof: 'flat' as const,
+      roofRiseInMeters: 0,
+      facade: 'stone' as const,
+      entranceSide: 'north' as const,
+      balconyDepthInMeters: 0,
+    },
+    minCorner: { x: (index % 3) * 20, y: Math.floor(index / 3) * 20 },
+    maxCorner: { x: (index % 3) * 20 + 14, y: Math.floor(index / 3) * 20 + 14 },
+  }));
+  const makeLayer = () => {
+    const asset = template();
+    return {
+      asset,
+      layer: buildCityAssetLayer(input, templatesFor(asset.group)),
+    };
+  };
+  const first = makeLayer();
+  const second = makeLayer();
+  const firstBatch = first.layer.group.children.find(
+    (child) => child instanceof THREE.InstancedMesh,
+  ) as THREE.InstancedMesh;
+  const secondBatch = second.layer.group.children.find(
+    (child) => child instanceof THREE.InstancedMesh,
+  ) as THREE.InstancedMesh;
+  expect(firstBatch.count).toBe(6);
+  const firstColors = Array.from({ length: firstBatch.count }, (_, index) => {
+    const color = new THREE.Color();
+    firstBatch.getColorAt(index, color);
+    return color.getHex();
+  });
+  const secondColors = Array.from({ length: secondBatch.count }, (_, index) => {
+    const color = new THREE.Color();
+    secondBatch.getColorAt(index, color);
+    return color.getHex();
+  });
+  expect(new Set(firstColors).size).toBeGreaterThan(1);
+  expect(secondColors).toEqual(firstColors);
+  first.layer.dispose();
+  second.layer.dispose();
+});
+
 it('collapses a single instanced building toward its base and restores it', () => {
   const asset = template();
   const layer = buildCityAssetLayer(city(), templatesFor(asset.group));

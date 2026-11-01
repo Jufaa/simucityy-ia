@@ -7,8 +7,8 @@ Read this file before changing the project. It is the shared baseline for people
 - Build a synthetic city simulator: establish terrain, water, streets, buildings, services and people first; add AI-driven generation and behavior incrementally afterward.
 - Prioritize a coherent, reproducible city and visible walking/evacuation over adding disconnected visual props. Use deterministic seeds and stable entity identifiers.
 - Keep the demo free to run locally. Prefer existing dependencies and local, licensed assets. A developer's coding-assistant API credits do not make a runtime service free.
-- The frontend currently renders a Three.js organic city, lake/channel and bridge, surroundings, local Kenney CC0 buildings and procedural fallback. It also retains the original grid.
-- Rain/flood visualization and graph-based evacuation run automatically. The visible city behavior is deterministic simulation, not proof that an LLM controls citizens.
+- The frontend defaults to a 1800 × 1500 m metropolitan organic city with seven irregular neighborhoods, a tall center, looped streets, three connected bridges, regional fields and contextual port/rail scenery, plus local Kenney CC0 buildings/fallback. Legacy organic generation and grid remain available. Terrain sampling is adaptive; building dimensions do not scale with territory size.
+- Automatic hazard mode supports rain, river overflow, tsunami, earthquake, strong wind, urban fire and tornado; a peaceful daily-life mode is also available. Bounded instanced humans/routines, traffic signals and actual-position evacuation are deterministic simulation, not proof that an LLM controls citizens. New fire/tornado physics is synthetic and timed, not calibrated CFD/combustion.
 - The backend registers city-generation and AI/BYOK routes. Inspect their implementation before describing capabilities; registration alone does not prove frontend integration.
 - This is an experimental demonstration, not calibrated flood forecasting or certified emergency guidance.
 

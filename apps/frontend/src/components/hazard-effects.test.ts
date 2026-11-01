@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { assessStructuralDamage, buildingImpactAt } from '@simulicity/hazards';
 import { createDemoCompatibleScenario } from '../../../../packages/hazards/src/defaults';
@@ -165,3 +165,128 @@ it('builds a gradient sky dome with drifting clouds that dispose cleanly', () =>
   atmosphere.dispose();
   expect(atmosphere.group.children).toHaveLength(0);
 });
+
+it('fire flames follow actual local impact arrival and freeze/reset without reallocating buffers', () => {
+  const city = demoCity();
+  const assessment = assessStructuralDamage(scenarioOf(city), 'fire', {
+    seed: city.config.seed ?? 123,
+  });
+  const layer = createHazardEffects(city, 'fire', assessment);
+  const flames = layer.group.getObjectByName(
+    'fire-flames',
+  ) as THREE.InstancedMesh;
+  const smoke = layer.group.getObjectByName(
+    'fire-smoke',
+  ) as THREE.InstancedMesh;
+  expect(flames).toBeInstanceOf(THREE.InstancedMesh);
+  const buffer = flames.instanceMatrix;
+  layer.update(
+    assessment.buildings.map((damage) => buildingImpactAt(damage, 'fire', 0)),
+    [],
+  );
+  layer.animate(0.1, true, 0);
+  expect(flames.count).toBe(0);
+  const onset = Math.min(
+    ...assessment.buildings.map(
+      (damage) => damage.impactStartTimeInSeconds ?? Infinity,
+    ),
+  );
+  layer.update(
+    assessment.buildings.map((damage) =>
+      buildingImpactAt(damage, 'fire', onset + 20),
+    ),
+    [],
+  );
+  layer.animate(0.1, true, onset + 20);
+  expect(flames.count).toBeGreaterThan(0);
+  expect(flames.count + smoke.count).toBeLessThanOrEqual(512);
+  const first = Array.from(flames.instanceMatrix.array);
+  layer.animate(0.2, false, onset + 30);
+  layer.animate(NaN, true, onset + 40);
+  expect(Array.from(flames.instanceMatrix.array)).toEqual(first);
+  layer.animate(0.1, true, onset + 21);
+  expect(flames.instanceMatrix).toBe(buffer);
+  expect(Array.from(flames.instanceMatrix.array)).not.toEqual(first);
+  layer.reset();
+  expect(flames.count).toBe(0);
+  expect(smoke.count).toBe(0);
+  layer.group.traverse((object) => {
+    if (object.name.startsWith('hazard-damaged:'))
+      expect(object.visible).toBe(false);
+  });
+  layer.dispose();
+});
+
+it('tornado uses simulation time for a bounded moving funnel and owns resources exactly once', () => {
+  const city = demoCity();
+  const assessment = assessStructuralDamage(scenarioOf(city), 'tornado');
+  const layer = createHazardEffects(city, 'tornado', assessment);
+  const funnel = layer.group.getObjectByName(
+    'tornado-funnel',
+  ) as THREE.InstancedMesh;
+  const debris = layer.group.getObjectByName(
+    'tornado-flying-debris',
+  ) as THREE.InstancedMesh;
+  expect(funnel).toBeInstanceOf(THREE.InstancedMesh);
+  layer.animate(0.1, true, 29);
+  expect(funnel.visible).toBe(false);
+  layer.animate(0.1, true, 100);
+  expect(funnel.visible).toBe(true);
+  const first = Array.from(funnel.instanceMatrix.array);
+  layer.animate(0.1, false, 130);
+  expect(Array.from(funnel.instanceMatrix.array)).toEqual(first);
+  layer.animate(0.1, true, 130);
+  expect(Array.from(funnel.instanceMatrix.array)).not.toEqual(first);
+  expect(funnel.count + debris.count).toBeLessThanOrEqual(512);
+  layer.animate(0.1, true, 211);
+  expect(funnel.visible).toBe(false);
+  const resources = new Set<{ dispose(): void }>();
+  layer.group.traverse((object) => {
+    if (object instanceof THREE.InstancedMesh) {
+      resources.add(object);
+      resources.add(object.geometry);
+      for (const material of Array.isArray(object.material)
+        ? object.material
+        : [object.material])
+        resources.add(material);
+    }
+  });
+  const spies = [...resources].map((resource) => vi.spyOn(resource, 'dispose'));
+  layer.reset();
+  expect(funnel.visible).toBe(false);
+  layer.dispose();
+  layer.dispose();
+  spies.forEach((spy) => expect(spy).toHaveBeenCalledTimes(1));
+  expect(layer.group.children).toHaveLength(0);
+});
+
+it.each(['fire', 'tornado'] as const)(
+  'projects a recreated paused %s arm at absolute event time without advancing clocks',
+  (hazard) => {
+    const city = demoCity();
+    const assessment = assessStructuralDamage(scenarioOf(city), hazard);
+    const impacts = assessment.buildings.map((item) =>
+      buildingImpactAt(item, hazard, 120),
+    );
+    const active = createHazardEffects(city, hazard, assessment);
+    active.update(impacts, []);
+    active.animate(0.1, true, 120);
+    const paused = createHazardEffects(city, hazard, assessment);
+    paused.update(impacts, []);
+    paused.setSimulationTime(120);
+    const name = hazard === 'fire' ? 'fire-flames' : 'tornado-funnel';
+    const a = active.group.getObjectByName(name) as THREE.InstancedMesh;
+    const b = paused.group.getObjectByName(name) as THREE.InstancedMesh;
+    expect(b.count).toBeGreaterThan(0);
+    expect(b.count).toBe(a.count);
+    expect(b.visible).toBe(a.visible);
+    expect(Array.from(b.instanceMatrix.array)).toEqual(
+      Array.from(a.instanceMatrix.array),
+    );
+    const before = Array.from(b.instanceMatrix.array);
+    paused.animate(0.25, false, 140);
+    expect(Array.from(b.instanceMatrix.array)).toEqual(before);
+    active.dispose();
+    paused.dispose();
+  },
+);

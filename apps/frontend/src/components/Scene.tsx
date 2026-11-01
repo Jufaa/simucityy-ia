@@ -14,9 +14,12 @@ import { createCityLifeLayer } from './city-life-layer';
 import { CityTraffic } from './city-traffic-model';
 import { createCityTrafficLayer } from './city-traffic-layer';
 import { createRandomCityProfile } from './random-city-profile';
+import { createExpandedCityRequest } from './city-source-request';
 import { CityGenerationControls } from './city-generation-controls';
 import { generateCityServices } from './city-services';
 import { FrameMetrics, type FrameMeasurement } from './frame-metrics';
+import { pedestrianCameraPose } from './pedestrian-camera';
+import { renderQualitySettings, type RenderQuality } from './render-quality';
 import { mountCityAssets, type CityAssetLayer } from './city-assets';
 import { CityToolbar } from './city-toolbar';
 import { createOrganicCity } from './organic-city-model';
@@ -28,9 +31,9 @@ import {
 import { DistrictSimulation, type ComparisonArm } from './district-simulation';
 import { createCitizenLayer, createDrainLayer } from './citizen-layer';
 import { ComparisonPanel } from './comparison-panel';
-import { createStaticPopulation } from './static-population';
 import { generateWorld } from './world-model';
 import {
+  DEFAULT_WORLD_CAMERA_VIEW,
   createWorldLayer,
   worldCameraPose,
   type WorldLayerName,
@@ -60,6 +63,8 @@ const HAZARD_MOODS: Record<HazardKind, AtmosphereMood> = {
   tsunami: 'tsunami',
   earthquake: 'dust',
   'strong-wind': 'wind',
+  fire: 'dust',
+  tornado: 'wind',
 };
 const WATER_HAZARDS: readonly HazardKind[] = [
   'rain',
@@ -82,8 +87,18 @@ export default function Scene() {
   const mountRef = useRef<HTMLDivElement>(null);
   const simulationRef = useRef<DistrictSimulation | null>(null);
   const trafficRef = useRef<CityTraffic | null>(null);
+  const streetViewRef = useRef<(() => void) | null>(null);
+  const qualityRef = useRef<RenderQuality>('balanced');
+  const applyQualityRef = useRef<((quality: RenderQuality) => void) | null>(
+    null,
+  );
+  const [renderQuality, setRenderQuality] = useState<RenderQuality>('balanced');
+  const [hazardsEnabled, setHazardsEnabled] = useState(true);
+  const [overlayTop, setOverlayTop] = useState(170);
   const [measurement, setMeasurement] = useState<FrameMeasurement | null>(null);
   const [trafficCount, setTrafficCount] = useState(0);
+  const [routineActivity, setRoutineActivity] =
+    useState<DistrictSimulation['routineActivity']>(null);
   const [running, setRunning] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
   const [assetStatus, setAssetStatus] = useState<
@@ -116,6 +131,7 @@ export default function Scene() {
         ? layoutMode === 'organic'
           ? createOrganicCity(sourceCity, citySeed, {
               relief: reliefMode,
+              metropolitan: true,
               ...(randomizedCity
                 ? { profile: createRandomCityProfile(citySeed) }
                 : {}),
@@ -128,7 +144,7 @@ export default function Scene() {
   );
   const [worldSeed, setWorldSeed] = useState(123);
   const cityLife = useMemo(
-    () => (city ? generateCityLife(city) : null),
+    () => (city ? generateCityLife(city, { prioritizeSignals: true }) : null),
     [city],
   );
   const civicLandmarks = useMemo(
@@ -146,8 +162,10 @@ export default function Scene() {
     () => (city ? generateWorld(city, worldSeed) : null),
     [city, worldSeed],
   );
-  const [worldView, setWorldView] = useState<WorldCameraView>('city');
-  const cameraViewRef = useRef<WorldCameraView>('city');
+  const [worldView, setWorldView] = useState<WorldCameraView>(
+    DEFAULT_WORLD_CAMERA_VIEW,
+  );
+  const cameraViewRef = useRef<WorldCameraView>(DEFAULT_WORLD_CAMERA_VIEW);
   const focusViewRef = useRef<((view: WorldCameraView) => void) | null>(null);
   const worldLayerRef = useRef<ReturnType<typeof createWorldLayer> | null>(
     null,
@@ -170,19 +188,7 @@ export default function Scene() {
         const res = await fetch(`${API_URL}/api/v1/cities/generate`, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            layout: 'district',
-            detailLevel: 'urban',
-            config: {
-              widthInMeters: 500,
-              heightInMeters: 500,
-              streetSpacingInMeters: 50,
-              seed: 123,
-            },
-            terrain: { kind: 'flat', elevationInMeters: 25 },
-            minBuildingHeightInMeters: 4,
-            maxBuildingHeightInMeters: 40,
-          }),
+          body: JSON.stringify(createExpandedCityRequest()),
         });
         if (!res.ok) {
           const text = await res.text();
@@ -199,6 +205,19 @@ export default function Scene() {
       cancelled = true;
     };
   }, []);
+
+  useEffect(() => {
+    const header = mountRef.current?.parentElement?.querySelector(
+      '[data-city-toolbar]',
+    );
+    if (!header || typeof ResizeObserver === 'undefined') return;
+    const update = () =>
+      setOverlayTop(Math.ceil(header.getBoundingClientRect().bottom) + 12);
+    const observer = new ResizeObserver(update);
+    observer.observe(header);
+    update();
+    return () => observer.disconnect();
+  }, [city]);
 
   // 2. Dibujar cuando llega la ciudad
   useEffect(() => {
@@ -229,8 +248,12 @@ export default function Scene() {
     camera.lookAt(...pose.target);
 
     const renderer = new THREE.WebGLRenderer({ antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
-    renderer.shadowMap.enabled = true;
+    const initialQuality = renderQualitySettings(
+      qualityRef.current,
+      window.devicePixelRatio || 1,
+    );
+    renderer.setPixelRatio(initialQuality.pixelRatio);
+    renderer.shadowMap.enabled = initialQuality.shadows;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1;
@@ -242,7 +265,7 @@ export default function Scene() {
     controls.target.set(...pose.target);
     controls.enableDamping = true;
     controls.dampingFactor = 0.05;
-    controls.minDistance = 20;
+    controls.minDistance = 4;
     controls.maxDistance = viewExtent * 5;
     controls.maxPolarAngle = Math.PI / 2;
     controls.update();
@@ -269,8 +292,11 @@ export default function Scene() {
       city.terrain.elevationInMeters,
       city.config.heightInMeters / 2,
     );
-    dirLight.castShadow = true;
-    dirLight.shadow.mapSize.set(2048, 2048);
+    dirLight.castShadow = initialQuality.shadows;
+    dirLight.shadow.mapSize.set(
+      initialQuality.shadowSize,
+      initialQuality.shadowSize,
+    );
     dirLight.shadow.camera.left = dirLight.shadow.camera.bottom = -extent * 0.8;
     dirLight.shadow.camera.right = dirLight.shadow.camera.top = extent * 0.8;
     dirLight.shadow.camera.far = extent * 4;
@@ -279,6 +305,18 @@ export default function Scene() {
     dirLight.shadow.camera.updateProjectionMatrix();
     scene.add(dirLight);
     scene.add(dirLight.target);
+    applyQualityRef.current = (quality) => {
+      const next = renderQualitySettings(quality, window.devicePixelRatio || 1);
+      renderer.setPixelRatio(next.pixelRatio);
+      renderer.shadowMap.enabled = next.shadows;
+      dirLight.castShadow = next.shadows;
+      if (dirLight.shadow.mapSize.x !== next.shadowSize) {
+        dirLight.shadow.map?.dispose();
+        dirLight.shadow.map = null;
+        dirLight.shadow.mapSize.set(next.shadowSize, next.shadowSize);
+      }
+      renderer.shadowMap.needsUpdate = true;
+    };
     const skyLight = new THREE.HemisphereLight(0xe4f2ff, 0x8c8869, 2);
     scene.add(skyLight);
 
@@ -299,7 +337,7 @@ export default function Scene() {
           },
         )
       : () => {};
-    const traffic = new CityTraffic(city);
+    const traffic = new CityTraffic(city, { signalsEnabled: true });
     trafficRef.current = traffic;
     setTrafficCount(traffic.vehicles.length);
     setMeasurement(null);
@@ -316,6 +354,7 @@ export default function Scene() {
             ),
           }
         : cityLife,
+      { signalsEnabled: true },
     );
     const civicLayer = createCivicLandmarkLayer(city, civicLandmarks);
     scene.add(streetLifeLayer.group, civicLayer.group);
@@ -386,11 +425,14 @@ export default function Scene() {
           },
           buildings: city.buildings,
         };
-        const people = createStaticPopulation(city);
+        const people = city.citizens ?? [];
         simulation = new DistrictSimulation(
           { ...city, citizens: people },
           {
             evacuationEnabled: true,
+            hazardsEnabled,
+            routinesEnabled: true,
+            routineFacilities: civicLandmarks.assignments,
             alarmMode: 'automatic',
             autoStart: true,
             hazard: hazardKind,
@@ -411,6 +453,7 @@ export default function Scene() {
         setDrainCount(simulation.drains.length);
         scene.add(floodLayer.group);
         simulationRef.current = simulation;
+        setRoutineActivity(simulation.routineActivity);
         setFlood(simulation.snapshot);
         setFloodError(null);
       } catch {
@@ -421,6 +464,15 @@ export default function Scene() {
         'La ciudad no incluye los datos de terreno y calles para simular.',
       );
     }
+    streetViewRef.current = () => {
+      const pose = pedestrianCameraPose(
+        city,
+        simulation?.citizenState.citizens ?? [],
+      );
+      camera.position.set(...pose.position);
+      controls.target.set(...pose.target);
+      controls.update();
+    };
     const weather = createFloodWeather(
       city.config,
       city.terrain.elevationInMeters,
@@ -436,7 +488,7 @@ export default function Scene() {
         z: city.config.heightInMeters / 2,
       },
       viewExtent,
-      HAZARD_MOODS[hazardKind],
+      hazardsEnabled ? HAZARD_MOODS[hazardKind] : 'clear',
     );
     scene.add(atmosphere.group);
     // Efectos propios de la catástrofe (daños, escombros, ola, viento).
@@ -447,12 +499,17 @@ export default function Scene() {
         hazardEffects.dispose();
         hazardEffects = null;
       }
-      if (simulation) {
+      if (simulation && hazardsEnabled) {
         hazardEffects = createHazardEffects(
           city,
           hazardKind,
           simulation.structural,
         );
+        hazardEffects.update(
+          simulation.buildingImpacts,
+          simulation.selectedCollapsedBlockedRoadEdgeIds,
+        );
+        hazardEffects.setSimulationTime(simulation.elapsedTimeInSeconds);
         scene.add(hazardEffects.group);
       }
     };
@@ -563,6 +620,7 @@ export default function Scene() {
     let previousTime: number | null = null;
     let displayedSnapshot: FloodSnapshot | null = null;
     let observedAlarm = false;
+    let damageClock = -1;
     const frameMetrics = new FrameMetrics();
     const roadIdByEdge = new Map(
       city.roadGraph?.edges?.map((edge) => [edge.id, edge.roadId]),
@@ -580,17 +638,19 @@ export default function Scene() {
         setFlood(simulation.snapshot);
         setComparison(simulation.comparison);
         setAlarmTime(simulation.alarmTime);
-        if (!observedAlarm && simulation.alarmTime !== null) {
+      }
+      if (simulation) {
+        if (simulation.alarmTime === null) observedAlarm = false;
+        else if (!observedAlarm) {
           observedAlarm = true;
           simulation.setSpeed(3);
           speedRef.current = 3;
           setSpeed(3);
+          setAlarmTime(simulation.alarmTime);
+          setComparison(simulation.comparison);
         }
-      }
-      if (simulation) {
-        if (simulation.alarmTime === null) observedAlarm = false;
         citizenLayer?.update(
-          simulation.evacuation,
+          simulation.citizenState,
           simulation.running && !document.hidden ? delta : 0,
           simulation.arm,
         );
@@ -603,21 +663,32 @@ export default function Scene() {
           if (roadId) blockedTrafficRoads.add(roadId);
         }
         trafficLayer.update(traffic.advance(delta, blockedTrafficRoads));
+        streetLifeLayer.updateSignals(traffic.elapsedTimeInSeconds);
       }
       if (simulation && simulation.snapshot !== displayedSnapshot) {
         floodLayer?.update(simulation.snapshot);
         displayedSnapshot = simulation.snapshot;
         syncCollapseTargets();
       }
+      if (
+        simulation &&
+        (hazardKind === 'fire' || hazardKind === 'tornado') &&
+        simulation.elapsedTimeInSeconds !== damageClock
+      ) {
+        damageClock = simulation.elapsedTimeInSeconds;
+        syncCollapseTargets();
+      }
       animateCollapses(document.hidden ? 0 : delta);
       worldLayer.animate(document.hidden ? 0 : delta);
       organicLayer?.animate(document.hidden ? 0 : delta);
       atmosphere.animate(document.hidden ? 0 : delta);
-      const active = simulation?.started ?? false;
-      const animateStorm = !!simulation?.running && !document.hidden;
+      const active = hazardsEnabled && (simulation?.started ?? false);
+      const animateStorm =
+        hazardsEnabled && !!simulation?.running && !document.hidden;
       hazardEffects?.animate(
         document.hidden ? 0 : delta,
         animateStorm && active,
+        simulation?.elapsedTimeInSeconds,
       );
       // La lluvia visible solo acompaña a lluvia y desborde; el tsunami,
       // el terremoto y el viento tienen sus propios efectos.
@@ -645,7 +716,12 @@ export default function Scene() {
           renderer.info.render.calls,
           renderer.info.render.triangles,
         );
-        if (next) setMeasurement(next);
+        if (next) {
+          setMeasurement(next);
+          setRoutineActivity(simulation?.routineActivity ?? null);
+          if (simulation && (hazardKind === 'fire' || hazardKind === 'tornado'))
+            setComparison(simulation.comparison);
+        }
       };
       // Sacudida breve de cámara al inicio del terremoto (solo visual).
       if (
@@ -674,6 +750,8 @@ export default function Scene() {
       cancelAnimationFrame(frameId);
       releaseAssets();
       focusViewRef.current = null;
+      streetViewRef.current = null;
+      applyQualityRef.current = null;
       worldLayerRef.current = null;
       organicLayerRef.current = null;
       scene.remove(worldLayer.group);
@@ -738,7 +816,7 @@ export default function Scene() {
         mount.removeChild(renderer.domElement);
       }
     };
-  }, [city, world, cityLife, civicLandmarks, hazardKind]);
+  }, [city, world, cityLife, civicLandmarks, hazardKind, hazardsEnabled]);
 
   function applyWorldSeed(seed: number) {
     if (seed === worldSeed) return;
@@ -768,6 +846,7 @@ export default function Scene() {
     speedRef.current = 30;
     setSpeed(30);
     simulation.start();
+    setRoutineActivity(simulation.routineActivity);
     setRunning(simulation.running);
     setFlood(simulation.snapshot);
     setComparison(simulation.comparison);
@@ -777,7 +856,8 @@ export default function Scene() {
   }
 
   function applyHazard(kind: HazardKind) {
-    if (kind === hazardKind) return;
+    if (kind === hazardKind && hazardsEnabled) return;
+    setHazardsEnabled(true);
     setRunning(false);
     setFlood(null);
     setComparison(null);
@@ -832,9 +912,18 @@ export default function Scene() {
         ready={!!flood && !floodError}
         panelOpen={panelOpen}
         view={worldView}
-        elapsedSeconds={flood?.elapsedTimeInSeconds ?? 0}
+        elapsedSeconds={simulationRef.current?.elapsedTimeInSeconds ?? 0}
         assetStatus={assetStatus}
         hazard={hazardKind}
+        hazardsEnabled={hazardsEnabled}
+        onModeToggle={() => {
+          setRunning(false);
+          setFlood(null);
+          setComparison(null);
+          setAlarmTime(null);
+          setHazardsEnabled((enabled) => !enabled);
+        }}
+        onStreetView={() => streetViewRef.current?.()}
         onHazard={applyHazard}
         onPanelToggle={() => setPanelOpen((open) => !open)}
         onRegenerate={() => regenerateCity((citySeed + 1) >>> 0)}
@@ -851,7 +940,7 @@ export default function Scene() {
         aria-label="Rendimiento de la ciudad"
         style={{
           position: 'absolute',
-          top: 104,
+          top: overlayTop,
           right: 16,
           padding: '8px 12px',
           borderRadius: 10,
@@ -871,6 +960,10 @@ export default function Scene() {
             <br />
             {measurement.triangles.toLocaleString('es')} triángulos ·{' '}
             {trafficCount} vehículos
+            <br />
+            {routineActivity
+              ? `${routineActivity.walking} caminando · ${routineActivity.home} en casa · ${routineActivity.visiting} en destino`
+              : 'Rutinas detenidas durante la evacuación'}
           </>
         ) : (
           'Midiendo rendimiento…'
@@ -882,11 +975,11 @@ export default function Scene() {
           aria-label="Información del distrito"
           style={{
             position: 'absolute',
-            top: 100,
+            top: overlayTop,
             left: 16,
             width: 300,
             maxWidth: 'calc(100vw - 32px)',
-            maxHeight: 'calc(100vh - 190px)',
+            maxHeight: `max(120px, calc(100vh - ${overlayTop + 100}px))`,
             overflowY: 'auto',
             padding: 16,
             borderRadius: 12,
@@ -897,6 +990,35 @@ export default function Scene() {
           }}
         >
           <strong>Opciones del simulador</strong>
+          <p style={{ fontSize: 12 }}>
+            {hazardsEnabled
+              ? 'Catástrofe automática activa'
+              : 'Vida cotidiana sin catástrofes'}
+            . Cambiar de modo reinicia el evento y las rutinas, no la ciudad.
+          </p>
+          <label style={{ display: 'block', margin: '10px 0', fontSize: 12 }}>
+            Calidad gráfica{' '}
+            <select
+              aria-label="Calidad gráfica"
+              value={renderQuality}
+              onChange={(event) => {
+                const quality = event.target.value;
+                if (
+                  quality !== 'light' &&
+                  quality !== 'balanced' &&
+                  quality !== 'high'
+                )
+                  return;
+                qualityRef.current = quality;
+                setRenderQuality(quality);
+                applyQualityRef.current?.(quality);
+              }}
+            >
+              <option value="light">Ligera · sin sombras</option>
+              <option value="balanced">Equilibrada</option>
+              <option value="high">Alta</option>
+            </select>
+          </label>
           <CityGenerationControls
             key={`${citySeed}:${randomizedCity}`}
             seed={citySeed}
@@ -983,15 +1105,23 @@ export default function Scene() {
           </div>
           {city.organic && (
             <p style={{ fontSize: 12 }}>
-              Barrios: centro, residencial y comercial · Lago y canal integrados
-              · {city.organic.bridges.length} puente conectado a las calles. Las
-              zonas urbanizadas siguen las orillas; la grilla de cálculo sigue
-              siendo rectangular.
+              {city.organic.neighborhoods.length} barrios de trazado irregular ·
+              Lago y canal integrados · {city.organic.bridges.length} puentes
+              conectados a las calles. Las zonas urbanizadas siguen las orillas;
+              solo el dominio de cálculo es rectangular, con malla adaptativa
+              para limitar el costo.
             </p>
           )}
           <p style={{ margin: '8px 0' }}>
             Plazas: {city.district?.parks.length ?? 0} · Refugios:{' '}
             {city.shelters?.length ?? 0}
+          </p>
+          <p style={{ fontSize: 12 }}>
+            Hasta 96 peatones realizan visitas de trabajo o escuela, museo o
+            parque y regreso a casa antes de la alarma. Usan accesos viales
+            estimados; no se modelan entradas, aceras ni colisiones con
+            vehículos. La alarma da prioridad a la evacuación desde su ubicación
+            actual.
           </p>
           <small>
             Casas con techo · Departamentos con balcones · Comercios con
@@ -1019,9 +1149,10 @@ export default function Scene() {
                 .length ?? 0}
             </p>
             <p>
-              Tránsito cinemático con aceleración, frenado, separación y turnos
-              en cruces. Respeta cierres por agua y escombros. No incluye
-              impactos de cuerpos rígidos ni colisiones con peatones.
+              Tránsito cinemático con aceleración, frenado, separación y
+              semáforos funcionales en cruces. Respeta cierres por agua y
+              escombros. No incluye impactos de cuerpos rígidos ni colisiones
+              con peatones.
             </p>
             <strong>Acceso sintético por la red vial</strong>
             {services?.roles.map((service) => (
@@ -1144,8 +1275,10 @@ export default function Scene() {
           <p style={{ fontSize: 12 }}>
             {hazardKind === 'earthquake' &&
               'Mejora: refuerzo sísmico; reduce la severidad del daño estructural.'}
-            {hazardKind === 'strong-wind' &&
-              'Mejora: techos asegurados; reduce la severidad del daño por viento.'}
+            {(hazardKind === 'strong-wind' || hazardKind === 'tornado') &&
+              'Mejora: refuerzo de techos y estructura; reduce la severidad sintética del daño por viento.'}
+            {hazardKind === 'fire' &&
+              'Mejora: resistencia sintética al fuego; no modela bomberos ni materiales reales.'}
             {WATER_HAZARDS.includes(hazardKind) &&
               `Mejora: ${drainCount} sumideros de 0.15 m³/s y absorción adicional de plazas de 60 mm/h en lugar de 15 mm/h.`}
           </p>
@@ -1158,9 +1291,13 @@ export default function Scene() {
                   : simulationRef.current?.started
                     ? 'En pausa'
                     : 'Lista para iniciar'}{' '}
-                · {Math.floor(flood.elapsedTimeInSeconds / 60)} min simulados
+                ·{' '}
+                {Math.floor(
+                  (simulationRef.current?.elapsedTimeInSeconds ?? 0) / 60,
+                )}{' '}
+                min simulados
               </p>
-              {WATER_HAZARDS.includes(hazardKind) && (
+              {hazardsEnabled && WATER_HAZARDS.includes(hazardKind) && (
                 <p>
                   Agua máxima: {(flood.maxWaterDepthInMeters * 100).toFixed(1)}{' '}
                   cm
@@ -1171,7 +1308,7 @@ export default function Scene() {
                   Edificios dañados: {comparison[arm].damagedBuildings} ·
                   Derrumbados: {comparison[arm].collapsedBuildings}
                   {structural &&
-                    ` · Severidad máxima: ${(structural.maxSeverity * 100).toFixed(0)}%`}
+                    ` · Severidad máxima potencial: ${(structural.maxSeverity * 100).toFixed(0)}%`}
                 </p>
               )}
               {comparison && comparison[arm].trapped > 0 && (
@@ -1205,7 +1342,7 @@ export default function Scene() {
             reduce la velocidad a 3× para observar la caminata. Sin IA
             conectada. Sumideros: cian.
           </p>
-          {comparison && (
+          {comparison && hazardsEnabled && (
             <ComparisonPanel
               comparison={comparison}
               alarmTime={alarmTime}
@@ -1214,9 +1351,11 @@ export default function Scene() {
               improvementLabel={
                 hazardKind === 'earthquake'
                   ? 'cambia el refuerzo sísmico'
-                  : hazardKind === 'strong-wind'
-                    ? 'cambian los techos asegurados'
-                    : 'cambia el drenaje'
+                  : hazardKind === 'strong-wind' || hazardKind === 'tornado'
+                    ? 'cambia el refuerzo frente al viento'
+                    : hazardKind === 'fire'
+                      ? 'cambia la resistencia sintética al fuego'
+                      : 'cambia el drenaje'
               }
             />
           )}

@@ -2,11 +2,23 @@ import * as THREE from 'three';
 import type { CityResponse } from './city-types';
 import type { CityLifeModel } from './city-life-model';
 import { sampleTerrainHeight } from './terrain-view';
+import {
+  signalJunctionIds,
+  signalLensColor,
+  signalStateAt,
+  type SignalAxis,
+  type SignalColor,
+} from './traffic-signals';
 
-type Part = { matrix: THREE.Matrix4; color: number };
+type SignalLens = { nodeId: string; axis: SignalAxis; lens: SignalColor };
+type Part = { matrix: THREE.Matrix4; color: number; signal?: SignalLens };
 
 /** Owned instancing resources are deliberately separate from the scene's shared surfaces. */
-export function createCityLifeLayer(city: CityResponse, model: CityLifeModel) {
+export function createCityLifeLayer(
+  city: CityResponse,
+  model: CityLifeModel,
+  options: { signalsEnabled?: boolean } = {},
+) {
   const group = new THREE.Group();
   group.name = 'city-life';
   const cube = new THREE.BoxGeometry(1, 1, 1);
@@ -17,9 +29,42 @@ export function createCityLifeLayer(city: CityResponse, model: CityLifeModel) {
   >();
   const resources = new Set<{ dispose(): void }>([cube, round]);
   const transform = new THREE.Object3D();
+  const controlled = options.signalsEnabled
+    ? signalJunctionIds(city)
+    : new Set<string>();
+  const junctions = (city.roadGraph?.nodes ?? []).filter((node) =>
+    controlled.has(node.id),
+  );
   for (const item of model.items) {
-    const c = Math.cos(item.rotation),
-      s = Math.sin(item.rotation);
+    const junction =
+      item.kind === 'traffic-light'
+        ? junctions.reduce<(typeof junctions)[number] | undefined>(
+            (best, node) =>
+              !best ||
+              Math.hypot(node.x - item.x, node.y - item.z) <
+                Math.hypot(best.x - item.x, best.y - item.z)
+                ? node
+                : best,
+            undefined,
+          )
+        : undefined;
+    const control =
+      junction &&
+      Math.hypot(junction.x - item.x, junction.y - item.z) <=
+        Math.max(12, (city.district?.roadWidthInMeters ?? 6) * 1.5)
+        ? {
+            nodeId: junction.id,
+            axis: (item.x < junction.x
+              ? 'north-south'
+              : 'east-west') as SignalAxis,
+          }
+        : undefined;
+    const rotation =
+      control?.axis === 'east-west'
+        ? item.rotation + Math.PI / 2
+        : item.rotation;
+    const c = Math.cos(rotation),
+      s = Math.sin(rotation);
     const ground = sampleTerrainHeight(city, item.x, item.z) + 0.08;
     const part = (
       name: string,
@@ -31,13 +76,14 @@ export function createCityLifeLayer(city: CityResponse, model: CityLifeModel) {
       sy: number,
       sz: number,
       rounded = false,
+      signal?: SignalLens,
     ) => {
       transform.position.set(
         item.x + dx * c + dz * s,
         ground + y,
         item.z - dx * s + dz * c,
       );
-      transform.rotation.set(0, item.rotation, 0);
+      transform.rotation.set(0, rotation, 0);
       transform.scale.set(sx, sy, sz);
       transform.updateMatrix();
       let batch = batches.get(name);
@@ -45,7 +91,11 @@ export function createCityLifeLayer(city: CityResponse, model: CityLifeModel) {
         batch = { geometry: rounded ? round : cube, parts: [] };
         batches.set(name, batch);
       }
-      batch.parts.push({ matrix: transform.matrix.clone(), color });
+      batch.parts.push({
+        matrix: transform.matrix.clone(),
+        color,
+        ...(signal ? { signal } : {}),
+      });
     };
     if (['car', 'taxi', 'van', 'bus'].includes(item.kind)) {
       const tall = item.kind === 'bus' ? 2.8 : item.kind === 'van' ? 2.1 : 1.3;
@@ -137,6 +187,12 @@ export function createCityLifeLayer(city: CityResponse, model: CityLifeModel) {
           0.11,
           0.04,
           true,
+          control
+            ? {
+                ...control,
+                lens: (['red', 'amber', 'green'] as const)[n] ?? 'red',
+              }
+            : undefined,
         );
     } else if (item.kind === 'hydrant') {
       part('hydrants', 0xbf4936, 0, 0.4, 0, 0.23, 0.8, 0.23);
@@ -187,8 +243,37 @@ export function createCityLifeLayer(city: CityResponse, model: CityLifeModel) {
     group.add(mesh);
   }
   let disposed = false;
+  let lastSignalSecond: number | null = null;
+  const lensColor = new THREE.Color();
+  const updateSignals = (seconds: number) => {
+    if (disposed || !options.signalsEnabled) return;
+    const second = Number.isFinite(seconds)
+      ? Math.floor(Math.max(0, seconds))
+      : 0;
+    if (second === lastSignalSecond) return;
+    lastSignalSecond = second;
+    const mesh = group.getObjectByName('city-life-signal-lenses');
+    if (!(mesh instanceof THREE.InstancedMesh)) return;
+    let changed = false;
+    batches.get('signal-lenses')?.parts.forEach((part, index) => {
+      if (!part.signal) return;
+      const state = signalStateAt(
+        part.signal.nodeId,
+        second,
+        city.config.seed ?? 1,
+      );
+      const color = signalLensColor(state[part.signal.axis], part.signal.lens);
+      if (part.color === color) return;
+      part.color = color;
+      mesh.setColorAt(index, lensColor.setHex(color));
+      changed = true;
+    });
+    if (changed && mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+  };
+  updateSignals(0);
   return {
     group,
+    updateSignals,
     dispose() {
       if (disposed) return;
       disposed = true;

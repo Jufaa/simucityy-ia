@@ -7,7 +7,13 @@ import type { Building, CityScenarioInput, FloodPulse } from './types.js';
  * módulo. Ninguna función muta el escenario de entrada.
  */
 export type HazardKind =
-  'rain' | 'river-overflow' | 'tsunami' | 'earthquake' | 'strong-wind';
+  | 'rain'
+  | 'river-overflow'
+  | 'tsunami'
+  | 'earthquake'
+  | 'strong-wind'
+  | 'fire'
+  | 'tornado';
 
 export const HAZARD_KINDS: readonly HazardKind[] = [
   'rain',
@@ -15,6 +21,8 @@ export const HAZARD_KINDS: readonly HazardKind[] = [
   'tsunami',
   'earthquake',
   'strong-wind',
+  'fire',
+  'tornado',
 ];
 
 export interface HazardPreset {
@@ -83,6 +91,24 @@ export const HAZARD_PRESETS: Readonly<Record<HazardKind, HazardPreset>> = {
     drainRateMmPerHour: 15,
     flowTransferRatio: 0.5,
     windSpeedKmh: 110,
+  },
+  fire: {
+    kind: 'fire',
+    label: 'Incendio urbano',
+    description:
+      'Un foco en un edificio se propaga a su entorno con llegadas y daños progresivos; modelo sintético, sin combustión calibrada.',
+    rainIntensityMmPerHour: 0,
+    drainRateMmPerHour: 15,
+    flowTransferRatio: 0.5,
+  },
+  tornado: {
+    kind: 'tornado',
+    label: 'Tornado',
+    description:
+      'Un embudo recorre una franja estrecha de la ciudad y daña los edificios al alcanzarlos; trayectoria y daños sintéticos.',
+    rainIntensityMmPerHour: 0,
+    drainRateMmPerHour: 15,
+    flowTransferRatio: 0.5,
   },
 };
 
@@ -156,8 +182,7 @@ export function createHazardPulses(
   kind: HazardKind,
   blockedCellIndices: readonly number[] = [],
 ): FloodPulse[] {
-  if (kind === 'rain' || kind === 'earthquake' || kind === 'strong-wind')
-    return [];
+  if (kind !== 'river-overflow' && kind !== 'tsunami') return [];
   const blocked = new Set(blockedCellIndices);
   const cells = gridCells(scenario);
   const columns = Math.max(1, scenario.terrainGrid.xCoordinates.length - 1);
@@ -214,6 +239,8 @@ export interface BuildingDamage {
    * de la sacudida. Viento: cuando la rampa de rachas alcanza el umbral.
    */
   readonly collapseTimeInSeconds: number | null;
+  /** New localized hazards only: synthetic ignition or corridor-arrival time. */
+  readonly impactStartTimeInSeconds?: number;
 }
 
 export type BuildingCondition = 'intact' | 'damaged' | 'collapsed';
@@ -234,6 +261,8 @@ export const COLLAPSE_THRESHOLDS: Readonly<Record<HazardKind, number>> = {
   tsunami: 1.01,
   earthquake: 0.75,
   'strong-wind': 0.88,
+  fire: 0.82,
+  tornado: 0.84,
 };
 
 export interface StructuralAssessment {
@@ -245,6 +274,174 @@ export interface StructuralAssessment {
 }
 
 const DAMAGE_THRESHOLD = 0.6;
+
+const LOCAL_EVENT_START = 30;
+const TORNADO_DURATION = 180;
+const FIRE_DAMAGE_RAMP = 90;
+const TORNADO_DAMAGE_RAMP = 3;
+
+function tornadoPath(
+  scenario: Pick<CityScenarioInput, 'terrainGrid'>,
+  seed: number,
+) {
+  const xs = scenario.terrainGrid.xCoordinates;
+  const ys = scenario.terrainGrid.yCoordinates;
+  const minX = xs[0] ?? 0,
+    minY = ys[0] ?? 0;
+  const width = Math.max(1, (xs.at(-1) ?? 1) - minX);
+  const height = Math.max(1, (ys.at(-1) ?? 1) - minY);
+  return {
+    from: {
+      x: minX,
+      y: minY + height * (0.3 + hazardHash(`${seed}:tornado-entry`) * 0.4),
+    },
+    to: {
+      x: minX + width,
+      y: minY + height * (0.25 + hazardHash(`${seed}:tornado-exit`) * 0.5),
+    },
+    radiusInMeters: Math.max(18, Math.min(55, Math.min(width, height) * 0.065)),
+  };
+}
+
+/** Shared domain/render trajectory: no random decisions or integration drift per frame. */
+export function tornadoPathAt(
+  scenario: Pick<CityScenarioInput, 'terrainGrid'>,
+  elapsedInSeconds: number,
+  seed = 123,
+) {
+  const path = tornadoPath(scenario, seed);
+  const progress = Number.isFinite(elapsedInSeconds)
+    ? Math.max(
+        0,
+        Math.min(1, (elapsedInSeconds - LOCAL_EVENT_START) / TORNADO_DURATION),
+      )
+    : 0;
+  return {
+    x: path.from.x + (path.to.x - path.from.x) * progress,
+    y: path.from.y + (path.to.y - path.from.y) * progress,
+    radiusInMeters: path.radiusInMeters,
+    active:
+      Number.isFinite(elapsedInSeconds) &&
+      elapsedInSeconds >= LOCAL_EVENT_START &&
+      elapsedInSeconds <= LOCAL_EVENT_START + TORNADO_DURATION,
+  };
+}
+
+/** Legacy hazards retain their existing automatic-alarm policy. */
+export function hazardWarningTimeInSeconds(
+  kind: HazardKind,
+  assessment: StructuralAssessment,
+): number | null {
+  if (kind !== 'fire' && kind !== 'tornado') return null;
+  let firstArrival = Infinity;
+  for (const building of assessment.buildings) {
+    const arrival = building.impactStartTimeInSeconds;
+    if (arrival !== undefined && Number.isFinite(arrival))
+      firstArrival = Math.min(firstArrival, arrival);
+  }
+  return Number.isFinite(firstArrival) ? Math.max(0, firstArrival - 15) : null;
+}
+
+function assessLocalizedDamage(
+  scenario: CityScenarioInput,
+  kind: 'fire' | 'tornado',
+  seed: number,
+  reinforced: boolean,
+): StructuralAssessment {
+  const xs = scenario.terrainGrid.xCoordinates,
+    ys = scenario.terrainGrid.yCoordinates;
+  const width = (xs.at(-1) ?? 0) - (xs[0] ?? 0),
+    height = (ys.at(-1) ?? 0) - (ys[0] ?? 0);
+  const ignition =
+    scenario.buildings[
+      Math.floor(hazardHash(`${seed}:fire-origin`) * scenario.buildings.length)
+    ];
+  const origin = ignition
+    ? {
+        x: (ignition.minCorner.x + ignition.maxCorner.x) / 2,
+        y: (ignition.minCorner.y + ignition.maxCorner.y) / 2,
+      }
+    : { x: 0, y: 0 };
+  const fireRadius = Math.max(
+    55,
+    Math.min(190, Math.min(width, height) * 0.24),
+  );
+  const path = tornadoPath(scenario, seed);
+  const pathDx = path.to.x - path.from.x,
+    pathDy = path.to.y - path.from.y;
+  const pathLengthSquared = pathDx * pathDx + pathDy * pathDy;
+  const buildings: BuildingDamage[] = scenario.buildings.map((building) => {
+    const center = {
+      x: (building.minCorner.x + building.maxCorner.x) / 2,
+      y: (building.minCorner.y + building.maxCorner.y) / 2,
+    };
+    const vulnerability = hazardHash(`${seed}:${kind}:${building.id}`);
+    let severity = 0,
+      impactStartTimeInSeconds: number | undefined;
+    if (kind === 'fire' && ignition) {
+      const distance = Math.hypot(center.x - origin.x, center.y - origin.y);
+      if (distance < fireRadius) {
+        severity =
+          (1.15 - (distance / fireRadius) * 0.9) *
+          (0.92 + vulnerability * 0.25);
+        impactStartTimeInSeconds = LOCAL_EVENT_START + distance / 1.2;
+      }
+    } else if (kind === 'tornado') {
+      const distance = distanceToSegment(center, path.from, path.to);
+      if (distance < path.radiusInMeters) {
+        const progress = Math.max(
+          0,
+          Math.min(
+            1,
+            ((center.x - path.from.x) * pathDx +
+              (center.y - path.from.y) * pathDy) /
+              pathLengthSquared,
+          ),
+        );
+        severity =
+          (1 - distance / path.radiusInMeters) * (1.05 + vulnerability * 0.3);
+        impactStartTimeInSeconds =
+          LOCAL_EVENT_START + progress * TORNADO_DURATION;
+      }
+    }
+    severity = Math.max(0, Math.min(1, severity * (reinforced ? 0.55 : 1)));
+    const collapsed = severity >= COLLAPSE_THRESHOLDS[kind];
+    const ramp = kind === 'fire' ? FIRE_DAMAGE_RAMP : TORNADO_DAMAGE_RAMP;
+    return {
+      buildingId: building.id,
+      severity,
+      damaged: severity >= DAMAGE_THRESHOLD,
+      collapsed,
+      collapseTimeInSeconds:
+        collapsed && impactStartTimeInSeconds !== undefined
+          ? impactStartTimeInSeconds +
+            (COLLAPSE_THRESHOLDS[kind] / severity) * ramp
+          : null,
+      ...(impactStartTimeInSeconds === undefined
+        ? {}
+        : { impactStartTimeInSeconds }),
+    };
+  });
+  return {
+    kind,
+    buildings,
+    damagedBuildingIds: buildings
+      .filter((building) => building.damaged)
+      .map((building) => building.buildingId),
+    blockedRoadEdgeIds: roadEdgeIdsBlockedByBuildings(
+      scenario,
+      new Set(
+        buildings
+          .filter((building) => building.collapsed)
+          .map((building) => building.buildingId),
+      ),
+    ),
+    maxSeverity: buildings.reduce(
+      (max, building) => Math.max(max, building.severity),
+      0,
+    ),
+  };
+}
 
 function distanceToSegment(
   point: { x: number; y: number },
@@ -274,6 +471,13 @@ export function assessStructuralDamage(
   kind: HazardKind,
   options: { seed?: number; reinforced?: boolean } = {},
 ): StructuralAssessment {
+  if (kind === 'fire' || kind === 'tornado')
+    return assessLocalizedDamage(
+      scenario,
+      kind,
+      options.seed ?? 123,
+      options.reinforced ?? false,
+    );
   const empty: StructuralAssessment = {
     kind,
     buildings: scenario.buildings.map((building) => ({
@@ -401,6 +605,20 @@ export function effectiveSeverityAt(
   kind: HazardKind,
   elapsedInSeconds: number,
 ): number {
+  if (kind === 'fire' || kind === 'tornado') {
+    const onset = damage.impactStartTimeInSeconds;
+    if (
+      onset === undefined ||
+      !Number.isFinite(onset) ||
+      Number.isNaN(elapsedInSeconds)
+    )
+      return 0;
+    const ramp = kind === 'fire' ? FIRE_DAMAGE_RAMP : TORNADO_DAMAGE_RAMP;
+    return (
+      damage.severity *
+      Math.max(0, Math.min(1, (elapsedInSeconds - onset) / ramp))
+    );
+  }
   if (kind === 'strong-wind')
     return damage.severity * Math.min(1, Math.max(0, elapsedInSeconds) / 600);
   return damage.severity;

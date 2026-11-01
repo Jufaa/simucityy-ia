@@ -36,6 +36,9 @@ export function CityToolbar(props: {
   elapsedSeconds: number;
   assetStatus: 'loading' | 'ready' | 'fallback' | 'procedural';
   hazard?: HazardKind;
+  hazardsEnabled?: boolean;
+  onModeToggle?(): void;
+  onStreetView?(): void;
   onHazard?(kind: HazardKind): void;
   onPanelToggle(): void;
   onRegenerate(): void;
@@ -53,6 +56,7 @@ export function CityToolbar(props: {
   return (
     <>
       <header
+        data-city-toolbar="true"
         style={{
           ...glass,
           top: 16,
@@ -80,9 +84,28 @@ export function CityToolbar(props: {
           </div>
         </div>
         {props.hazard && props.onHazard && (
-          <HazardSelector value={props.hazard} onChange={props.onHazard} />
+          <details style={{ flexBasis: '100%', order: 3, overflowX: 'auto' }}>
+            <summary
+              style={{
+                color: '#60787a',
+                cursor: 'pointer',
+                fontWeight: 700,
+                padding: '4px 2px',
+              }}
+            >
+              Catástrofes
+            </summary>
+            <HazardSelector value={props.hazard} onChange={props.onHazard} />
+          </details>
         )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+          {props.onModeToggle && (
+            <button type="button" style={button} onClick={props.onModeToggle}>
+              {props.hazardsEnabled === false
+                ? 'Iniciar catástrofe'
+                : 'Vida cotidiana'}
+            </button>
+          )}
           {props.onRandom && (
             <button type="button" style={button} onClick={props.onRandom}>
               Ciudad aleatoria
@@ -146,13 +169,22 @@ export function CityToolbar(props: {
         >
           Entorno
         </button>
+        {props.onStreetView && (
+          <button type="button" style={button} onClick={props.onStreetView}>
+            Vista peatonal
+          </button>
+        )}
         <span
           style={{ padding: '0 8px', color: '#60787a' }}
           role="status"
           aria-live="off"
         >
-          {props.running ? 'Simulación automática' : 'En pausa'} ·{' '}
-          {Math.floor(props.elapsedSeconds / 60)} min
+          {props.running
+            ? props.hazardsEnabled === false
+              ? 'Vida cotidiana'
+              : 'Simulación automática'
+            : 'En pausa'}{' '}
+          · {Math.floor(props.elapsedSeconds / 60)} min
         </span>
         <button
           type="button"

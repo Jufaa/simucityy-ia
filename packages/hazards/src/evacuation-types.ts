@@ -16,6 +16,18 @@ export interface EvacuationShelterInput {
   active: boolean;
 }
 
+/** Exact pre-alarm graph location; building access is supplied by the caller. */
+export interface WaitingCitizenLocation {
+  citizenId: string;
+  nodeId: string;
+  occupiedBuildingId: string | null;
+  edge?: {
+    edgeId: string;
+    toNodeId: string;
+    progressInMeters: number;
+  };
+}
+
 export interface EvacuationScenario {
   roadGraph: RoadGraph;
   citizens: readonly EvacuationCitizenInput[];

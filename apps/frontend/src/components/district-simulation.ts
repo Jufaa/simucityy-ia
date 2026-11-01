@@ -6,6 +6,7 @@ import {
   createFloodEnvironment,
   EvacuationEngine,
   hazardPreset,
+  hazardWarningTimeInSeconds,
   roadEdgeIdsBlockedByBuildings,
   type BuildingImpact,
   type CityScenarioInput,
@@ -18,6 +19,8 @@ import type { CityResponse } from './city-types';
 import { FloodSimulation } from './flood-simulation';
 import { sampleTerrainHeight } from './terrain-view';
 import { organicFloodEnvironment } from './organic-flood-environment';
+import { CitizenRoutineModel } from './citizen-routine-model';
+import type { CivicLandmarkModel } from './civic-landmarks';
 
 export type ComparisonArm = 'before' | 'after';
 export interface DistrictSimulationOptions {
@@ -25,11 +28,15 @@ export interface DistrictSimulationOptions {
   alarmMode?: 'automatic' | 'manual';
   autoStart?: boolean;
   hazard?: HazardKind;
+  routinesEnabled?: boolean;
+  hazardsEnabled?: boolean;
+  routineFacilities?: CivicLandmarkModel['assignments'];
 }
 interface Arm {
   flood: FloodSimulation;
   evacuation: EvacuationEngine;
   people: EvacuationSnapshot;
+  routines: CitizenRoutineModel | null;
   exposed: Set<string>;
   peakDepth: number;
   peakBlocked: number;
@@ -46,11 +53,15 @@ export class DistrictSimulation {
   private selected: ComparisonArm = 'before';
   private secondsIntoTick = 0;
   private elapsed = 0;
+  private warningAt: number | null = null;
   private speed = 300;
   readonly drains: readonly FloodDrain[];
   readonly hazard: HazardKind;
+  readonly hazardsEnabled: boolean;
   readonly evacuationEnabled: boolean;
   private readonly alarmMode: 'automatic' | 'manual';
+  private readonly routinesEnabled: boolean;
+  private readonly routineFacilities: CivicLandmarkModel['assignments'];
   running = false;
   started = false;
   alarmTime: number | null = null;
@@ -61,6 +72,10 @@ export class DistrictSimulation {
     options: DistrictSimulationOptions = {},
   ) {
     this.evacuationEnabled = options.evacuationEnabled ?? true;
+    this.hazardsEnabled = options.hazardsEnabled ?? true;
+    this.routinesEnabled =
+      (options.routinesEnabled ?? false) && this.evacuationEnabled;
+    this.routineFacilities = options.routineFacilities ?? [];
     this.alarmMode = options.alarmMode ?? 'automatic';
     this.hazard = options.hazard ?? 'rain';
     if (!city.terrainGrid || !city.roadGraph?.edges)
@@ -99,6 +114,7 @@ export class DistrictSimulation {
       capacityInCubicMetersPerSecond: 0.15,
     }));
     this.arms = { before: this.createArm(false), after: this.createArm(true) };
+    this.warningAt = this.computeWarningTime();
     if (options.autoStart) this.start();
   }
 
@@ -112,11 +128,19 @@ export class DistrictSimulation {
       }),
       ...organicFloodEnvironment(this.city),
     };
-    const flood = new FloodSimulation(this.input, environment, this.hazard);
-    const structural = assessStructuralDamage(this.input, this.hazard, {
-      seed: this.city.config.seed ?? 123,
-      reinforced: improved,
-    });
+    const flood = new FloodSimulation(
+      this.input,
+      environment,
+      this.hazardsEnabled ? this.hazard : 'rain',
+    );
+    const structural = assessStructuralDamage(
+      this.input,
+      this.hazardsEnabled ? this.hazard : 'rain',
+      {
+        seed: this.city.config.seed ?? 123,
+        reinforced: improved,
+      },
+    );
     const shelters = (this.city.shelters ?? []).flatMap((s) =>
       s.capacity === undefined ? [] : [{ ...s, capacity: s.capacity }],
     );
@@ -137,6 +161,8 @@ export class DistrictSimulation {
         delay = (delay + 240) * (homeDamage?.damaged ? 0.6 : 1);
       else if (this.hazard === 'tsunami') delay *= 0.5;
       else if (this.hazard === 'river-overflow') delay *= 0.8;
+      else if (this.hazard === 'fire' || this.hazard === 'tornado')
+        delay *= 0.5;
       return { ...citizen, reactionDelayInSeconds: delay };
     });
     const evacuation = new EvacuationEngine({
@@ -144,10 +170,15 @@ export class DistrictSimulation {
       citizens,
       shelters,
     });
+    const routines = this.routinesEnabled
+      ? new CitizenRoutineModel(this.city, this.routineFacilities)
+      : null;
+    if (routines) evacuation.synchronizeWaitingCitizens(routines.locations);
     return {
       flood,
       evacuation,
       people: evacuation.getSnapshot(),
+      routines,
       exposed: new Set(),
       peakDepth: 0,
       peakBlocked: 0,
@@ -156,6 +187,34 @@ export class DistrictSimulation {
       collapseSeverity: new Map(),
       blockedCache: { collapsedCount: -1, roadIds: [] },
     };
+  }
+
+  get elapsedTimeInSeconds() {
+    return this.elapsed;
+  }
+
+  private computeWarningTime(): number | null {
+    if (!this.hazardsEnabled) return null;
+    const times = Object.values(this.arms).flatMap((arm) => {
+      const time = hazardWarningTimeInSeconds(this.hazard, arm.structural);
+      return time === null ? [] : [time];
+    });
+    return times.length ? Math.min(...times) : null;
+  }
+
+  private activateScheduledWarning() {
+    const warning = this.warningAt;
+    if (
+      this.alarmMode !== 'automatic' ||
+      this.alarmTime !== null ||
+      warning === null ||
+      this.elapsed < warning - 1e-9
+    )
+      return;
+    this.alarmTime = this.elapsed;
+    if (this.evacuationEnabled)
+      for (const arm of Object.values(this.arms))
+        arm.people = arm.evacuation.advance(0, this.blockedRoadEdgeIds(arm));
   }
 
   get preset() {
@@ -189,6 +248,14 @@ export class DistrictSimulation {
   }
   /** Estado físico actual (intacto/dañado/derrumbado) de cada edificio. */
   buildingImpactsOf(arm: Arm): BuildingImpact[] {
+    if (!this.hazardsEnabled)
+      return this.input.buildings.map((building) => ({
+        buildingId: building.id,
+        condition: 'intact' as const,
+        severity: 0,
+        collapseTimeInSeconds: null,
+        cause: this.hazard,
+      }));
     const floodByBuilding = new Map(
       arm.flood.snapshot.buildings.map((item) => [item.buildingId, item]),
     );
@@ -244,6 +311,43 @@ export class DistrictSimulation {
   get evacuation() {
     return this.arms[this.selected].people;
   }
+  /** One presentation population; hazard truth always remains in the evacuation engine. */
+  get citizenState() {
+    const arm = this.arms[this.selected];
+    if (!arm.routines || this.alarmTime !== null) return arm.people;
+    const daily = new Map(
+      arm.routines.snapshot.citizens.map((person) => [person.id, person]),
+    );
+    return {
+      ...arm.people,
+      elapsedTimeInSeconds: this.elapsed,
+      citizens: arm.people.citizens.map((person) => ({
+        ...person,
+        walking:
+          person.status === 'waiting' &&
+          (daily.get(person.id)?.walking ?? false),
+      })),
+    };
+  }
+  get routineActivity() {
+    const arm = this.arms[this.selected];
+    if (!arm.routines || this.alarmTime !== null) return null;
+    const trapped = new Set(
+      arm.people.citizens
+        .filter((person) => person.status === 'trapped')
+        .map((person) => person.id),
+    );
+    const citizens = arm.routines.snapshot.citizens.filter(
+      (person) => !trapped.has(person.id),
+    );
+    return {
+      walking: citizens.filter((person) => person.walking).length,
+      home: citizens.filter((person) => person.activity === 'home').length,
+      visiting: citizens.filter(
+        (person) => !person.walking && person.activity !== 'home',
+      ).length,
+    };
+  }
   get arm() {
     return this.selected;
   }
@@ -261,6 +365,7 @@ export class DistrictSimulation {
     // El terremoto no espera a que el agua corte una calle: la alarma
     // suena con la sacudida y la gente reacciona desde el segundo cero.
     if (
+      this.hazardsEnabled &&
       this.alarmMode === 'automatic' &&
       this.alarmTime === null &&
       this.hazard === 'earthquake' &&
@@ -269,6 +374,7 @@ export class DistrictSimulation {
       )
     )
       this.alarmTime = 0;
+    this.activateScheduledWarning();
   }
 
   /** Registra los derrumbes estructurales cuyo instante ya llegó. */
@@ -323,7 +429,12 @@ export class DistrictSimulation {
     for (const arm of Object.values(this.arms)) arm.flood.pause();
   }
   triggerAlarm() {
-    if (!this.evacuationEnabled || this.alarmTime !== null) return;
+    if (
+      !this.hazardsEnabled ||
+      !this.evacuationEnabled ||
+      this.alarmTime !== null
+    )
+      return;
     this.alarmTime = this.elapsed;
     for (const arm of Object.values(this.arms))
       arm.people = arm.evacuation.advance(0, this.blockedRoadEdgeIds(arm));
@@ -333,6 +444,7 @@ export class DistrictSimulation {
     this.alarmTime = null;
     this.elapsed = this.secondsIntoTick = 0;
     this.arms = { before: this.createArm(false), after: this.createArm(true) };
+    this.warningAt = this.computeWarningTime();
   }
 
   get comparison() {
@@ -365,9 +477,19 @@ export class DistrictSimulation {
     let remaining = realSeconds * this.speed,
       changed = false;
     while (remaining > 1e-8) {
-      for (const arm of Object.values(this.arms))
-        this.processStructuralCollapses(arm);
+      this.activateScheduledWarning();
+      if (this.hazardsEnabled)
+        for (const arm of Object.values(this.arms))
+          this.processStructuralCollapses(arm);
       let dt = Math.min(remaining, 60 - this.secondsIntoTick);
+      const warning = this.warningAt;
+      if (
+        this.alarmMode === 'automatic' &&
+        this.alarmTime === null &&
+        warning !== null &&
+        warning > this.elapsed
+      )
+        dt = Math.min(dt, warning - this.elapsed);
       // No saltar por encima de un derrumbe: el avance se detiene en su
       // instante para atrapar a quien sigue dentro y cortar las calles.
       for (const arm of Object.values(this.arms))
@@ -382,15 +504,32 @@ export class DistrictSimulation {
         }
       if (dt <= 1e-9) dt = Math.min(remaining, 60 - this.secondsIntoTick);
       for (const arm of Object.values(this.arms)) {
+        if (arm.routines && this.alarmTime === null) {
+          const trapped = new Set(
+            arm.people.citizens
+              .filter((person) => person.status === 'trapped')
+              .map((person) => person.id),
+          );
+          arm.routines.advance(dt, this.blockedRoadEdgeIds(arm), trapped);
+          arm.evacuation.synchronizeWaitingCitizens(
+            arm.routines.locations.filter(
+              (location) => !trapped.has(location.citizenId),
+            ),
+          );
+          arm.people = arm.evacuation.getSnapshot();
+        }
         if (this.evacuationEnabled && this.alarmTime !== null)
           arm.people = arm.evacuation.advance(dt, this.blockedRoadEdgeIds(arm));
-        changed = arm.flood.advance(dt / 300) || changed;
+        if (this.hazardsEnabled)
+          changed = arm.flood.advance(dt / 300) || changed;
       }
       this.elapsed += dt;
+      this.activateScheduledWarning();
       this.secondsIntoTick += dt;
       remaining -= dt;
       if (this.secondsIntoTick >= 60 - 1e-8) {
         this.secondsIntoTick = 0;
+        if (!this.hazardsEnabled) continue;
         for (const arm of Object.values(this.arms))
           this.processFloodCollapses(arm);
         for (const arm of Object.values(this.arms)) {

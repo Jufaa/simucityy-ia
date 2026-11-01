@@ -1,4 +1,4 @@
-import { expect, it } from 'vitest';
+import { expect, it, vi } from 'vitest';
 import * as THREE from 'three';
 import { createCitizenLayer } from './citizen-layer';
 import { sampleTerrainHeight } from './terrain-view';
@@ -247,4 +247,132 @@ it('stops the gait for blocked citizens and clears arrival slots when the clock 
     0,
   );
   layer.dispose();
+});
+
+it('animates routine walking without marking a citizen as evacuating and freezes its gait on pause', () => {
+  const layer = createCitizenLayer(animationCity, 1);
+  const person = (x: number) => ({
+    id: 'daily',
+    position: { x, y: 20 },
+    status: 'waiting' as const,
+    walking: true,
+  });
+  layer.update({ citizens: [person(20)] }, 0.1);
+  layer.update({ citizens: [person(21)] }, 0.1);
+  const leg = layer.group.getObjectByName(
+    'evacuation-left-leg',
+  ) as THREE.InstancedMesh;
+  const moving = new THREE.Matrix4();
+  leg.getMatrixAt(0, moving);
+  const rotation = new THREE.Quaternion();
+  moving.decompose(new THREE.Vector3(), rotation, new THREE.Vector3());
+  expect(
+    Math.abs(new THREE.Euler().setFromQuaternion(rotation, 'YXZ').x),
+  ).toBeGreaterThan(0.1);
+  layer.update({ citizens: [person(21)] }, 0);
+  const paused = new THREE.Matrix4();
+  leg.getMatrixAt(0, paused);
+  expect(paused.elements).toEqual(moving.elements);
+  layer.dispose();
+});
+
+it('renders anatomy and stable individual clothes in fixed batches with jointed gait', () => {
+  const layer = createCitizenLayer(animationCity, 2);
+  const people = (x: number) => ({
+    citizens: ['person-1', 'person-2'].map((id, i) => ({
+      id,
+      position: { x: x + i * 3, y: 20 },
+      status: 'waiting' as const,
+      walking: true,
+    })),
+  });
+  const first = people(20);
+  const before = structuredClone(first);
+  layer.update(first, 0.1);
+  layer.update(people(21), 0.1);
+  expect(layer.group.children.length).toBeLessThanOrEqual(20);
+  for (const name of [
+    'evacuation-hips',
+    'evacuation-hair',
+    'evacuation-eyes',
+    'evacuation-neck',
+    'evacuation-left-forearm',
+    'evacuation-left-shin',
+    'evacuation-left-hand',
+    'evacuation-left-shoe',
+  ])
+    expect(layer.group.getObjectByName(name)).toBeInstanceOf(
+      THREE.InstancedMesh,
+    );
+  const mesh = (name: string) =>
+    layer.group.getObjectByName(name) as THREE.InstancedMesh;
+  const matrix = (name: string) => {
+    const result = new THREE.Matrix4();
+    mesh(name).getMatrixAt(0, result);
+    return result;
+  };
+  expect(
+    new THREE.Quaternion()
+      .setFromRotationMatrix(matrix('evacuation-left-leg'))
+      .equals(
+        new THREE.Quaternion().setFromRotationMatrix(
+          matrix('evacuation-left-shin'),
+        ),
+      ),
+  ).toBe(false);
+  const sleeves = mesh('evacuation-left-arm');
+  const a = new THREE.Color(),
+    b = new THREE.Color();
+  sleeves.getColorAt(0, a);
+  sleeves.getColorAt(1, b);
+  expect(a.equals(b)).toBe(false);
+  const moving = layer.group.children.map((child) =>
+    matrix(child.name).elements.slice(),
+  );
+  layer.update(people(21), 0);
+  expect(
+    layer.group.children.map((child) => matrix(child.name).elements),
+  ).toEqual(moving);
+  layer.resetMotion();
+  layer.update(first, 0.1);
+  layer.update(people(21), 0.1);
+  expect(
+    layer.group.children.map((child) => matrix(child.name).elements),
+  ).toEqual(moving);
+  expect(first).toEqual(before);
+  layer.dispose();
+});
+
+it('caps allocation/visible population and disposes every shared resource once', () => {
+  const layer = createCitizenLayer(animationCity, 1);
+  layer.update({
+    citizens: [
+      { id: 'a', position: { x: 20, y: 20 } },
+      { id: 'b', position: { x: 30, y: 20 } },
+    ],
+  });
+  const geometries = new Set<THREE.BufferGeometry>();
+  const materials = new Set<THREE.Material>();
+  const instances: THREE.InstancedMesh[] = [];
+  layer.group.traverse((object) => {
+    if (!(object instanceof THREE.InstancedMesh)) return;
+    instances.push(object);
+    geometries.add(object.geometry);
+    for (const material of Array.isArray(object.material)
+      ? object.material
+      : [object.material])
+      materials.add(material);
+    expect(object.count).toBe(1);
+    expect(object.instanceMatrix.count).toBe(1);
+  });
+  expect(geometries.size).toBeLessThan(instances.length);
+  const resources = [...geometries, ...materials, ...instances];
+  const disposals = resources.map((resource) => vi.spyOn(resource, 'dispose'));
+  layer.dispose();
+  layer.dispose();
+  expect(() =>
+    layer.update({ citizens: [{ id: 'late', position: { x: 0, y: 0 } }] }),
+  ).not.toThrow();
+  for (const dispose of disposals) expect(dispose).toHaveBeenCalledTimes(1);
+  expect(layer.group.children).toHaveLength(0);
 });

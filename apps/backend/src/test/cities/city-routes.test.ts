@@ -4,6 +4,7 @@ import { buildApp } from '../../app';
 import { loadConfig } from '../../config/env';
 import { cityScenarioSchema } from '../../modules/cities/city.schema';
 import { generateCityScenario } from '../../modules/cities/city-scenario-generator';
+import { createExpandedCityRequest } from '../../../../frontend/src/components/city-source-request';
 
 // Keep the unrelated Meta/SQLite boundary out of these city HTTP tests.
 vi.mock('../../modules/ai/routes', () => ({ registerAiRoutes: vi.fn() }));
@@ -197,4 +198,24 @@ describe('POST /api/v1/cities/generate', () => {
     expect((await app.inject('/api/v1/cities')).statusCode).toBe(404);
     expect((await app.inject({ method: 'GET', url })).statusCode).toBe(404);
   });
+});
+
+it('accepts the exact expanded frontend bootstrap within existing output schema budgets', async () => {
+  const request = createExpandedCityRequest(),
+    before = structuredClone(request);
+  const response = await makeApp().inject({
+    method: 'POST',
+    url,
+    payload: request,
+  });
+  expect(response.statusCode, response.body).toBe(200);
+  const city = cityScenarioSchema.parse(response.json());
+  expect(city.config.widthInMeters).toBe(1800);
+  expect(city.config.heightInMeters).toBe(1500);
+  expect(city.citizens).toHaveLength(300);
+  expect(city.district?.urban?.streetDetails.length).toBeLessThanOrEqual(6000);
+  expect(
+    city.terrainGrid.xCoordinates.length * city.terrainGrid.yCoordinates.length,
+  ).toBeLessThanOrEqual(10000);
+  expect(request).toEqual(before);
 });

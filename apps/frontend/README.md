@@ -1,5 +1,21 @@
 # Explore the procedural world and city
 
+## Integrated expanded city
+
+The default scene requests a **1800 × 1500 m** synthetic territory and uses the opt-in metropolitan organic generator: seven irregular neighborhoods, a connected looped street grid, **three graph-connected bridges**, a target of **850 normal-scale buildings** and **18 parks**. Downtown towers range from 72–144 m, transitioning into lower-rise residential and commercial districts. The existing seeded random profile maps its building target to 650–1050 and parks to 14–22 in metropolitan mode. Clearance remains authoritative; targets are not universal count guarantees. Legacy 500 m and 1200 × 1000 m expanded generation remains unchanged when `metropolitan` is omitted.
+
+Only the numerical terrain domain is rectangular. Development follows separate irregular districts and riverbanks with open margins; multiple graded bridge approaches preserve the channel bed and deck clearance. The 1800 × 1500 metropolitan case uses adaptive 24 m sampling (4,864 vertices), within the bounded grid/world budgets. Contextual regional fields, a waterfront port and rail corridor are procedural scenery; port/rail are not part of the traffic or hazard solvers. This is deliberately lower-resolution synthetic hydraulics, not a surveyed city or a physically calibrated water model.
+
+Use **Vista peatonal** to inspect the current population at road/deck height. Humans now have shaped torsos, hips, necks, faces, hair, deterministic skin/clothing and articulated arms/legs/hands/shoes in **20 shared instanced batches**, rather than per-person scene hierarchies. Walking uses two-link leg targets and grounded stance feet; the existing routines, status markers/colors, bridge heights and pause/reset semantics remain. The result is stylized procedural anatomy, not photorealistic people or collision-resolved crowds.
+
+**Vida cotidiana** restarts the same city without hazard sources, damage or evacuation, so visits and traffic can be inspected peacefully. **Iniciar catástrofe** or selecting an event restarts the chosen synthetic event on the same geography. The prior automatic-event default remains active until peaceful mode is selected. New fire/tornado warnings occur 15 simulated seconds before the earliest affected building's arrival, and the existing automatic slowdown switches to 3× at the warning. The same people then evacuate from their actual graph locations.
+
+**Semaphores:** actual degree-three-or-higher junctions share one deterministic 28-second signal cycle with the displayed perpendicular heads. Vehicles stop on red/amber and clear an already-committed crossing under the existing reservation/spacing rules. The real-time traffic clock drives light colors and freezes/resets with traffic. Visible signal placement receives priority before decorative cars/trees exhaust the 600-item scenery cap. No pedestrian-signal compliance or vehicle/pedestrian collision solver is claimed.
+
+**Calidad gráfica** selects light (DPR ≤1, no shadows), balanced (DPR ≤1.5, 1024 shadows), or high (DPR ≤2, 2048 shadows). Changing quality does not reset simulation or regenerate the city. FPS/frame-time/draw counters remain actual browser measurements, not a hardware-independent performance promise. Browser visual/FPS acceptance is separate from unit tests.
+
+No dependencies, paid services, downloaded character assets, LLM chat, real emergency dispatch, full rigid-body physics or scientific fire/tornado solver were added. Existing local CC0 city assets/fallback, synthetic service access, 96-active pedestrian routines, 40-vehicle cap, flood/debris closures and the original five hazard models remain integrated.
+
 Run `pnpm dev` from the repository root and open http://localhost:3000.
 
 ## Free local model preview
@@ -16,7 +32,7 @@ Sources/licenses: [Kenney City Kit Suburban](https://kenney.nl/assets/city-kit-s
 
 ## Random city, movement and performance
 
-**Ciudad aleatoria** chooses a fresh browser-generated 32-bit seed and a bounded local profile: building target (110–190), park target (2–7), height multiplier, lake size and channel width. Targets are ceilings: dry-ground clearance may produce fewer buildings or parks. The seed and **Perfil aleatorio** mode together reproduce the city; in **Ajustes**, enter the seed and press **Reproducir ciudad**. **Otra ciudad** still advances the seed while retaining the current profile mode. The original default layout is unchanged until random generation is selected. Neither mode uses an LLM; the requested conversational generator is deferred.
+**Ciudad aleatoria** chooses a fresh browser-generated 32-bit seed and a bounded local profile: building target (110–190), park target (2–7), height multiplier, lake size and channel width. Metropolitan mode maps those targets to 650–1050 buildings and 14–22 parks; clearance remains authoritative and may produce fewer. The seed and **Perfil aleatorio** mode together reproduce the city; in **Ajustes**, enter the seed and press **Reproducir ciudad**. **Otra ciudad** still advances the seed while retaining the current profile mode. The legacy generator defaults are unchanged; the integrated scene explicitly selects the metropolitan layout described above. Neither mode uses an LLM; the requested conversational generator is deferred.
 
 Up to **40 moving vehicles** follow directional graph lanes using capped 1/30-second kinematic steps, acceleration, braking, following separation and exclusive intersection reservations. Their clock uses real frame seconds, not the hazard speed multiplier. Roads blocked by water or collapsed-building debris stop traffic; vehicles already on a blocked road freeze rather than teleport. Pause freezes traffic and hazard progression; Reset restores the initial vehicle state. Hidden tabs do not accumulate catch-up time. Segments shorter than 24 m are omitted from the traffic network, so traffic does not cover every road. Parked vehicle props are omitted when moving traffic is present because they occupy the same lanes.
 
@@ -26,7 +42,7 @@ The visible performance monitor samples real frame cadence once per second: FPS,
 
 ## Generate an organic city
 
-The initial layout is now **Orgánico · lago y puente**. A deterministic local model builds winding connected streets on two banks, a carved lake/channel, a bridge, a denser center, lower garden housing, a commercial quarter and dry parks. Buildings remain rectangular individual structures; the developed city footprint is irregular even though the terrain/flood sampling domain stays rectangular.
+The initial scene uses the metropolitan organic layout and opens on the regional overview; the previous expanded and legacy organic behavior is retained when metropolitan mode is omitted. A deterministic local model builds connected districts around a river, bridges, a tall downtown cluster, lower-rise housing, commercial areas and dry parks. The surrounding world adds fields, a port and rail scenery. Buildings remain individual rectangular structures; the developed city footprint is irregular even though the terrain/flood sampling domain stays rectangular.
 
 - **Generar otra ciudad** advances the city seed and rebuilds streets, parcels, population access and local geography together. The displayed city seed reproduces the same result. Changing the surroundings seed still affects the surroundings only.
 - **Grilla original** restores the previous backend-generated district. Switching layout, terrain or city seed resets the local experiments; automatic start/alarm/walking remain enabled. Flat land still retains the lake/channel basins.
@@ -44,7 +60,7 @@ The default camera focuses on the city. **Vista mundo** reveals the offline synt
 - **Mar / Lago / Campos / Reservas** toggle visibility only. They do not modify geometry generation or simulation inputs.
 - **Vista mundo / Vista ciudad** move the camera without resetting the experiments. Ordinary **Reiniciar** clears the city flood, not the permanent sea or lake, and does not move the camera.
 
-The default 500 m city occupies the center of a 1850 × 1450 m world. The city uses its selected organic or legacy-grid terrain; surrounding terrain is sampled at 25 m and matches the city boundary heights. Coast and lake water surfaces are clipped to the terrain. Rural fields are visual crop/pasture areas, not agricultural simulations. The yellow reserve is empty land, not automatic city growth or a real zoning decision.
+In the legacy 500 m example, the city occupies the center of a 1850 × 1450 m world. The expanded scene scales its surrounding domain while keeping sampling bounded. The city uses its selected organic or legacy-grid terrain; surrounding terrain is sampled at 25 m and matches the city boundary heights. Coast and lake water surfaces are clipped to the terrain. Rural fields are visual crop/pasture areas, not agricultural simulations. The yellow reserve is empty land, not automatic city growth or a real zoning decision.
 
 Permanent water is separate from rainfall, snapshots and the city-only flood solver: no tides, lake exchange, coastal inundation or outside-city evacuation is modeled. Ambient water highlights may continue while the city simulation is paused. The original API response and saved-scenario format remain unchanged. The local organic view adds its own channel/neighborhoods; AI composition and forests remain later capabilities.
 
@@ -60,9 +76,19 @@ Open **Servicios y movilidad urbana** for the actual service/vehicle/stop/signal
 
 `city-life-model.ts` owns pure placement, `city-life-layer.ts` owns its instanced rendering resources, and `civic-landmarks.ts` owns civic assignment and rooftop rendering. Both render layers use the shared terrain helpers and explicit idempotent disposal before the main scene cleanup.
 
-## Default people: automatic evacuation, no AI
+## Everyday pedestrian routines and evacuation
 
-The frontend places the generated people outside buildings, along street/sidewalk segments, so they are visible without starting any simulation. IDs, home metadata and deterministic placement remain available for a future behavior controller; the source city is not mutated. Select **Vista ciudad** and zoom in to inspect them.
+The scene opts into deterministic daily routines for up to **96 active pedestrians**, preserving every generated citizen ID, home, mobility and total population. The remaining population stays at its home access. Seeded itineraries alternate home, work or school, museum or park, then home; missing/unreachable destinations remain idle. Visits have synthetic dwell periods, not real opening hours, employment, age or service capacity. Building/park access uses estimated nearest road nodes; actual door paths, sidewalks and crowd/vehicle collisions are not modeled.
+
+Pedestrians traverse directed graph edges (including bridges) at `1.2 × mobilityFactor` metres per **simulated second**. The existing 3×/30×/300× hazard clock also accelerates routines. Paths/access are cached and reused; closures invalidate paths, and a pedestrian already on a blocked edge freezes until it opens. Pause, hidden-tab handling and reset use the existing shared simulation loop. The once-per-second HUD shows walking/home/destination counts until the alarm. Existing automatic hazards remain enabled, so a catastrophe can interrupt a visit before its full cycle finishes.
+
+At the common alarm, each arm's evacuation engine takes over the **same IDs at their actual directed-edge progress or graph node**, without replacing the hydraulic engine or replaying a home connector. Actual building occupancy determines trapping: a person away survives their home's collapse but can be trapped while visiting a collapsed facility. Both comparison arms begin with identical schedules; hazard closures may subsequently change their visits. This remains a synthetic demonstration, not emergency guidance or a calibrated pedestrian model.
+
+Library defaults remain unchanged: `routinesEnabled` is opt-in on `DistrictSimulation`, and `EvacuationEngine.synchronizeWaitingCitizens` is an atomic pre-alarm-only API. Rejected batches do not change agent state. `citizen-layer.ts` uses a presentation-only walking flag, preserving evacuation status/color semantics and one set of instanced population meshes.
+
+## Population presentation and automatic evacuation
+
+The scene initially places citizens at their estimated home road accesses, then advances the routines described above before the alarm. IDs, home metadata and deterministic placement remain available for a future behavior controller; the source city is not mutated. Select **Vista ciudad** and zoom in to inspect them.
 
 **The simulation starts automatically when the city loads.** People wait until either experiment arm first reports a blocked street or an exposed building; a shared automatic alarm then starts local evacuation. No Start or alarm click is required. Pause remains optional; Reset restores the initial population and immediately restarts the simulation. Both experiment arms honor reaction delays, route toward available shelters and react to blocked streets. At the first alarm, the scene automatically switches to **3× · caminar** so walking remains readable. Select **Vista ciudad** and zoom in to see the people. The UI uses `{ evacuationEnabled: true, alarmMode: 'automatic', autoStart: true }`.
 
@@ -94,6 +120,8 @@ The top bar selector **Catástrofe** switches the event without regenerating the
 | **Terremoto**       | Deterministic structural damage around a central epicenter (magnitude 6.8 demo)   | Ground cracks, red/orange damaged buildings, debris-blocked streets, a brief camera shake |
 | **Vientos fuertes** | Deterministic structural damage weighted by building height (110 km/h gusts demo) | Animated wind streaks, damaged tall buildings, debris                                     |
 
+**Incendio urbano** uses a seeded existing-building origin at second 30, localized synthetic radial arrival at 1.2 m/s and a 90-second damage ramp. **Tornado** traverses a deterministic narrow corridor from seconds 30 to 210; each affected building has its own arrival and three-second damage ramp. Neither injects flood-water pulses. Reinforcement reduces synthetic severity; timed collapses feed the same actual-occupancy trapping, debris-road closures and evacuation. Flames/smoke (at most 256 instances) and funnel/debris (at most 192) use the authoritative simulated clock, freeze when paused and clear on reset. These are demonstration rules, not combustion, CFD or structural-engineering calculations.
+
 Water events keep using the flood solver, its blocked-road thresholds and the graph evacuation. Earthquakes and strong wind produce no flood water: their damaged buildings and debris-blocked edges feed the same alarm and evacuation, and the **Con mejora** arm models seismic reinforcement / secured roofs (lower damage severity) instead of extra drainage. A gradient sky dome with drifting clouds and per-event fog/light moods keep the scene readable in every state. All coefficients are demonstrative presets, not calibrated forecasts.
 
 ### Building collapse and citizen reaction
@@ -106,7 +134,7 @@ Every building now has a physical state over time — **intact → damaged → c
 - **Debris:** only collapsed buildings block streets (in addition to water-blocked edges), from the moment they fall; evacuation reroutes around them.
 - **Trapped citizens:** anyone still at home when their building collapses becomes **trapped** (purple): they cannot move or be evacuated and are reported separately from stranded. Reaction delays are adjusted per event (earthquake fastest, wind sheltering, tsunami pre-warning ×0.5, river ×0.8); IDs, homes and mobility never change.
 
-In the default organic city after ~10 simulated minutes this yields, deterministically: earthquake 22 collapsed / 16 trapped, strong wind 27 collapsed / 29 trapped, tsunami 4 collapsed shoreline buildings — the improved arm collapses and traps fewer in every case.
+In a historical legacy 500 m organic example after ~10 simulated minutes this yielded, deterministically (these are not expanded-city acceptance counts): earthquake 22 collapsed / 16 trapped, strong wind 27 collapsed / 29 trapped, tsunami 4 collapsed shoreline buildings — the improved arm collapses and traps fewer in every case.
 
 ## Model and limits
 
@@ -148,7 +176,7 @@ Building barriers use cell centers rather than any footprint intersection, prese
 
 In the library default mode, a common hazard alarm is recorded when either arm first blocks a road or exposes a building. The scene uses this automatic alarm. When evacuation is enabled, generated citizens then honor their reaction delays and walk at `1.2 × mobilityFactor` m/s, including the initial straight home-to-access connector. Routes use road lengths, directions, active shelters and reserved capacity. At a node, closures trigger rerouting; a newly blocked current edge stops the person in place until it reopens. No teleporting or off-road rescue is modeled. Home connectors have no separate flood/collision check, and shelter flooding or crowd congestion is not simulated.
 
-The default view shows people waiting for the automatic hazard alarm. Cyan squares mark local drains in the improved arm. Use **3× · caminar** to inspect movement after the automatic alarm. Pausing freezes both experiments; Reset returns both to dry conditions and waiting citizens, clears cumulative metrics and alarm, and preserves the current camera. Changing terrain rebuilds the scene and resets both experiments and the camera.
+The default view shows daily visits before the automatic hazard alarm, then graph evacuation from actual current locations. Cyan squares mark local drains in the improved arm. Use **3× · caminar** to inspect movement after the automatic alarm. Pausing freezes both experiments; Reset returns both to dry conditions and the initial routine/home state, clears cumulative metrics and alarm, and preserves the current camera. Changing terrain rebuilds the scene and resets both experiments and the camera.
 
 The table reports **cumulative unique** exposed buildings, peak blocked segments, peak depth, actual removed water, current evacuated/stranded counts, and, only when evacuation behavior is enabled, completion time measured **from the common alarm**. The scene shows evacuation rows, with completion measured from the automatic alarm. An unfinished evacuation reads **No completada**, never zero. There is no guarantee that every local metric improves, and this comparison does not establish emergency safety.
 

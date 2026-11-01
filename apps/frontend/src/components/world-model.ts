@@ -3,7 +3,17 @@ import type { Block, CityResponse, Point } from './city-types';
 import { sampleTerrainHeight } from './terrain-view';
 
 export interface WorldArea extends Block {
-  kind: 'crop' | 'pasture' | 'expansion';
+  kind: 'crop' | 'pasture' | 'orchard' | 'woodland' | 'expansion';
+}
+export interface WorldTree {
+  position: Point;
+  scale: number;
+  variant: number;
+}
+export interface WorldPort {
+  center: Point;
+  berthCount: number;
+  quayLength: number;
 }
 export interface WorldModel {
   seed: number;
@@ -13,7 +23,10 @@ export interface WorldModel {
   lake: { center: Point; radiusX: number; radiusZ: number; level: number };
   terrainGrid: TerrainGrid;
   fields: WorldArea[];
+  trees: WorldTree[];
   buildableAreas: WorldArea[];
+  port: WorldPort;
+  rail: { points: Point[] };
 }
 
 /** Offline view model: neither the original city nor its simulation grid is modified. */
@@ -91,17 +104,92 @@ export function generateWorld(city: CityResponse, seed: number): WorldModel {
     return y;
   };
   const fields: WorldArea[] = [];
-  for (let row = 0; row < 2; row++)
-    for (let column = 0; column < 3; column++) {
-      const x = 50 + column * 170,
-        z = h + 120 + row * 135;
-      fields.push({
-        id: `field-${row}-${column}`,
-        kind: (seed + row + column) % 3 === 0 ? 'pasture' : 'crop',
-        minCorner: { x, y: z },
-        maxCorner: { x: x + 145, y: z + 105 },
-      });
-    }
+  const fieldDepth = 150,
+    firstFieldX = 40,
+    lastFieldX = bounds.maxX - 360 - 30,
+    availableFieldSpan = lastFieldX - firstFieldX,
+    columns = Math.max(2, Math.floor(availableFieldSpan / 360) + 1),
+    columnStep = availableFieldSpan / (columns - 1),
+    fieldWidth = Math.min(360, columnStep - 24);
+  for (const [region, baseZ] of [
+    ['north', bounds.minZ + 30],
+    ['south', h + 40],
+  ] as const)
+    for (let row = 0; row < 2; row++)
+      for (let column = 0; column < columns; column++) {
+        const x = firstFieldX + column * columnStep,
+          z = baseZ + row * (fieldDepth + 20),
+          kind =
+            (column + row * 2) % 4 === 1
+              ? 'woodland'
+              : (seed + row + column) % 4 === 0
+                ? 'pasture'
+                : (seed + column) % 5 === 0
+                  ? 'orchard'
+                  : 'crop';
+        fields.push({
+          id: `field-${region}-${row}-${column}`,
+          kind,
+          minCorner: { x, y: z },
+          maxCorner: { x: x + fieldWidth, y: z + fieldDepth },
+        });
+      }
+  const buildableAreas: WorldArea[] = [
+    {
+      id: 'expansion-north-east',
+      kind: 'expansion',
+      minCorner: { x: w + 60, y: -230 },
+      maxCorner: { x: w + 420, y: -80 },
+    },
+  ];
+  const fieldsWithoutConflicts = fields.filter(
+    (field) =>
+      !buildableAreas.some(
+        (area) =>
+          field.minCorner.x < area.maxCorner.x &&
+          field.maxCorner.x > area.minCorner.x &&
+          field.minCorner.y < area.maxCorner.y &&
+          field.maxCorner.y > area.minCorner.y,
+      ),
+  );
+  let treeState = (seed ^ 0xa511e9b3) >>> 0;
+  const nextTreeRandom = () => {
+    treeState = (Math.imul(treeState, 1664525) + 1013904223) >>> 0;
+    return treeState / 4294967296;
+  };
+  const trees: WorldTree[] = [];
+  for (const area of fieldsWithoutConflicts.filter(
+    (field) => field.kind === 'woodland',
+  ))
+    for (let row = 0; row < 4; row++)
+      for (let column = 0; column < 7; column++) {
+        trees.push({
+          position: {
+            x:
+              area.minCorner.x +
+              18 +
+              column * 45 +
+              (nextTreeRandom() - 0.5) * 16,
+            y: area.minCorner.y + 18 + row * 34 + (nextTreeRandom() - 0.5) * 14,
+          },
+          scale: 1.35 + nextTreeRandom() * 0.85,
+          variant: Math.floor(nextTreeRandom() * 3),
+        });
+      }
+  const port: WorldPort = {
+    center: { x: -150, y: h * 0.5 },
+    berthCount: 3 + (seed % 2),
+    quayLength: 185 + (seed % 4) * 12,
+  };
+  const rail = {
+    points: [
+      { x: -270, y: port.center.y + 18 },
+      { x: -190, y: port.center.y - 12 },
+      { x: -90, y: port.center.y + 12 },
+      { x: 0, y: port.center.y },
+      { x: Math.min(180, w), y: port.center.y + 22 },
+    ],
+  };
   return {
     seed,
     bounds,
@@ -114,15 +202,11 @@ export function generateWorld(city: CityResponse, seed: number): WorldModel {
       yCoordinates: zs,
       elevationsInMeters: zs.map((z) => xs.map((x) => height(x, z))),
     },
-    fields,
-    buildableAreas: [
-      {
-        id: 'expansion-north-east',
-        kind: 'expansion',
-        minCorner: { x: w + 60, y: -230 },
-        maxCorner: { x: w + 420, y: -80 },
-      },
-    ],
+    fields: fieldsWithoutConflicts,
+    trees,
+    port,
+    rail,
+    buildableAreas,
   };
 }
 

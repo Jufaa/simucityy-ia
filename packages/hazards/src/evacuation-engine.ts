@@ -5,6 +5,7 @@ import type {
   EvacuationShelterInput,
   EvacuationSnapshot,
   EvacuationStatus,
+  WaitingCitizenLocation,
 } from './evacuation-types';
 
 type Arc = { id: string; from: string; to: string; length: number };
@@ -20,6 +21,7 @@ type Agent = {
   edge: Arc | null;
   progress: number;
   arrival: number | null;
+  occupiedBuildingId: string | null;
 };
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const finitePoint = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -31,6 +33,7 @@ export class EvacuationEngine {
   private readonly shelters: Shelter[];
   private readonly agents: Agent[];
   private elapsed = 0;
+  private locationsLocked = false;
 
   constructor(scenario: EvacuationScenario) {
     for (const node of scenario.roadGraph.nodes) {
@@ -116,21 +119,86 @@ export class EvacuationEngine {
           edge: null,
           progress: 0,
           arrival: null,
+          occupiedBuildingId: citizen.homeBuildingId,
         };
       })
       .sort((a, b) => compare(a.input.id, b.input.id));
   }
 
-  /**
-   * Atrapa a los ciudadanos que aún están en casa cuando su edificio se
-   * derrumba. Quien ya salió (conector/calle/refugio) no resulta atrapado.
-   * Devuelve cuántos quedaron atrapados en esta llamada.
-   */
+  /** Atomically synchronize waiting citizens before the first evacuation advance. */
+  synchronizeWaitingCitizens(
+    locations: readonly WaitingCitizenLocation[],
+  ): void {
+    if (this.locationsLocked)
+      throw new RangeError(
+        'Routine locations cannot change after evacuation begins.',
+      );
+    const byId = new Map(this.agents.map((agent) => [agent.input.id, agent]));
+    const seen = new Set<string>();
+    const updates = locations.map((location) => {
+      const agent = byId.get(location.citizenId);
+      const node = this.nodes.get(location.nodeId);
+      const edge =
+        location.edge &&
+        this.adjacency
+          .get(location.nodeId)
+          ?.find(
+            (arc) =>
+              arc.id === location.edge?.edgeId &&
+              arc.to === location.edge.toNodeId,
+          );
+      if (
+        !agent ||
+        agent.status !== 'waiting' ||
+        seen.has(location.citizenId) ||
+        !node ||
+        (location.occupiedBuildingId !== null &&
+          !location.occupiedBuildingId) ||
+        (location.edge &&
+          (!edge ||
+            location.occupiedBuildingId !== null ||
+            !Number.isFinite(location.edge.progressInMeters) ||
+            location.edge.progressInMeters < 0 ||
+            location.edge.progressInMeters > edge.length))
+      )
+        throw new RangeError('Invalid waiting citizen location batch.');
+      seen.add(location.citizenId);
+      const to = edge ? this.nodes.get(edge.to) : undefined;
+      const progress = location.edge?.progressInMeters ?? 0;
+      const ratio = edge ? progress / edge.length : 0;
+      const position = to
+        ? {
+            x: node.x + (to.x - node.x) * ratio,
+            y: node.y + (to.y - node.y) * ratio,
+          }
+        : { ...node };
+      return { agent, location, edge: edge || null, progress, position };
+    });
+    for (const { agent, location, edge, progress, position } of updates) {
+      agent.position = position;
+      agent.nodeId = location.nodeId;
+      agent.occupiedBuildingId = location.occupiedBuildingId;
+      agent.phase = edge
+        ? 'edge'
+        : location.occupiedBuildingId !== null
+          ? 'home'
+          : 'node';
+      agent.edge = edge;
+      agent.progress = progress;
+      agent.input.position = { ...position };
+    }
+  }
+
+  /** Trap actual building occupants, never people already outside or at a shelter. */
   trapCitizensInBuildings(buildingIds: readonly string[]): number {
     const buildings = new Set(buildingIds);
     let trapped = 0;
     for (const agent of this.agents) {
-      if (agent.phase !== 'home' || !buildings.has(agent.input.homeBuildingId))
+      if (
+        agent.phase !== 'home' ||
+        agent.occupiedBuildingId === null ||
+        !buildings.has(agent.occupiedBuildingId)
+      )
         continue;
       this.release(agent);
       agent.phase = 'trapped';
@@ -226,6 +294,7 @@ export class EvacuationEngine {
         'Evacuation time increment must be finite and nonnegative.',
       );
     const blocked = new Set(blockedRoadEdgeIds);
+    this.locationsLocked = true;
     const end = this.elapsed + seconds;
     let time = this.elapsed;
     // Process common reaction/arrival events, not one citizen's whole interval first.
@@ -258,7 +327,10 @@ export class EvacuationEngine {
           continue;
         }
         agent.status = 'evacuating';
-        if (agent.phase === 'home') agent.phase = 'connector';
+        if (agent.phase === 'home') {
+          agent.phase = 'connector';
+          agent.occupiedBuildingId = null;
+        }
         if (agent.phase === 'connector') {
           const node = this.nodes.get(agent.nodeId)!;
           if (

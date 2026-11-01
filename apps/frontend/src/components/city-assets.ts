@@ -89,6 +89,21 @@ function chooseAsset(building: Building, index: number): AssetKey {
   return CITY_ASSETS[index % 3]!;
 }
 
+function buildingTint(buildingId: string): THREE.Color {
+  let hash = 2166136261;
+  for (const character of buildingId) {
+    hash ^= character.charCodeAt(0);
+    hash = Math.imul(hash, 16777619);
+  }
+  const normalized = (hash >>> 0) / 0xffffffff;
+  // Keep the Kenney textures recognizable while avoiding a repeated, identical block palette.
+  return new THREE.Color().setHSL(
+    0.075 + normalized * 0.055,
+    0.12,
+    0.84 + normalized * 0.12,
+  );
+}
+
 /** Transfers ownership of templates to this layer; do not share them across live layers. */
 export function buildCityAssetLayer(
   city: CityResponse,
@@ -285,7 +300,12 @@ export function buildCityAssetLayer(
         poses.forEach((pose, index) =>
           instances.setMatrixAt(index, pose.clone().multiply(node.matrixWorld)),
         );
+        for (const pose of buildingPoses) {
+          if (pose.key === key)
+            instances.setColorAt(pose.index, buildingTint(pose.id));
+        }
         instances.instanceMatrix.needsUpdate = true;
+        if (instances.instanceColor) instances.instanceColor.needsUpdate = true;
         instances.computeBoundingSphere();
         group.add(instances);
       });

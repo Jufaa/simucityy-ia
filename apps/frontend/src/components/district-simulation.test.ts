@@ -3,6 +3,7 @@ import { generateCityScenario } from '../../../backend/src/modules/cities/city-s
 import type { CityResponse } from './city-types';
 import { createReliefCity } from './terrain-view';
 import { DistrictSimulation } from './district-simulation';
+import { hazardWarningTimeInSeconds } from '@simulicity/hazards';
 
 const makeCity = (): CityResponse =>
   JSON.parse(
@@ -234,4 +235,113 @@ it('supports a readable 3x walking speed without changing the shared simulation 
   expect(simulation.comparison.before.tick).toBe(
     simulation.comparison.after.tick,
   );
+});
+
+it('runs opt-in daily routines and hands the same people to evacuation at their actual locations', () => {
+  const city = makeCity(),
+    before = JSON.stringify(city);
+  const sim = new DistrictSimulation(city, {
+    routinesEnabled: true,
+    alarmMode: 'manual',
+  });
+  const initial = sim.citizenState;
+  expect(initial.citizens).toHaveLength(12);
+  sim.setSpeed(3);
+  sim.start();
+  let walker = false;
+  for (let i = 0; i < 20; i++) {
+    sim.advance(1);
+    if (
+      sim.evacuation.citizens.some((person) => person.currentEdgeId !== null)
+    ) {
+      walker = true;
+      break;
+    }
+  }
+  expect(walker).toBe(true);
+  expect(sim.citizenState.citizens.map((p) => p.position)).not.toEqual(
+    initial.citizens.map((p) => p.position),
+  );
+  sim.pause();
+  const paused = sim.citizenState;
+  sim.advance(10);
+  expect(sim.citizenState).toEqual(paused);
+  sim.triggerAlarm();
+  expect(sim.evacuation.citizens.map((p) => p.position)).toEqual(
+    paused.citizens.map((p) => p.position),
+  );
+  expect(new Set(sim.citizenState.citizens.map((p) => p.id)).size).toBe(12);
+  sim.reset();
+  expect(sim.citizenState).toEqual(initial);
+  expect(JSON.stringify(city)).toBe(before);
+});
+
+it('keeps the peaceful city alive without starting an earthquake or a hydraulic event', () => {
+  const city = makeCity();
+  const sim = new DistrictSimulation(city, {
+    hazard: 'earthquake',
+    routinesEnabled: true,
+    hazardsEnabled: false,
+    autoStart: true,
+  });
+  sim.setSpeed(3);
+  const initial = sim.citizenState;
+  sim.advance(10);
+  expect(sim.elapsedTimeInSeconds).toBe(30);
+  expect(sim.snapshot.tick).toBe(0);
+  expect(sim.alarmTime).toBeNull();
+  expect(sim.comparison.before.damagedBuildings).toBe(0);
+  expect(sim.collapsedBuildingIds).toHaveLength(0);
+  expect(sim.citizenState.citizens.map((p) => p.position)).not.toEqual(
+    initial.citizens.map((p) => p.position),
+  );
+  sim.pause();
+  sim.advance(10);
+  expect(sim.elapsedTimeInSeconds).toBe(30);
+  sim.reset();
+  expect(sim.elapsedTimeInSeconds).toBe(0);
+});
+
+it.each(['fire', 'tornado'] as const)(
+  'warns exactly before %s arrival, then integrates damage, reset and immutable input',
+  (hazard) => {
+    const city = makeCity(),
+      source = JSON.stringify(city);
+    const sim = new DistrictSimulation(city, {
+      hazard,
+      routinesEnabled: true,
+      autoStart: true,
+    });
+    sim.setSpeed(3);
+    const warning = hazardWarningTimeInSeconds(hazard, sim.structural);
+    expect(warning).not.toBeNull();
+    sim.advance((warning ?? 0) / 3);
+    expect(sim.alarmTime).toBe(warning);
+    expect(sim.elapsedTimeInSeconds).toBe(warning);
+    expect(sim.buildingImpacts.every((p) => p.condition === 'intact')).toBe(
+      true,
+    );
+    sim.advance(5);
+    expect(sim.collapsedBuildingIds).toHaveLength(0);
+    sim.advance(60);
+    expect(sim.comparison.before.damagedBuildings).toBeGreaterThan(0);
+    expect(sim.evacuation.citizens).toHaveLength(city.citizens?.length ?? 0);
+    sim.reset();
+    expect(sim.alarmTime).toBeNull();
+    expect(sim.comparison.before.damagedBuildings).toBe(0);
+    expect(sim.selectedCollapsedBlockedRoadEdgeIds).toHaveLength(0);
+    expect(JSON.stringify(city)).toBe(source);
+  },
+);
+
+it('does not retain tsunami source water when the selected event is disabled for daily life', () => {
+  const sim = new DistrictSimulation(makeCity(), {
+    hazard: 'tsunami',
+    hazardsEnabled: false,
+    autoStart: true,
+  });
+  expect(sim.snapshot.maxWaterDepthInMeters).toBe(0);
+  sim.advance(1);
+  expect(sim.snapshot.maxWaterDepthInMeters).toBe(0);
+  expect(sim.alarmTime).toBeNull();
 });

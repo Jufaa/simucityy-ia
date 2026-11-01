@@ -291,3 +291,47 @@ describe('EvacuationEngine', () => {
     ).toBe('stranded');
   });
 });
+
+describe('pre-alarm routine locations', () => {
+  it('takes over a real directed edge without a connector jump and respects its closure', () => {
+    const input = scenario();
+    const engine = new EvacuationEngine(input);
+    engine.synchronizeWaitingCitizens([
+      {
+        citizenId: 'citizen',
+        nodeId: 'a',
+        occupiedBuildingId: null,
+        edge: { edgeId: 'ab', toNodeId: 'b', progressInMeters: 6 },
+      },
+    ]);
+    expect(engine.getSnapshot().citizens[0]?.position).toEqual({ x: 6, y: 0 });
+    expect(engine.trapCitizensInBuildings(['home'])).toBe(0);
+    expect(engine.advance(6, ['ab']).citizens[0]).toMatchObject({
+      position: { x: 6, y: 0 },
+      status: 'stranded',
+      currentEdgeId: 'ab',
+    });
+    expect(engine.advance(5, []).citizens[0]?.position.x).toBeCloseTo(9);
+    expect(engine.advance(60, []).evacuatedCount).toBe(1);
+    expect(() => engine.synchronizeWaitingCitizens([])).toThrow();
+  });
+
+  it('traps actual facility occupants and rejects an invalid batch atomically', () => {
+    const input = scenario();
+    const engine = new EvacuationEngine(input);
+    const before = engine.getSnapshot();
+    expect(() =>
+      engine.synchronizeWaitingCitizens([
+        { citizenId: 'citizen', nodeId: 'b', occupiedBuildingId: 'museum' },
+        { citizenId: 'missing', nodeId: 'a', occupiedBuildingId: null },
+      ]),
+    ).toThrow();
+    expect(engine.getSnapshot()).toEqual(before);
+    engine.synchronizeWaitingCitizens([
+      { citizenId: 'citizen', nodeId: 'b', occupiedBuildingId: 'museum' },
+    ]);
+    expect(engine.trapCitizensInBuildings(['home'])).toBe(0);
+    expect(engine.trapCitizensInBuildings(['museum'])).toBe(1);
+    expect(engine.advance(60, []).trappedCount).toBe(1);
+  });
+});

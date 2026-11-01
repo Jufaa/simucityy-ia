@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import {
   hazardHash,
+  tornadoPathAt,
   type BuildingImpact,
   type HazardKind,
   type StructuralAssessment,
@@ -307,6 +308,190 @@ export function createHazardEffects(
     group.add(wave);
   }
 
+  // Local events share the domain clock; these buffers never advance damage.
+  const localEvent = hazard === 'fire' || hazard === 'tornado';
+  const transform = new THREE.Object3D();
+  const currentImpacts = new Map<string, BuildingImpact>();
+  const particles = (
+    name: string,
+    geometry: THREE.BufferGeometry,
+    material: THREE.Material,
+    count: number,
+  ) => {
+    const mesh = own(
+      new THREE.InstancedMesh(own(geometry), own(material), count),
+    );
+    mesh.name = name;
+    mesh.count = 0;
+    mesh.instanceMatrix.setUsage(THREE.DynamicDrawUsage);
+    mesh.frustumCulled = false;
+    group.add(mesh);
+    return mesh;
+  };
+  const fireSources =
+    hazard === 'fire'
+      ? assessment.buildings
+          .filter((damage) => damage.impactStartTimeInSeconds !== undefined)
+          .sort(
+            (a, b) =>
+              (a.impactStartTimeInSeconds ?? 0) -
+              (b.impactStartTimeInSeconds ?? 0),
+          )
+          .slice(0, 64)
+          .flatMap((damage) => {
+            const building = buildingById.get(damage.buildingId);
+            return building
+              ? [
+                  {
+                    id: building.id,
+                    x: (building.minCorner.x + building.maxCorner.x) / 2,
+                    z: (building.minCorner.y + building.maxCorner.y) / 2,
+                    base: buildingBaseHeight(city, building),
+                    height: building.heightInMeters,
+                    onset: damage.impactStartTimeInSeconds ?? Infinity,
+                  },
+                ]
+              : [];
+          })
+      : [];
+  const flames =
+    hazard === 'fire'
+      ? particles(
+          'fire-flames',
+          new THREE.ConeGeometry(1, 1, 5),
+          new THREE.MeshBasicMaterial({
+            color: 0xff7b16,
+            transparent: true,
+            opacity: 0.88,
+            depthWrite: false,
+          }),
+          128,
+        )
+      : null;
+  const smoke =
+    hazard === 'fire'
+      ? particles(
+          'fire-smoke',
+          new THREE.SphereGeometry(1, 6, 4),
+          new THREE.MeshBasicMaterial({
+            color: 0x504b46,
+            transparent: true,
+            opacity: 0.44,
+            depthWrite: false,
+          }),
+          128,
+        )
+      : null;
+  const funnel =
+    hazard === 'tornado'
+      ? particles(
+          'tornado-funnel',
+          new THREE.SphereGeometry(1, 6, 4),
+          new THREE.MeshStandardMaterial({
+            color: 0x6b706b,
+            transparent: true,
+            opacity: 0.7,
+            roughness: 1,
+            depthWrite: false,
+          }),
+          128,
+        )
+      : null;
+  const flyingDebris =
+    hazard === 'tornado'
+      ? particles(
+          'tornado-flying-debris',
+          new THREE.BoxGeometry(1, 1, 1),
+          new THREE.MeshStandardMaterial({ color: 0x8e7862, roughness: 1 }),
+          64,
+        )
+      : null;
+  if (funnel) funnel.visible = false;
+  if (flyingDebris) flyingDebris.visible = false;
+  let eventElapsed = 0;
+  const writeLocalEvent = () => {
+    if (flames && smoke) {
+      let count = 0;
+      for (const source of fireSources) {
+        const impact = currentImpacts.get(source.id);
+        if (
+          !impact ||
+          impact.severity <= 0 ||
+          eventElapsed <= source.onset ||
+          eventElapsed > source.onset + 240
+        )
+          continue;
+        const roof =
+          impact.condition === 'collapsed' ? 1 : source.height * 0.65;
+        for (let part = 0; part < 2; part++) {
+          const phase = eventElapsed * 3 + count * 1.9;
+          const size = 2.4 + impact.severity * 5;
+          transform.position.set(
+            source.x + Math.sin(phase) * 1.2,
+            source.base + roof + size * 0.5,
+            source.z + (part ? 1.5 : -1.5),
+          );
+          transform.rotation.set(0, phase, Math.sin(phase) * 0.12);
+          transform.scale.set(
+            1.2 + impact.severity,
+            size * (0.85 + 0.15 * Math.sin(phase)),
+            1.2 + impact.severity,
+          );
+          transform.updateMatrix();
+          flames.setMatrixAt(count, transform.matrix);
+          const rise = ((eventElapsed - source.onset) * 0.25 + part * 0.5) % 1;
+          transform.position.set(
+            source.x + rise * 5,
+            source.base + roof + 5 + rise * 14,
+            source.z + Math.sin(phase * 0.2) * 2,
+          );
+          transform.rotation.set(0, 0, 0);
+          transform.scale.setScalar(1.5 + rise * 3 + impact.severity);
+          transform.updateMatrix();
+          smoke.setMatrixAt(count++, transform.matrix);
+        }
+      }
+      flames.count = smoke.count = count;
+      flames.instanceMatrix.needsUpdate =
+        smoke.instanceMatrix.needsUpdate = true;
+    }
+    if (funnel && flyingDebris && city.terrainGrid) {
+      const path = tornadoPathAt(
+        { terrainGrid: city.terrainGrid },
+        eventElapsed,
+        city.config.seed ?? 123,
+      );
+      funnel.visible = flyingDebris.visible = path.active;
+      if (!path.active) return;
+      const base = sampleTerrainHeight(city, path.x, path.y);
+      funnel.count = 128;
+      const debrisVisible = [...currentImpacts.values()].some(
+        (impact) => impact.severity >= 0.6,
+      );
+      flyingDebris.count = debrisVisible ? 64 : 0;
+      for (let i = 0; i < 192; i++) {
+        const fraction = (i % 128) / 128;
+        const phase = eventElapsed * (i < 128 ? 2 : 3.2) + i * 2.39996;
+        const radius =
+          path.radiusInMeters *
+          (i < 128 ? 0.1 + fraction * 1.25 : 0.25 + fraction);
+        transform.position.set(
+          path.x + Math.cos(phase) * radius,
+          base + (i < 128 ? fraction * 85 : 2 + fraction * 35),
+          path.y + Math.sin(phase) * radius,
+        );
+        transform.rotation.set(phase, phase * 0.4, phase * 0.7);
+        transform.scale.setScalar(i < 128 ? 2 + fraction * 7 : 0.7 + fraction);
+        transform.updateMatrix();
+        if (i < 128) funnel.setMatrixAt(i, transform.matrix);
+        else if (debrisVisible)
+          flyingDebris.setMatrixAt(i - 128, transform.matrix);
+      }
+      funnel.instanceMatrix.needsUpdate =
+        flyingDebris.instanceMatrix.needsUpdate = true;
+    }
+  };
+
   let elapsed = 0;
   const writeWind = () => {
     if (!windStreaks || !windPositions || !windSeeds) return;
@@ -322,14 +507,26 @@ export function createHazardEffects(
   writeWind();
 
   let disposed = false;
+  // Snapshot projection is independent from animation advancement (for paused arm switches).
+  const setSimulationTime = (seconds: number) => {
+    if (!localEvent || disposed || !Number.isFinite(seconds)) return;
+    eventElapsed = Math.max(0, seconds);
+    writeLocalEvent();
+  };
+
   return {
     group,
+    setSimulationTime,
     /** Aplica el estado físico actual de la simulación. */
     update(
       impacts: readonly BuildingImpact[],
       collapsedBlockedRoadIds: readonly string[],
     ) {
       const byId = new Map(impacts.map((item) => [item.buildingId, item]));
+      if (localEvent) {
+        currentImpacts.clear();
+        for (const item of impacts) currentImpacts.set(item.buildingId, item);
+      }
       for (const [id, mesh] of damagedMeshes) {
         const impact = byId.get(id);
         mesh.visible = impact?.condition === 'damaged';
@@ -356,14 +553,30 @@ export function createHazardEffects(
       waveTargetX = frontXInMeters;
       waveMaxDepth = maxDepthInMeters;
     },
-    animate(delta: number, running: boolean) {
+    animate(
+      delta: number,
+      running: boolean,
+      elapsedSimulationSeconds?: number,
+    ) {
       if (!Number.isFinite(delta) || delta <= 0 || disposed) return;
+      if (localEvent) {
+        if (!running) return;
+        if (
+          elapsedSimulationSeconds !== undefined &&
+          Number.isFinite(elapsedSimulationSeconds)
+        ) {
+          setSimulationTime(elapsedSimulationSeconds);
+        }
+      }
       if (running) elapsed += delta;
       if (windStreaks && running) writeWind();
       // Los escombros crecen hasta su tamaño en ~0,9 s reales.
       for (const [id, growth] of rubbleGrowth) {
         if (growth >= 1) continue;
-        const next = Math.min(1, growth + delta / 0.9);
+        const next = Math.min(
+          1,
+          growth + (localEvent ? Math.min(delta, 0.25) : delta) / 0.9,
+        );
         rubbleGrowth.set(id, next);
         rubbleByBuilding.get(id)?.scale.setScalar(0.15 + 0.85 * next);
       }
@@ -386,6 +599,14 @@ export function createHazardEffects(
     },
     reset() {
       elapsed = 0;
+      eventElapsed = 0;
+      currentImpacts.clear();
+      if (localEvent)
+        for (const mesh of damagedMeshes.values()) mesh.visible = false;
+      if (flames) flames.count = 0;
+      if (smoke) smoke.count = 0;
+      if (funnel) funnel.visible = false;
+      if (flyingDebris) flyingDebris.visible = false;
       writeWind();
       rubbleGrowth.clear();
       for (const pile of rubbleByBuilding.values()) pile.visible = false;

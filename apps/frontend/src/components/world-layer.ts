@@ -10,6 +10,7 @@ import {
 
 export type WorldLayerName = 'sea' | 'lake' | 'fields' | 'expansion';
 export type WorldCameraView = 'world' | 'city';
+export const DEFAULT_WORLD_CAMERA_VIEW: WorldCameraView = 'world';
 
 export function worldCameraPose(world: WorldModel, view: WorldCameraView) {
   const extent =
@@ -19,21 +20,25 @@ export function worldCameraPose(world: WorldModel, view: WorldCameraView) {
           world.bounds.maxZ - world.bounds.minZ,
         )
       : Math.max(world.cityBounds.width, world.cityBounds.height);
-  const x =
-    view === 'world'
-      ? (world.bounds.minX + world.bounds.maxX) / 2
-      : world.cityBounds.width / 2;
-  const z =
-    view === 'world'
-      ? (world.bounds.minZ + world.bounds.maxZ) / 2
-      : world.cityBounds.height / 2;
   const ground = world.seaLevel + 3;
+  if (view === 'world') {
+    const x = world.cityBounds.width / 2,
+      z = world.cityBounds.height / 2;
+    return {
+      target: [x, ground, z] as const,
+      // Looking west from the eastern neighborhoods turns the north-south
+      // river into a readable cross-frame landmark, like the reference view.
+      position: [x + extent * 0.45, ground + extent * 0.3, z] as const,
+    };
+  }
+  const x = world.cityBounds.width / 2,
+    z = world.cityBounds.height / 2;
   return {
     target: [x, ground, z] as const,
     position: [
-      x + extent * (view === 'world' ? 0.7 : 0.8),
-      ground + extent * (view === 'world' ? 0.8 : 0.9),
-      z + extent * (view === 'world' ? 0.7 : 0.8),
+      x + extent * 0.8,
+      ground + extent * 0.9,
+      z + extent * 0.8,
     ] as const,
   };
 }
@@ -221,12 +226,20 @@ export function createWorldLayer(world: WorldModel) {
     layers[kind].add(mesh);
   }
   const crops = fieldTexture();
-  const cropMaterial = new THREE.MeshStandardMaterial({
-    map: crops,
-    roughness: 1,
-  });
+  const cropMaterials = [0xd3bd7b, 0xb8ad62, 0xc6a65d, 0xa9aa62].map(
+    (color) =>
+      new THREE.MeshStandardMaterial({ map: crops, color, roughness: 1 }),
+  );
   const pastureMaterial = new THREE.MeshStandardMaterial({
     color: 0x94a665,
+    roughness: 1,
+  });
+  const orchardMaterial = new THREE.MeshStandardMaterial({
+    color: 0x789349,
+    roughness: 1,
+  });
+  const woodlandMaterial = new THREE.MeshStandardMaterial({
+    color: 0x567c45,
     roughness: 1,
   });
   const expansionMaterial = new THREE.MeshStandardMaterial({
@@ -245,7 +258,19 @@ export function createWorldLayer(world: WorldModel) {
         ? expansionMaterial
         : area.kind === 'pasture'
           ? pastureMaterial
-          : cropMaterial;
+          : area.kind === 'orchard'
+            ? orchardMaterial
+            : area.kind === 'woodland'
+              ? woodlandMaterial
+              : cropMaterials[
+                  ([...area.id].reduce(
+                    (hash, character) =>
+                      Math.imul(hash, 31) + character.charCodeAt(0),
+                    world.seed,
+                  ) >>>
+                    0) %
+                    cropMaterials.length
+                ]!;
     const mesh = new THREE.Mesh(new THREE.BoxGeometry(w, 0.04, d), material);
     mesh.name = area.id;
     mesh.position.set(
@@ -284,6 +309,247 @@ export function createWorldLayer(world: WorldModel) {
     layer.add(outline);
   }
   [...world.fields, ...world.buildableAreas].forEach(areaMesh);
+
+  const trees = new THREE.Group();
+  trees.name = 'world-tree-belt';
+  layers.fields.add(trees);
+  const treeTrunks = new THREE.InstancedMesh(
+    new THREE.CylinderGeometry(0.65, 1.05, 9, 7),
+    new THREE.MeshStandardMaterial({ color: 0x55402b, roughness: 1 }),
+    world.trees.length,
+  );
+  treeTrunks.name = 'tree-trunks';
+  const treeCanopies = new THREE.InstancedMesh(
+    new THREE.SphereGeometry(1, 9, 7),
+    new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 }),
+    world.trees.length,
+  );
+  treeCanopies.name = 'tree-canopies';
+  const treePalette = [0x3c713e, 0x527d43, 0x66864a].map(
+    (color) => new THREE.Color(color),
+  );
+  const instance = new THREE.Object3D();
+  world.trees.forEach((tree, index) => {
+    const ground = sampleWorldHeight(world, tree.position.x, tree.position.y);
+    instance.position.set(
+      tree.position.x,
+      ground + 4.5 * tree.scale,
+      tree.position.y,
+    );
+    instance.rotation.set(0, tree.variant * 0.9, 0);
+    instance.scale.set(tree.scale, tree.scale, tree.scale);
+    instance.updateMatrix();
+    treeTrunks.setMatrixAt(index, instance.matrix);
+    instance.position.y = ground + 11 * tree.scale;
+    instance.scale.set(7.2 * tree.scale, 5.6 * tree.scale, 7.2 * tree.scale);
+    instance.updateMatrix();
+    treeCanopies.setMatrixAt(index, instance.matrix);
+    treeCanopies.setColorAt(index, treePalette[tree.variant]!);
+  });
+  treeTrunks.instanceMatrix.needsUpdate = true;
+  treeCanopies.instanceMatrix.needsUpdate = true;
+  if (treeCanopies.instanceColor) treeCanopies.instanceColor.needsUpdate = true;
+  trees.add(treeTrunks, treeCanopies);
+
+  // These are contextual landmarks only; they never enter the city or hazard model.
+  const port = new THREE.Group();
+  port.name = 'world-port';
+  layers.fields.add(port);
+  const concrete = new THREE.MeshStandardMaterial({
+    color: 0x777b78,
+    roughness: 0.95,
+  });
+  const containerMaterials = [0xc45e3c, 0x315e72, 0xd1a34f].map(
+    (color) => new THREE.MeshStandardMaterial({ color, roughness: 0.8 }),
+  );
+  const shipMaterial = new THREE.MeshStandardMaterial({
+    color: 0x253f4b,
+    roughness: 0.7,
+  });
+  const craneMaterial = new THREE.MeshStandardMaterial({
+    color: 0xd7a83e,
+    roughness: 0.75,
+  });
+  const addBox = (
+    parent: THREE.Group,
+    name: string,
+    size: [number, number, number],
+    position: [number, number, number],
+    material: THREE.Material,
+    rotationY = 0,
+  ) => {
+    const mesh = new THREE.Mesh(new THREE.BoxGeometry(...size), material);
+    mesh.name = name;
+    mesh.position.set(...position);
+    mesh.rotation.y = rotationY;
+    mesh.castShadow = true;
+    mesh.receiveShadow = true;
+    parent.add(mesh);
+    return mesh;
+  };
+  const portX = world.port.center.x,
+    portZ = world.port.center.y,
+    dockY = world.seaLevel + 0.65,
+    portScale = Math.max(
+      0.85,
+      Math.min(
+        1.7,
+        Math.min(world.cityBounds.width, world.cityBounds.height) / 1000,
+      ),
+    );
+  addBox(
+    port,
+    'port-quay',
+    [62 * portScale, 1.8 * portScale, world.port.quayLength * portScale],
+    [portX, dockY, portZ],
+    concrete,
+  );
+  for (let berth = 0; berth < world.port.berthCount; berth++) {
+    const z =
+      portZ -
+      world.port.quayLength * portScale * 0.36 +
+      berth *
+        ((world.port.quayLength * portScale * 0.72) /
+          Math.max(1, world.port.berthCount - 1));
+    addBox(
+      port,
+      `port-finger-pier-${berth}`,
+      [142 * portScale, 1.2 * portScale, 13 * portScale],
+      [portX - 90 * portScale, dockY, z],
+      concrete,
+    );
+  }
+  for (let index = 0; index < 12; index++) {
+    const column = index % 4,
+      row = Math.floor(index / 4);
+    addBox(
+      port,
+      `port-container-${index}`,
+      [26 * portScale, 19 * portScale, 12 * portScale],
+      [
+        portX + 22 * portScale + row * 15 * portScale,
+        dockY + 10 * portScale,
+        portZ - 72 * portScale + column * 38 * portScale,
+      ],
+      containerMaterials[index % containerMaterials.length]!,
+    );
+  }
+  for (let index = 0; index < 2; index++) {
+    const craneX = portX - 3 * portScale + index * 34 * portScale,
+      craneZ = portZ - 55 * portScale + index * 108 * portScale;
+    const crane = new THREE.Group();
+    crane.name = `port-crane-${index}`;
+    port.add(crane);
+    addBox(
+      crane,
+      `port-crane-${index}-left-leg`,
+      [4 * portScale, 48 * portScale, 4 * portScale],
+      [craneX, dockY + 24 * portScale, craneZ - 20 * portScale],
+      craneMaterial,
+    );
+    addBox(
+      crane,
+      `port-crane-${index}-right-leg`,
+      [4 * portScale, 48 * portScale, 4 * portScale],
+      [craneX, dockY + 24 * portScale, craneZ + 20 * portScale],
+      craneMaterial,
+    );
+    addBox(
+      crane,
+      `port-crane-${index}-gantry`,
+      [4 * portScale, 4 * portScale, 50 * portScale],
+      [craneX, dockY + 50 * portScale, craneZ],
+      craneMaterial,
+    );
+    addBox(
+      crane,
+      `port-crane-${index}-boom`,
+      [96 * portScale, 3.5 * portScale, 3.5 * portScale],
+      [craneX - 45 * portScale, dockY + 49 * portScale, craneZ],
+      craneMaterial,
+    );
+  }
+  addBox(
+    port,
+    'port-ship',
+    [190 * portScale, 14 * portScale, 28 * portScale],
+    [
+      portX - 190 * portScale,
+      world.seaLevel + 7 * portScale,
+      portZ + 92 * portScale,
+    ],
+    shipMaterial,
+  );
+  addBox(
+    port,
+    'port-ship-bridge',
+    [22 * portScale, 25 * portScale, 24 * portScale],
+    [
+      portX - 245 * portScale,
+      world.seaLevel + 21 * portScale,
+      portZ + 92 * portScale,
+    ],
+    concrete,
+  );
+
+  const rail = new THREE.Group();
+  rail.name = 'world-rail';
+  layers.fields.add(rail);
+  const railMaterial = new THREE.MeshStandardMaterial({
+    color: 0x343b3a,
+    roughness: 0.9,
+  });
+  const railPoints = world.rail.points.map(
+    (point) => new THREE.Vector3(point.x, 0, point.y),
+  );
+  for (let segment = 0; segment < railPoints.length - 1; segment++) {
+    const start = railPoints[segment]!,
+      end = railPoints[segment + 1]!,
+      dx = end.x - start.x,
+      dz = end.z - start.z,
+      length = Math.hypot(dx, dz),
+      angle = Math.atan2(-dz, dx);
+    const normalX = -dz / length,
+      normalZ = dx / length;
+    for (let distance = 0, piece = 0; distance < length; piece++) {
+      const pieceLength = Math.min(14, length - distance),
+        midpointDistance = distance + pieceLength / 2,
+        t = midpointDistance / length,
+        midpointX = start.x + dx * t,
+        midpointZ = start.z + dz * t,
+        ground = sampleWorldHeight(world, midpointX, midpointZ);
+      addBox(
+        rail,
+        `rail-ballast-${segment}-${piece}`,
+        [pieceLength, 0.35, 5],
+        [midpointX, ground + 0.15, midpointZ],
+        concrete,
+        angle,
+      );
+      addBox(
+        rail,
+        `rail-tie-${segment}-${piece}`,
+        [0.8, 0.35, 3.6],
+        [midpointX, ground + 0.35, midpointZ],
+        concrete,
+        angle,
+      );
+      for (const offset of [-1.35, 1.35])
+        addBox(
+          rail,
+          `rail-steel-${segment}-${piece}-${offset}`,
+          [pieceLength, 0.5, 0.3],
+          [
+            midpointX + normalX * offset,
+            ground + 0.8,
+            midpointZ + normalZ * offset,
+          ],
+          railMaterial,
+          angle,
+        );
+      distance += pieceLength;
+    }
+  }
   return {
     group,
     layers,
@@ -299,13 +565,15 @@ export function createWorldLayer(world: WorldModel) {
       group.traverse((object) => {
         if (
           object instanceof THREE.Mesh ||
-          object instanceof THREE.LineSegments
+          object instanceof THREE.LineSegments ||
+          object instanceof THREE.Line
         ) {
           geometries.add(object.geometry);
           for (const material of Array.isArray(object.material)
             ? object.material
             : [object.material])
             materials.add(material);
+          if (object instanceof THREE.InstancedMesh) object.dispose();
         }
       });
       for (const geometry of geometries) geometry.dispose();
