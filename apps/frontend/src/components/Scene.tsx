@@ -28,6 +28,11 @@ import { collectDetailObjects, detailsVisible } from './detail-culling';
 import { mountCityAssets, type CityAssetLayer } from './city-assets';
 import { CityToolbar } from './city-toolbar';
 import { createOrganicCity } from './organic-city-model';
+import { createRealCity, type RealCitySource } from './real-city-model';
+import { RealCityImporter } from './real-city-importer';
+import eixampleSourceJson from '../data/eixample-source.json';
+
+const eixampleSource = eixampleSourceJson as unknown as RealCitySource;
 import { createOrganicCityLayer } from './organic-city-layer';
 import {
   generateCivicLandmarks,
@@ -94,6 +99,7 @@ export default function Scene() {
   const [trafficCount, setTrafficCount] = useState(0);
   const [running, setRunning] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [importCardOpen, setImportCardOpen] = useState(false);
   const [assetStatus, setAssetStatus] = useState<
     'loading' | 'ready' | 'fallback' | 'procedural'
   >('loading');
@@ -118,13 +124,23 @@ export default function Scene() {
   const [floodError, setFloodError] = useState<string | null>(null);
   const [sourceCity, setSourceCity] = useState<CityResponse | null>(null);
   const [reliefMode, setReliefMode] = useState(true);
-  const [layoutMode, setLayoutMode] = useState<'organic' | 'grid'>('organic');
+  const [layoutMode, setLayoutMode] = useState<
+    'organic' | 'grid' | 'real' | 'imported'
+  >('organic');
+  const [importedCity, setImportedCity] = useState<CityResponse | null>(null);
   const [citySeed, setCitySeed] = useState(123);
   const [randomizedCity, setRandomizedCity] = useState(false);
   const [cityMode, setCityMode] = useState<CityGenerationMode>('district');
+  // Preloaded real district (OSM + DEM), converted locally; no live API calls.
+  const realCity = useMemo(
+    () => (layoutMode === 'real' ? createRealCity(eixampleSource).city : null),
+    [layoutMode],
+  );
   const city = useMemo(
     () =>
-      sourceCity
+      (layoutMode === 'imported' ? importedCity : null) ??
+      realCity ??
+      (sourceCity
         ? layoutMode === 'organic'
           ? createOrganicCity(sourceCity, citySeed, {
               relief: reliefMode,
@@ -136,8 +152,17 @@ export default function Scene() {
           : reliefMode
             ? createReliefCity(sourceCity)
             : sourceCity
-        : null,
-    [sourceCity, reliefMode, layoutMode, citySeed, randomizedCity, cityMode],
+        : null),
+    [
+      importedCity,
+      realCity,
+      sourceCity,
+      reliefMode,
+      layoutMode,
+      citySeed,
+      randomizedCity,
+      cityMode,
+    ],
   );
   const [worldSeed, setWorldSeed] = useState(123);
   const cityLife = useMemo(
@@ -944,6 +969,16 @@ export default function Scene() {
     setCitySeed(seed);
   }
 
+  function applyImportedCity(next: CityResponse) {
+    setRunning(false);
+    setFlood(null);
+    setComparison(null);
+    setAlarmTime(null);
+    setStructural(null);
+    setImportedCity(next);
+    setLayoutMode('imported');
+  }
+
   function generateRandomCity() {
     const values = new Uint32Array(1);
     crypto.getRandomValues(values);
@@ -981,7 +1016,14 @@ export default function Scene() {
           timeScaleRef.current = scale;
           setTimeScale(scale);
         }}
-        onPanelToggle={() => setPanelOpen((open) => !open)}
+        onPanelToggle={() => {
+          setImportCardOpen(false);
+          setPanelOpen((open) => !open);
+        }}
+        onImportZone={() => {
+          setPanelOpen(false);
+          setImportCardOpen(true);
+        }}
         onRegenerate={() => regenerateCity((citySeed + 1) >>> 0)}
         onRandom={generateRandomCity}
         onView={(view) => {
@@ -1021,6 +1063,59 @@ export default function Scene() {
           'Midiendo rendimiento…'
         )}
       </output>
+      {importCardOpen && (
+        <aside
+          aria-label="Importar zona real o plano"
+          style={{
+            position: 'absolute',
+            top: 100,
+            left: 16,
+            width: 400,
+            maxWidth: 'calc(100vw - 32px)',
+            maxHeight: 'calc(100vh - 190px)',
+            overflowY: 'auto',
+            padding: 16,
+            borderRadius: 12,
+            background: 'rgba(255,255,255,0.96)',
+            color: '#17252a',
+            fontFamily: 'sans-serif',
+            boxShadow: '0 4px 24px #0002',
+            zIndex: 5,
+          }}
+        >
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: 8,
+            }}
+          >
+            <strong>Importar zona real o plano</strong>
+            <button
+              type="button"
+              onClick={() => setImportCardOpen(false)}
+              style={{
+                border: '1px solid #b6c4c9',
+                borderRadius: 8,
+                background: '#fff',
+                padding: '5px 10px',
+                cursor: 'pointer',
+                font: 'inherit',
+                fontWeight: 600,
+              }}
+            >
+              Cerrar
+            </button>
+          </div>
+          <RealCityImporter
+            onImported={(next) => {
+              applyImportedCity(next);
+              setImportCardOpen(false);
+            }}
+          />
+        </aside>
+      )}
       {panelOpen && (
         <aside
           id="city-settings"
@@ -1108,11 +1203,19 @@ export default function Scene() {
                   setFlood(null);
                   setComparison(null);
                   setAlarmTime(null);
-                  setLayoutMode(event.target.value as 'organic' | 'grid');
+                  setLayoutMode(
+                    event.target.value as
+                      'organic' | 'grid' | 'real' | 'imported',
+                  );
                 }}
               >
                 <option value="organic">Orgánico · lago y puente</option>
                 <option value="grid">Grilla original</option>
+                <option value="real">Barrio real · Eixample (OSM)</option>
+                <option value="imported" disabled={!importedCity}>
+                  Zona importada
+                  {importedCity?.real ? ` · ${importedCity.real.name}` : ''}
+                </option>
               </select>
             </label>
             <button
@@ -1135,6 +1238,20 @@ export default function Scene() {
               · {city.organic.bridges.length} puente conectado a las calles. Las
               zonas urbanizadas siguen las orillas; la grilla de cálculo sigue
               siendo rectangular.
+            </p>
+          )}
+          {city.real && (
+            <p style={{ fontSize: 12 }}>
+              Zona real: {city.real.name} · {city.buildings.length} edificios y{' '}
+              {city.roads.length} tramos de calle reales sobre{' '}
+              {city.real.demSource === 'plan-flat-elevation-0'
+                ? 'terreno plano a cota 0 (plano sin relieve)'
+                : `DEM de ${city.real.demCellSizeInMeters} m`}
+              . Alturas de la fuente: {city.real.measuredBuildingHeights}{' '}
+              medidas y {city.real.estimatedBuildingHeights} estimadas (marcadas
+              como inferidas, no oficiales). Población y refugios sintéticos
+              sobre la red real. {city.real.attribution}. Simulación
+              experimental, no pronóstico de inundación real.
             </p>
           )}
           <p style={{ margin: '8px 0' }}>
@@ -1204,7 +1321,7 @@ export default function Scene() {
             <select
               aria-label="Tipo de terreno"
               value={reliefMode ? 'basin' : 'flat'}
-              disabled={!sourceCity?.terrainGrid}
+              disabled={!!city.real || !sourceCity?.terrainGrid}
               onChange={(event) => {
                 setRunning(false);
                 setFlood(null);
@@ -1235,11 +1352,13 @@ export default function Scene() {
             simulados (ritmo base ×{timeScale}).
           </p>
           <p style={{ fontSize: 12, color: '#425466' }}>
-            {city.organic
-              ? 'Geografía local con cauce excavado, lago y barrios irregulares. El puente conserva su tablero por encima del agua; las rutas usan su altura.'
-              : city.terrainProfile === 'basin'
-                ? 'Relieve local sintético con pendiente y depresión central; grilla de 10 m. El agua se acumula primero en zonas bajas.'
-                : 'Terreno plano original con edificios como barreras y absorción diferenciada.'}{' '}
+            {city.real
+              ? 'Relieve real importado (DEM Terrarium remuestreado a 20 m) y calles/edificios de OpenStreetMap convertidos al grafo de simulación. Las huellas se aproximan con rectángulos rotados que las contienen.'
+              : city.organic
+                ? 'Geografía local con cauce excavado, lago y barrios irregulares. El puente conserva su tablero por encima del agua; las rutas usan su altura.'
+                : city.terrainProfile === 'basin'
+                  ? 'Relieve local sintético con pendiente y depresión central; grilla de 10 m. El agua se acumula primero en zonas bajas.'
+                  : 'Terreno plano original con edificios como barreras y absorción diferenciada.'}{' '}
             El evento comienza automáticamente. Cambiar el terreno reinicia la
             simulación.
           </p>

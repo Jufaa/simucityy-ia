@@ -291,7 +291,7 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
             });
         }
     }
-    if (city.terrainProfile === 'basin' || city.organic) {
+    if (city.terrainProfile === 'basin' || city.organic || city.real) {
       const minimum = Math.min(
         ...[building.minCorner.x, building.maxCorner.x].flatMap((x) =>
           [building.minCorner.y, building.maxCorner.y].map((z) =>

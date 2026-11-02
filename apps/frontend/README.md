@@ -134,6 +134,32 @@ storm readability and FPS remain pending actual inspection. Details and offline
 checks: [public spaces](../../docs/public-spaces.md) and
 [bridge landmark](../../docs/bridge-landmark.md).
 
+## Real district pilot (Eixample, Barcelona)
+
+**Ajustes → Trazado → Barrio real · Eixample (OSM)** loads a preloaded real
+district (~1.0 × 1.0 km, 1,140 buildings, 4,561 street segments) converted
+offline from OpenStreetMap geometry plus a Terrarium DEM into the same
+simulation contract as the synthetic cities: flood, blocked streets and graph
+evacuation run on the real street network and terrain. It is selected, not
+generated — seed controls do not apply, and the organic city stays the
+default. Building footprints are contained in rotated rectangles, heights
+without OSM tags are counted as estimates in the panel, and population and
+shelters are synthetic. Full pipeline, regeneration command, licences and
+limits: [docs/REAL_CITY.md](../../docs/REAL_CITY.md). Switching to it costs
+one local conversion (~0.2–0.5 s) plus ~1 s of street-dressing placement on
+the 3,539-node graph; extreme time multipliers remain heavy there.
+
+Visitors can also choose their own zone with the **Zona real o plano**
+button in the top bar, which opens a dedicated import card (Ajustes keeps
+only generation/simulation settings): search a city/neighborhood
+(Nominatim) or pick an offered preset, drag the square on the OSM tile map
+to select 250–1500 m, and import it live with the card's primary
+**Representar esta zona en la simulación** button (Overpass + Terrarium in
+the browser, no keys). The same card accepts an uploaded GeoJSON plan —
+drawn over the map and cropped with the same square, with real DEM or flat
+terrain. Imported zones live in memory as **Trazado → Zona importada**;
+nothing is stored server-side.
+
 ## Free local model preview
 
 The default organic view uses six original CC0 Kenney models served from this app, not a paid map/API or remote model host. The top bar reports **Modelos locales CC0** only after successful loading. If a model cannot load, the corrected procedural buildings remain visible and the UI reports the fallback. Models, textures, original licenses and SHA-256 provenance live in `public/models/kenney-city/`.

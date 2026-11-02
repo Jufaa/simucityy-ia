@@ -182,38 +182,92 @@ export class EvacuationEngine {
       )
     )
       return false;
-    const paths = new Map<
-      string,
-      { distance: number; key: string; route: Arc[] }
-    >();
-    paths.set(agent.nodeId, { distance: 0, key: '', route: [] });
+    // Dijkstra over parent pointers instead of materialized routes/keys:
+    // copying the full path and its tie-break key on every relaxation made
+    // planning quadratic on large graphs. The chosen route is unchanged:
+    // extraction settles smaller distances first (with positive lengths every
+    // candidate predecessor settles before its node), and equal distances
+    // still resolve by the lexicographically smallest arc/node key sequence,
+    // rebuilt from the parent chain only when a comparison is needed.
+    type PathInfo = {
+      distance: number;
+      parent: string | null;
+      arc: Arc | null;
+    };
+    const paths = new Map<string, PathInfo>();
+    paths.set(agent.nodeId, { distance: 0, parent: null, arc: null });
     const visited = new Set<string>();
-    while (true) {
-      let selected: string | null = null;
-      for (const [id, path] of paths) {
-        if (visited.has(id)) continue;
-        const best = selected === null ? null : paths.get(selected)!;
-        if (
-          !best ||
-          path.distance < best.distance ||
-          (path.distance === best.distance && compare(path.key, best.key) < 0)
-        )
-          selected = id;
+    const keyOf = (nodeId: string): string => {
+      const segments: string[] = [];
+      let current: string | null = nodeId;
+      while (current !== null) {
+        const info: PathInfo = paths.get(current)!;
+        if (info.arc === null || info.parent === null) break;
+        segments.push(`\0${info.arc.id}\0${current}`);
+        current = info.parent;
       }
-      if (selected === null) break;
-      visited.add(selected);
+      return segments.reverse().join('');
+    };
+    // Binary heap ordered by distance: same minimum extraction as a full
+    // scan, without the quadratic scan per node.
+    const heap: { id: string; distance: number }[] = [];
+    const heapPush = (entry: { id: string; distance: number }) => {
+      heap.push(entry);
+      let i = heap.length - 1;
+      while (i > 0) {
+        const parent = (i - 1) >> 1;
+        if (!(heap[i]!.distance < heap[parent]!.distance)) break;
+        [heap[i], heap[parent]] = [heap[parent]!, heap[i]!];
+        i = parent;
+      }
+    };
+    const heapPop = () => {
+      const top = heap[0]!;
+      const last = heap.pop()!;
+      if (heap.length) {
+        heap[0] = last;
+        let i = 0;
+        for (;;) {
+          const left = 2 * i + 1;
+          const right = left + 1;
+          let smallest = i;
+          if (
+            left < heap.length &&
+            heap[left]!.distance < heap[smallest]!.distance
+          )
+            smallest = left;
+          if (
+            right < heap.length &&
+            heap[right]!.distance < heap[smallest]!.distance
+          )
+            smallest = right;
+          if (smallest === i) break;
+          [heap[i], heap[smallest]] = [heap[smallest]!, heap[i]!];
+          i = smallest;
+        }
+      }
+      return top;
+    };
+    heapPush({ id: agent.nodeId, distance: 0 });
+    while (heap.length) {
+      const { id: selected } = heapPop();
+      if (visited.has(selected)) continue;
       const current = paths.get(selected)!;
+      visited.add(selected);
       for (const arc of this.adjacency.get(selected)!) {
         if (blocked.has(arc.id) || visited.has(arc.to)) continue;
         const distance = current.distance + arc.length;
-        const key = `${current.key}\0${arc.id}\0${arc.to}`;
         const previous = paths.get(arc.to);
-        if (
-          !previous ||
-          distance < previous.distance ||
-          (distance === previous.distance && compare(key, previous.key) < 0)
-        )
-          paths.set(arc.to, { distance, key, route: [...current.route, arc] });
+        if (!previous || distance < previous.distance) {
+          paths.set(arc.to, { distance, parent: selected, arc });
+          heapPush({ id: arc.to, distance });
+        } else if (distance === previous.distance) {
+          const candidateKey = `${keyOf(selected)}\0${arc.id}\0${arc.to}`;
+          if (compare(candidateKey, keyOf(arc.to)) < 0) {
+            paths.set(arc.to, { distance, parent: selected, arc });
+            heapPush({ id: arc.to, distance });
+          }
+        }
       }
     }
     let selected: Shelter | null = null;
@@ -234,7 +288,15 @@ export class EvacuationEngine {
     if (!selected) return false;
     agent.shelter = selected;
     selected.reserved++;
-    agent.route = [...paths.get(selected.nodeId)!.route];
+    const route: Arc[] = [];
+    let cursor: string | null = selected.nodeId;
+    while (cursor !== null) {
+      const info: PathInfo = paths.get(cursor)!;
+      if (info.arc === null || info.parent === null) break;
+      route.push(info.arc);
+      cursor = info.parent;
+    }
+    agent.route = route.reverse();
     return true;
   }
 
@@ -258,6 +320,7 @@ export class EvacuationEngine {
     while (true) {
       for (const agent of this.agents) {
         if (
+          blocked.size > 0 &&
           agent.phase !== 'done' &&
           agent.phase !== 'edge' &&
           agent.shelter &&

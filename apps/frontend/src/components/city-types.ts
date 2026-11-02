@@ -107,8 +107,22 @@ export interface OrganicGeography {
   }[];
 }
 
+/** Provenance for a city converted from real geographic data; local view metadata only. */
+export interface RealCityMetadata {
+  name: string;
+  bbox: { south: number; west: number; north: number; east: number };
+  attribution: string;
+  osmTimestamp?: string;
+  demSource: string;
+  demCellSizeInMeters: number;
+  measuredBuildingHeights: number;
+  estimatedBuildingHeights: number;
+}
+
 export interface CityResponse {
   organic?: OrganicGeography;
+  /** Set only for cities converted from real OSM + DEM data by real-city-model. */
+  real?: RealCityMetadata;
   /** Local view-only relief; not part of the HTTP or saved scenario contract. */
   terrainProfile?: 'basin';
   config: CityConfig;

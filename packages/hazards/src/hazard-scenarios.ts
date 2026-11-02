@@ -374,26 +374,40 @@ export function roadEdgeIdsBlockedByBuildings(
   const nodesById = new Map(
     scenario.roadGraph.nodes.map((node) => [node.id, node]),
   );
-  const blockedRoadEdgeIds: string[] = [];
-  for (const edge of scenario.roadGraph.edges) {
-    const from = nodesById.get(edge.from);
-    const to = nodesById.get(edge.to);
-    if (!from || !to) continue;
-    const blocked = scenario.buildings.some((building) => {
-      if (!collapsedBuildingIds.has(building.id)) return false;
-      const center = {
+  // Precomputed collapsed footprints; the per-edge scan rejects by bounding
+  // box before the exact segment distance, keeping results identical.
+  const collapsed = scenario.buildings
+    .filter((building) => collapsedBuildingIds.has(building.id))
+    .map((building) => ({
+      center: {
         x: (building.minCorner.x + building.maxCorner.x) / 2,
         y: (building.minCorner.y + building.maxCorner.y) / 2,
-      };
-      const reach =
+      },
+      reach:
         Math.hypot(
           building.maxCorner.x - building.minCorner.x,
           building.maxCorner.y - building.minCorner.y,
         ) /
           2 +
-        10;
-      return distanceToSegment(center, from, to) <= reach;
-    });
+        10,
+    }));
+  const blockedRoadEdgeIds: string[] = [];
+  for (const edge of scenario.roadGraph.edges) {
+    const from = nodesById.get(edge.from);
+    const to = nodesById.get(edge.to);
+    if (!from || !to) continue;
+    const minX = Math.min(from.x, to.x);
+    const maxX = Math.max(from.x, to.x);
+    const minY = Math.min(from.y, to.y);
+    const maxY = Math.max(from.y, to.y);
+    const blocked = collapsed.some(
+      ({ center, reach }) =>
+        center.x >= minX - reach &&
+        center.x <= maxX + reach &&
+        center.y >= minY - reach &&
+        center.y <= maxY + reach &&
+        distanceToSegment(center, from, to) <= reach,
+    );
     if (blocked) blockedRoadEdgeIds.push(edge.id);
   }
   return blockedRoadEdgeIds;

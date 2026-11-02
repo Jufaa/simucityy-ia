@@ -39,7 +39,7 @@ export function getCityGenerationPreset(
 interface GenerationIdentity {
   seed: number;
   randomized: boolean;
-  layout: 'organic' | 'grid';
+  layout: 'organic' | 'grid' | 'real' | 'imported';
   mode: CityGenerationMode;
 }
 

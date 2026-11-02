@@ -135,7 +135,8 @@ export function createTerrainGeometry(city: CityResponse) {
 /** Shared Scene seam: local basins need sampled ground even when land relief is disabled. */
 export function createCityGround(city: CityResponse, material: THREE.Material) {
   const sampled =
-    city.terrainGrid && (city.organic || city.terrainProfile === 'basin');
+    city.terrainGrid &&
+    (city.organic || city.real || city.terrainProfile === 'basin');
   const geometry = sampled
     ? createTerrainGeometry(city)
     : new THREE.PlaneGeometry(
