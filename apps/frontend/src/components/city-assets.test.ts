@@ -12,6 +12,7 @@ import {
   mountCityAssets,
 } from './city-assets';
 import type { CityResponse } from './city-types';
+import { createOrganicCity } from './organic-city-model';
 
 function city(): CityResponse {
   return {
@@ -51,6 +52,57 @@ function templatesFor(group: THREE.Object3D) {
     CITY_ASSETS.map((key) => [key, group]),
   ) as Parameters<typeof buildCityAssetLayer>[1];
 }
+
+it('preserves generated compact, elongated and wide proportions in the loaded asset instances', () => {
+  const source = city();
+  source.config.widthInMeters = source.config.heightInMeters = 500;
+  const generated = createOrganicCity(source, 123).city;
+  const selected = ['compact-house', 'elongated-house', 'wide-apartment'].map(
+    (archetype) => {
+      const building = generated.buildings.find(
+        (item) => item.layout?.archetype === archetype,
+      );
+      expect(building).toBeDefined();
+      return building!;
+    },
+  );
+  const input = { ...generated, buildings: selected };
+  const before = JSON.stringify(input);
+  const asset = template();
+  const layer = buildCityAssetLayer(input, templatesFor(asset.group));
+  const seen = new Set<string>();
+  layer.group.traverse((object) => {
+    if (
+      !(object instanceof THREE.InstancedMesh) ||
+      object.geometry !== asset.geometry
+    )
+      return;
+    const matrix = new THREE.Matrix4();
+    for (let i = 0; i < object.count; i++) {
+      object.getMatrixAt(i, matrix);
+      const bounds = asset.geometry.boundingBox!.clone().applyMatrix4(matrix);
+      const center = bounds.getCenter(new THREE.Vector3());
+      const building = selected.find(
+        (item) =>
+          Math.abs((item.minCorner.x + item.maxCorner.x) / 2 - center.x) <
+            1e-4 &&
+          Math.abs((item.minCorner.y + item.maxCorner.y) / 2 - center.z) < 1e-4,
+      );
+      expect(building).toBeDefined();
+      const scale = new THREE.Vector3().setFromMatrixScale(matrix);
+      expect(scale.x * 2).toBeCloseTo(building!.presentation!.widthInMeters, 4);
+      expect(scale.z * 3).toBeCloseTo(building!.presentation!.depthInMeters, 4);
+      expect(scale.y * 4).toBeCloseTo(building!.heightInMeters, 4);
+      expect(
+        new THREE.Vector3().setFromMatrixColumn(matrix, 0).normalize().x,
+      ).toBeCloseTo(Math.cos(building!.presentation!.yawInRadians), 4);
+      seen.add(building!.id);
+    }
+  });
+  expect(seen.size).toBe(3);
+  expect(JSON.stringify(input)).toBe(before);
+  layer.dispose();
+});
 
 it('fits rotated assets inside hazard bounds at the terrain base, batches parts and leaves input unchanged', () => {
   const input = city(),

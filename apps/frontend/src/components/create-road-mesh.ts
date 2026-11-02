@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Road } from './city-types';
 import { createChunkedInstances } from './instanced-chunks';
+import { getRoadProfile } from './road-profile';
 
 /** Visual road width only; the simulation still consumes centerlines. */
 export function createRoadMesh(
@@ -13,7 +14,11 @@ export function createRoadMesh(
   const dz = road.end.y - road.start.y;
   const length = Math.hypot(dx, dz);
   const thickness = 0.05;
-  const geometry = new THREE.BoxGeometry(length, thickness, widthInMeters);
+  const geometry = new THREE.BoxGeometry(
+    length,
+    thickness,
+    getRoadProfile(road, widthInMeters).widthInMeters,
+  );
   const mesh = new THREE.Mesh(geometry, material);
   mesh.receiveShadow = true;
 
@@ -51,7 +56,11 @@ export function createRoadLayer(
           groundElevationInMeters + thickness / 2 + 0.01,
           (road.start.y + road.end.y) / 2,
         ),
-        scale: new THREE.Vector3(Math.hypot(dx, dz), thickness, widthInMeters),
+        scale: new THREE.Vector3(
+          Math.hypot(dx, dz),
+          thickness,
+          getRoadProfile(road, widthInMeters).widthInMeters,
+        ),
         yaw: -Math.atan2(dz, dx),
       };
     }),

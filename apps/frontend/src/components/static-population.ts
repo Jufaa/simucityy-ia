@@ -2,18 +2,20 @@ import type { EvacuationCitizenInput } from '@simulicity/hazards';
 import type { CityResponse, Point } from './city-types';
 import { bridgeAtPoint, sampleRoadSurfaceHeight } from './road-surface';
 import { waterSurfaceAt } from './organic-city-model';
+import { getRoadProfile } from './road-profile';
 
 /** Visible idle placements only. IDs/home metadata stay available for a future behavior controller. */
 export function createStaticPopulation(
   city: CityResponse,
 ): EvacuationCitizenInput[] {
   const nodes = new Map(city.roadGraph?.nodes.map((node) => [node.id, node]));
+  const roads = new Map(city.roads.map((road) => [road.id, road]));
   const segments = (city.roadGraph?.edges ?? [])
     .flatMap((edge) => {
       const start = nodes.get(edge.from),
         end = nodes.get(edge.to);
       return start && end && Math.hypot(end.x - start.x, end.y - start.y) > 0
-        ? [{ id: edge.id, start, end }]
+        ? [{ id: edge.id, roadId: edge.roadId, start, end }]
         : [];
     })
     .sort((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
@@ -51,10 +53,20 @@ export function createStaticPopulation(
       length = Math.hypot(dx, dy);
     const center = { x: edge.start.x + dx * t, y: edge.start.y + dy * t };
     const side = index % 2 === 0 ? 1 : -1;
-    const candidates = [side * 4, -side * 4, 0].map((offset) => ({
-      x: center.x - (dy / length) * offset,
-      y: center.y + (dx / length) * offset,
-    }));
+    const road = roads.get(edge.roadId);
+    const profile = road?.profile ? getRoadProfile(road) : undefined;
+    const bridge = bridgeAtPoint(city, center.x, center.y);
+    const lateralOffset = profile
+      ? bridge
+        ? Math.max(0, bridge.widthInMeters / 2 - 0.8)
+        : profile.widthInMeters / 2 + profile.sidewalkWidthInMeters / 2
+      : 4;
+    const candidates = [side * lateralOffset, -side * lateralOffset, 0].map(
+      (offset) => ({
+        x: center.x - (dy / length) * offset,
+        y: center.y + (dx / length) * offset,
+      }),
+    );
     const position = candidates.find(clear) ?? center;
     return {
       ...citizen,

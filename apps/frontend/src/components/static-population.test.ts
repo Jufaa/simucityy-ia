@@ -3,6 +3,60 @@ import { generateCityScenario } from '../../../backend/src/modules/cities/city-s
 import type { CityResponse } from './city-types';
 import { createStaticPopulation } from './static-population';
 
+it('places idle people on the actual avenue sidewalk rather than inside its wider carriageway', () => {
+  const city: CityResponse = {
+    config: {
+      widthInMeters: 200,
+      heightInMeters: 200,
+      streetSpacingInMeters: 50,
+    },
+    terrain: { kind: 'flat', elevationInMeters: 0 },
+    roads: [
+      {
+        id: 'avenue',
+        start: { x: 0, y: 100 },
+        end: { x: 200, y: 100 },
+        profile: {
+          kind: 'avenue',
+          widthInMeters: 12,
+          sidewalkWidthInMeters: 3,
+          motorVehiclesAllowed: true,
+        },
+      },
+    ],
+    buildings: [],
+    blocks: [],
+    roadGraph: {
+      nodes: [
+        { id: 'a', x: 0, y: 100 },
+        { id: 'b', x: 200, y: 100 },
+      ],
+      edges: [
+        {
+          id: 'ab',
+          roadId: 'avenue',
+          from: 'a',
+          to: 'b',
+          lengthInMeters: 200,
+          bidirectional: true,
+        },
+      ],
+    },
+    citizens: Array.from({ length: 2 }, (_, i) => ({
+      id: `citizen-${i}`,
+      homeBuildingId: 'home',
+      nodeId: 'a',
+      position: { x: 0, y: 100 },
+      mobilityFactor: 1,
+      reactionDelayInSeconds: 0,
+    })),
+  };
+  const before = JSON.stringify(city);
+  for (const person of createStaticPopulation(city))
+    expect(Math.abs(person.position.y - 100)).toBe(7.5);
+  expect(JSON.stringify(city)).toBe(before);
+});
+
 it('places all generated people visibly outside buildings with stable IDs and no source mutation', () => {
   const city: CityResponse = JSON.parse(
     JSON.stringify(

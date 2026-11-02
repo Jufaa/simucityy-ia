@@ -1,4 +1,5 @@
 import type { CityResponse } from './city-types';
+import { getRoadProfile } from './road-profile';
 
 export interface TrafficVehicle {
   readonly id: string;
@@ -56,7 +57,15 @@ export class CityTraffic {
 
   constructor(city: CityResponse, options: { maxVehicles?: number } = {}) {
     const nodes = new Map(city.roadGraph?.nodes.map((node) => [node.id, node]));
+    const roads = new Map(city.roads.map((road) => [road.id, road]));
     for (const edge of city.roadGraph?.edges ?? []) {
+      const road = roads.get(edge.roadId);
+      if (road?.profile) {
+        const profile = getRoadProfile(road);
+        // The fixed two-way vehicle envelopes need at least 3.3 metres.
+        if (!profile.motorVehiclesAllowed || profile.widthInMeters < 3.3)
+          continue;
+      }
       const from = nodes.get(edge.from),
         to = nodes.get(edge.to);
       if (!from || !to) continue;

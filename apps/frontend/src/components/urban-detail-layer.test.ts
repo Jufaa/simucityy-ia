@@ -62,3 +62,82 @@ it('uses scenario paths, trees and road markings through instanced geometry', ()
   }
   expect(city).toEqual(before);
 });
+
+it.each([true, false])(
+  'renders public-space footprints inside their park and clear of paths (civic=%s)',
+  async (civic) => {
+    const { createParkLayout } = await import('./park-layout');
+    // Small district props include fixed-width benches and lamps: do not only
+    // validate their metadata centers or assume every primitive scales together.
+    const park = {
+      id: 'small-park',
+      minCorner: { x: 40, y: 60 },
+      maxCorner: { x: 56, y: 74 },
+    };
+    const layout = createParkLayout(park, civic);
+    const city: CityResponse = {
+      config: {
+        widthInMeters: 100,
+        heightInMeters: 100,
+        streetSpacingInMeters: 50,
+      },
+      terrain: { kind: 'flat', elevationInMeters: 2.2 },
+      roads: [],
+      blocks: [],
+      buildings: [],
+      district: {
+        roadWidthInMeters: 6,
+        sidewalkWidthInMeters: 2,
+        parks: [park],
+        sidewalks: [],
+        urban: { yards: [], ...layout, streetDetails: [] },
+      },
+    };
+    const before = structuredClone(city);
+    const layer = createUrbanDetailLayer(city);
+    layer.updateMatrixWorld(true);
+    const geometries = new Set<THREE.BufferGeometry>();
+    const materials = new Set<THREE.Material>();
+    const matrix = new THREE.Matrix4();
+    layer.traverse((object) => {
+      if (!(object instanceof THREE.InstancedMesh)) return;
+      geometries.add(object.geometry);
+      for (const material of Array.isArray(object.material)
+        ? object.material
+        : [object.material])
+        materials.add(material);
+      object.geometry.computeBoundingBox();
+      for (let index = 0; index < object.count; index++) {
+        object.getMatrixAt(index, matrix);
+        const box = object.geometry
+          .boundingBox!.clone()
+          .applyMatrix4(matrix)
+          .applyMatrix4(object.matrixWorld);
+        expect(box.min.x).toBeGreaterThanOrEqual(park.minCorner.x - 0.0001);
+        expect(box.max.x).toBeLessThanOrEqual(park.maxCorner.x + 0.0001);
+        expect(box.min.z).toBeGreaterThanOrEqual(park.minCorner.y - 0.0001);
+        expect(box.max.z).toBeLessThanOrEqual(park.maxCorner.y + 0.0001);
+        if (
+          object.name.startsWith('park-paths') ||
+          object.name.startsWith('fountain-basins') ||
+          object.name.startsWith('decorative-water')
+        )
+          continue;
+        for (const path of layout.parkPaths) {
+          expect(
+            box.max.x <= path.minCorner.x ||
+              box.min.x >= path.maxCorner.x ||
+              box.max.z <= path.minCorner.y ||
+              box.min.z >= path.maxCorner.y,
+          ).toBe(true);
+        }
+      }
+    });
+    expect(countChunkInstances(layer.getObjectByName('park-paths')!)).toBe(
+      layout.parkPaths.length,
+    );
+    expect(city).toEqual(before);
+    geometries.forEach((geometry) => geometry.dispose());
+    materials.forEach((material) => material.dispose());
+  },
+);

@@ -1,6 +1,10 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import {
+  sameCityGeneration,
+  type CityGenerationMode,
+} from './city-generation-preset';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CityResponse } from './city-types';
@@ -117,12 +121,14 @@ export default function Scene() {
   const [layoutMode, setLayoutMode] = useState<'organic' | 'grid'>('organic');
   const [citySeed, setCitySeed] = useState(123);
   const [randomizedCity, setRandomizedCity] = useState(false);
+  const [cityMode, setCityMode] = useState<CityGenerationMode>('district');
   const city = useMemo(
     () =>
       sourceCity
         ? layoutMode === 'organic'
           ? createOrganicCity(sourceCity, citySeed, {
               relief: reliefMode,
+              mode: cityMode,
               ...(randomizedCity
                 ? { profile: createRandomCityProfile(citySeed) }
                 : {}),
@@ -131,7 +137,7 @@ export default function Scene() {
             ? createReliefCity(sourceCity)
             : sourceCity
         : null,
-    [sourceCity, reliefMode, layoutMode, citySeed, randomizedCity],
+    [sourceCity, reliefMode, layoutMode, citySeed, randomizedCity, cityMode],
   );
   const [worldSeed, setWorldSeed] = useState(123);
   const cityLife = useMemo(
@@ -909,11 +915,21 @@ export default function Scene() {
     setHazardKind(kind);
   }
 
-  function regenerateCity(seed: number, randomProfile = randomizedCity) {
+  function regenerateCity(
+    seed: number,
+    randomProfile = randomizedCity,
+    mode = cityMode,
+  ) {
     if (
-      seed === citySeed &&
-      randomProfile === randomizedCity &&
-      layoutMode === 'organic'
+      sameCityGeneration(
+        { seed, randomized: randomProfile, layout: 'organic', mode },
+        {
+          seed: citySeed,
+          randomized: randomizedCity,
+          layout: layoutMode,
+          mode: cityMode,
+        },
+      )
     ) {
       resetFlood();
       return;
@@ -923,6 +939,7 @@ export default function Scene() {
     setComparison(null);
     setAlarmTime(null);
     setRandomizedCity(randomProfile);
+    setCityMode(mode);
     setLayoutMode('organic');
     setCitySeed(seed);
   }
@@ -1026,9 +1043,13 @@ export default function Scene() {
         >
           <strong>Opciones del simulador</strong>
           <CityGenerationControls
-            key={`${citySeed}:${randomizedCity}`}
+            key={`${citySeed}:${randomizedCity}:${cityMode}`}
             seed={citySeed}
             randomized={randomizedCity}
+            mode={cityMode}
+            onModeChange={(mode) =>
+              regenerateCity(citySeed, randomizedCity, mode)
+            }
             onGenerate={(seed) => regenerateCity(seed)}
             onRandom={generateRandomCity}
           />

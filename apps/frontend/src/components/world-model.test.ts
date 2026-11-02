@@ -3,6 +3,27 @@ import { createDemoCompatibleScenario } from '@simulicity/hazards';
 import type { CityResponse } from './city-types';
 import { createReliefCity, sampleTerrainHeight } from './terrain-view';
 import { generateWorld, sampleWorldHeight } from './world-model';
+import { createOrganicCity } from './organic-city-model';
+
+it('fits the bounded large fictional city into the surrounding world without exceeding its sample budget', () => {
+  const large = createOrganicCity(city(), 123, { mode: 'city' }).city;
+  const before = JSON.stringify(large);
+  const world = generateWorld(large, 123);
+  expect(world.bounds.minX).toBeLessThan(0);
+  expect(world.bounds.maxX).toBeGreaterThan(1200);
+  expect(world.bounds.minZ).toBeLessThan(0);
+  expect(world.bounds.maxZ).toBeGreaterThan(1200);
+  expect(
+    world.terrainGrid.xCoordinates.length *
+      world.terrainGrid.yCoordinates.length,
+  ).toBeLessThanOrEqual(60000);
+  for (const x of [0, 300, 600, 900, 1200])
+    for (const z of [0, 300, 600, 900, 1200])
+      expect(sampleWorldHeight(world, x, z)).toBeCloseTo(
+        sampleTerrainHeight(large, x, z),
+      );
+  expect(JSON.stringify(large)).toBe(before);
+});
 
 const city = (): CityResponse =>
   JSON.parse(

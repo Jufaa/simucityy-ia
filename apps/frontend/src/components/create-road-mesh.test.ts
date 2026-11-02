@@ -2,6 +2,41 @@ import { expect, it } from 'vitest';
 import * as THREE from 'three';
 import { createRoadLayer, createRoadMesh } from './create-road-mesh';
 import { countChunkInstances } from './instanced-chunks';
+import type { Road } from './city-types';
+
+it('uses each road profile for both individual and batched pavement widths', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const roads: Road[] = [12, 8, 4].map((widthInMeters, i) => ({
+    id: `profile-${i}`,
+    start: { x: 0, y: 20 * i },
+    end: { x: 50, y: 20 * i },
+    profile: {
+      kind: i === 0 ? 'avenue' : i === 1 ? 'local' : 'alley',
+      widthInMeters,
+      sidewalkWidthInMeters: 2,
+      motorVehiclesAllowed: i !== 2,
+    },
+  }));
+  for (const road of roads) {
+    const mesh = createRoadMesh(road, 0, material, 6);
+    expect(mesh.geometry.parameters.depth).toBe(road.profile!.widthInMeters);
+    mesh.geometry.dispose();
+  }
+  const layer = createRoadLayer(roads, 0, material, 6);
+  const widths: number[] = [];
+  layer.traverse((object) => {
+    if (!(object instanceof THREE.InstancedMesh)) return;
+    const matrix = new THREE.Matrix4();
+    for (let i = 0; i < object.count; i++) {
+      object.getMatrixAt(i, matrix);
+      widths.push(new THREE.Vector3().setFromMatrixScale(matrix).z);
+    }
+    object.geometry.dispose();
+    object.dispose();
+  });
+  expect(widths.sort((a, b) => a - b)).toEqual([4, 8, 12]);
+  material.dispose();
+});
 
 it.each([
   { id: 'horizontal', start: { x: 0, y: 50 }, end: { x: 100, y: 50 } },

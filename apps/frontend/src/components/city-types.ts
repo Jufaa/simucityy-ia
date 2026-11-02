@@ -16,6 +16,15 @@ export interface Road {
   id: string;
   start: Point;
   end: Point;
+  /** Local view/simulation metadata, not part of the saved or HTTP generation contract. */
+  profile?: RoadProfile;
+}
+
+export interface RoadProfile {
+  kind: 'avenue' | 'local' | 'alley';
+  widthInMeters: number;
+  sidewalkWidthInMeters: number;
+  motorVehiclesAllowed: boolean;
 }
 
 export interface Block {
@@ -29,6 +38,8 @@ export interface Building {
   minCorner: Point;
   maxCorner: Point;
   heightInMeters: number;
+  /** Inspectable local placement rules; not part of backend or saved scenarios. */
+  layout?: BuildingLayout;
   /** Optional local rendering pose; min/max corners conservatively contain the rotated shape. */
   presentation?: {
     widthInMeters: number;
@@ -45,6 +56,19 @@ export interface Building {
     entranceSide: 'north' | 'south' | 'east' | 'west';
     balconyDepthInMeters: number;
   };
+}
+
+export interface BuildingLayout {
+  neighborhoodId: string;
+  archetype:
+    | 'compact-house'
+    | 'elongated-house'
+    | 'slim-apartment'
+    | 'wide-apartment'
+    | 'wide-shop'
+    | 'compact-shop';
+  roadSetbackInMeters: number;
+  buildingGapInMeters: number;
 }
 
 export interface TerrainConfig {

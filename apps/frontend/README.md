@@ -2,6 +2,138 @@
 
 Run `pnpm dev` from the repository root and open http://localhost:3000.
 
+## Living-city roadmap: urban variety
+
+The [living-city roadmap](../../docs/living-city-roadmap.md) tracks the complete
+product direction. Its first delivery varies the centers and dimensions of the
+three existing neighborhoods by seed, using a separate layout random stream.
+Two bent outer-street links on each riverbank create local circuits and alternative
+routes while retaining dead ends. Repeating a seed reproduces the same layout.
+
+The existing bridge remains the only cross-river connection. New streets participate
+in the same road graph, building clearance and terrain grading as existing roads;
+they are not decorative lines. Source API data, saved formats and the legacy grid
+remain unchanged. Polygonal parcels, additional land uses and AI city planning
+remain roadmap work. Existing
+seeds intentionally produce different organic buildings because the streets and
+neighborhood envelopes now change placement constraints.
+
+### First larger fictional-city preset
+
+Open **Ajustes → Escala urbana → Ciudad grande · 1,2 km**. The original
+**Distrito** remains the default and can be selected again. Seed replay includes
+the selected size, so switching size with the same seed actually rebuilds the
+geometry. Random generation retains the selected size.
+
+The optional local preset covers 1200 × 1200 m with eight fictional neighborhoods,
+ten street rows per riverbank, local pedestrian circuits and the existing single
+bridge. It targets 800 buildings, or 600–800 with random profiles, and 12 parks
+(8–16 with random profiles). It does not scale houses, road widths, sidewalks,
+setbacks or park furniture up with the territory. It reuses the existing six
+archetypes and local assets; the backend response and saved format are unchanged.
+
+The city preset deliberately uses a 20 m terrain grid: 3600 flood cells per
+experiment arm, versus 2500 cells at 10 m in the original 500 m district. This
+coarser synthetic demonstration is not a higher-resolution flood forecast.
+Placement attempts are bounded at 96000 buildings/15000 parks; targets are not
+unlimited density settings. Source population is retained (normally 200 people),
+with at most 40 moving vehicles and 600 decorative street items. This first
+larger map does not implement massive population, worker simulation, multiple
+bridges, an infinite city or AI planning. Actual visual/FPS acceptance is pending
+a connected browser; automated grid/scale tests alone do not prove usability.
+
+Offline Node probes in this development session measured generation at 208–759 ms
+(median 437 ms across mixed seed/profile/relief cases). Five hazard setups took
+92–248 ms; advancing 0.4 real seconds took 10–148 ms depending on the event.
+These are observed development-machine costs, not browser FPS or performance
+guarantees. The simulation still runs on the main thread.
+
+Hazard outcomes may differ with the new geography/grid. In the river-overflow
+preset, existing quantile-based initialization can put approach water at 3.05 m,
+above the unchanged 2.2 m bridge deck, so the bridge can begin blocked. This is
+modeled overtopping, not proof of real flood risk or a missing bridge elevation.
+
+### Road hierarchy
+
+Organic roads now carry optional local profiles shared by asphalt/shoulder
+rendering, setbacks, idle-person placement, street dressing and vehicle access:
+
+| Road class             | Carriageway at 500 m city scale | Sidewalk on each side | Motor traffic |
+| ---------------------- | ------------------------------- | --------------------- | ------------- |
+| Trunk avenue           | 12 m                            | 3 m                   | Yes           |
+| Secondary street       | 8 m                             | 2 m                   | Yes           |
+| Outer pedestrian alley | 4 m                             | 1 m                   | No            |
+| Existing bridge        | Original 10 m deck              | Kept inside the deck  | Yes           |
+
+Dimensions scale with the organic city. Cars retain the existing simple two-way
+kinematic model; wider avenues do not add multiple traffic lanes. Segments too
+narrow for the existing vehicle envelopes do not spawn traffic. Pedestrian alleys
+remain available to evacuation routing. Idle citizens use the actual sidewalk
+offset; walking evacuation still follows graph centerlines, not a new sidewalk
+network. Furniture avoids other profiled carriageways and pedestrian alleys do
+not receive parked cars or bus stops. Profiled carriageways narrower than 8 m
+omit parking so parked bodies do not overlap the existing fixed moving lanes;
+small scaled cities therefore have fewer parked vehicles, not narrower cars.
+
+The bridge keeps its own renderer and surface/exposure semantics. Metadata-free
+legacy roads retain each consumer's previous defaults, including 6 m asphalt,
+district-based dressing and the original 4 m idle-person offset. No backend or
+saved scenario format is extended with these local profiles. Browser acceptance
+for the changed appearance is still pending.
+
+### Neighborhood building variety
+
+The organic generator now samples two rectangular archetypes per neighborhood.
+Dimensions below are at the 500 m reference scale; floor counts are before the
+existing height multiplier:
+
+| Neighborhood   | Archetype       | Width × depth   | Floors |
+| -------------- | --------------- | --------------- | ------ |
+| Garden Quarter | Compact house   | 8–10 × 8–10 m   | 1–2    |
+| Garden Quarter | Elongated house | 7–8 × 13–15 m   | 1–2    |
+| Old Town       | Slim apartment  | 8–9.5 × 15–17 m | 8–12   |
+| Old Town       | Wide apartment  | 14–17 × 9–11 m  | 5–8    |
+| East Market    | Wide shop       | 16–19 × 8–10 m  | 1–2    |
+| East Market    | Compact shop    | 10–12 × 9–11 m  | 2–3    |
+
+Archetypes have different setbacks beyond the actual road and sidewalk edges,
+and pairwise spacing satisfies the larger of both buildings' requirements.
+Inspectable local `Building.layout` metadata records those rules. Orientation
+still follows the nearest road frontage; foundations use the existing terrain
+helpers. Seed and density/height controls remain reproducible, but organic
+building placement intentionally changes from the previous generator revision.
+
+Loaded Kenney assets and the procedural fallback both consume the actual width,
+depth, height and orientation. The change does not replace GLB facade materials,
+introduce L/U footprints, attach terraced houses, or create independent polygonal
+parcels; current blocks remain conservative building envelopes. No new assets,
+dependencies, backend fields, saved formats or hydraulic behavior are introduced.
+
+### Plazas, green parks and bridge landmark
+
+Organic generation now reserves one main civic rectangle before buildings, when
+clear land fits: 32 × 28 m at the district reference scale, or 48 × 40 m in the
+larger city. It counts toward the selected park target rather than displacing
+buildings afterward. The site has a central paved plaza/fountain, two crossing
+paths, an entrance, benches, lamps and trees. Other parks remain greener, with a
+narrow path, seating and an entrance. If the bounded search cannot fit the civic
+site safely, ordinary green-park placement continues instead of forcing it.
+
+The original bridge gains two lateral blue-steel arches, anchor details,
+instanced hangers and warm emissive fixtures. Its deck, crossing graph, citizen
+surface and flood-exposure metadata are unchanged. No new hydraulic barriers or
+shadow-casting point lights are added. Geometry and instance resources retain
+explicit, idempotent disposal.
+
+These are visible city structures and potential destinations, not new citizen
+visits or public-service behavior. Park entrances stop at their boundary; they
+do not add a navigable sidewalk network. Paving is presentation data: the
+simplified flood environment still treats whole parks uniformly for infiltration.
+Bridge arches are decorative, not certified engineering. Browser appearance,
+storm readability and FPS remain pending actual inspection. Details and offline
+checks: [public spaces](../../docs/public-spaces.md) and
+[bridge landmark](../../docs/bridge-landmark.md).
+
 ## Free local model preview
 
 The default organic view uses six original CC0 Kenney models served from this app, not a paid map/API or remote model host. The top bar reports **Modelos locales CC0** only after successful loading. If a model cannot load, the corrected procedural buildings remain visible and the UI reports the fallback. Models, textures, original licenses and SHA-256 provenance live in `public/models/kenney-city/`.
