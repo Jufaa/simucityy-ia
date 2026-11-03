@@ -8,6 +8,7 @@ export const DETAIL_NAME_PREFIXES = [
   'balcony-rails',
   'balcony-slabs',
   'street-',
+  'road-crosswalks',
   'bench-',
   'lamp-heads',
 ] as const;

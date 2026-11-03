@@ -117,11 +117,14 @@ export function createReliefWater(
             const a = polygon[0]!,
               b = polygon[i]!,
               c = polygon[i + 1]!;
-            const normal = new THREE.Vector3()
+            const area = new THREE.Vector3()
               .subVectors(b, a)
               .cross(new THREE.Vector3().subVectors(c, a));
-            if (normal.lengthSq() < 1e-20) continue;
-            normal.normalize();
+            if (area.lengthSq() < 1e-20) continue;
+            // Flat up normals: per-triangle faceted normals made the sheet
+            // read as shards. The material's animated normal map supplies
+            // the surface detail instead; solver depths are untouched.
+            const normal = new THREE.Vector3(0, 1, 0);
             if (vertices + 3 > capacity)
               throw new RangeError(
                 'Flood surface geometry exceeds its clipping budget.',

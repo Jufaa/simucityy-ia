@@ -15,8 +15,8 @@ const fakeStorage = (initial: Record<string, string> = {}) => {
   };
 };
 
-it('starts at 1.5 on a hi-dpi display and never above the device ratio', () => {
-  expect(loadCachedPixelRatio(2, fakeStorage())).toBe(1.5);
+it('starts at 1.25 on a hi-dpi display and never above the device ratio', () => {
+  expect(loadCachedPixelRatio(2, fakeStorage())).toBe(1.25);
   expect(loadCachedPixelRatio(1, fakeStorage())).toBe(1);
 });
 

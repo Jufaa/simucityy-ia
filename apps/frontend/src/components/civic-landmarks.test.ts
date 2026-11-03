@@ -182,3 +182,22 @@ describe('civic landmarks', () => {
     }
   });
 });
+
+describe('rooftop detail budget', () => {
+  it('bounds decorative rooftop groups on large cities', () => {
+    const source = city();
+    source.buildings = Array.from({ length: 600 }, (_, i) => ({
+      ...source.buildings[0]!,
+      id: `bulk-${i}`,
+      minCorner: { x: (i % 30) * 24, y: Math.floor(i / 30) * 40 },
+      maxCorner: { x: (i % 30) * 24 + 12, y: Math.floor(i / 30) * 40 + 14 },
+    }));
+    const layer = createCivicLandmarkLayer(source, { assignments: [] });
+    let rooftops = 0;
+    layer.group.traverse((object) => {
+      if (object.name.startsWith('rooftop:')) rooftops++;
+    });
+    expect(rooftops).toBeLessThanOrEqual(120);
+    expect(rooftops).toBeGreaterThan(0);
+  });
+});

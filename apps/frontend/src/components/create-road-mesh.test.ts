@@ -49,10 +49,11 @@ it.each([
     const mesh = createRoadMesh(road, 25, material);
     expect(mesh.geometry.parameters).toMatchObject({
       width: 100,
-      height: 0.05,
+      height: 0.3,
       depth: 6,
     });
-    expect(mesh.position.y - 0.025).toBeCloseTo(25.01);
+    // The deep skirt drops below terrain; the driving top stays at +0.06.
+    expect(mesh.position.y + 0.15).toBeCloseTo(25.06);
     for (const [offset, point] of [
       [-50, road.start],
       [50, road.end],
@@ -112,4 +113,64 @@ it('supports explicit widths for the organic road and shoulder geometry', () => 
   expect(mesh.geometry.parameters.width).toBe(50);
   mesh.geometry.dispose();
   material.dispose();
+});
+
+it('adds sidewalks, junction plates and crosswalks when a sidewalk material is given', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const concrete = new THREE.MeshStandardMaterial({ color: 0xc1c5c7 });
+  // Graph segments meet at the junction node, as in converted OSM data.
+  const roads = [
+    { id: 'w', start: { x: 0, y: 50 }, end: { x: 50, y: 50 } },
+    { id: 'e', start: { x: 50, y: 50 }, end: { x: 100, y: 50 } },
+    { id: 's', start: { x: 50, y: 0 }, end: { x: 50, y: 50 } },
+    { id: 'n', start: { x: 50, y: 50 }, end: { x: 50, y: 100 } },
+  ];
+  const layer = createRoadLayer(roads, 25, material, 6, concrete);
+  expect(layer.getObjectByName('road-sidewalks')).toBeInstanceOf(THREE.Group);
+  expect(layer.getObjectByName('road-junction-asphalt')).toBeInstanceOf(
+    THREE.Group,
+  );
+  const crosswalks = layer.getObjectByName('road-crosswalks')!;
+  let stripes = 0;
+  crosswalks.traverse((object) => {
+    if (object instanceof THREE.InstancedMesh) stripes += object.count;
+  });
+  expect(stripes).toBe(16); // 4 arms x 4 bars at the single 4-way junction
+  const plain = createRoadLayer(roads, 25, material, 6);
+  expect(plain.getObjectByName('road-sidewalks')).toBeUndefined();
+});
+
+it('keeps plates and crosswalks off straight intermediate nodes', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const concrete = new THREE.MeshStandardMaterial();
+  const roads = [
+    { id: 'a', start: { x: 0, y: 0 }, end: { x: 50, y: 0 } },
+    { id: 'b', start: { x: 50, y: 0 }, end: { x: 100, y: 0 } },
+  ];
+  const layer = createRoadLayer(roads, 25, material, 6, concrete);
+  expect(layer.getObjectByName('road-junction-asphalt')).toBeUndefined();
+  expect(layer.getObjectByName('road-crosswalks')).toBeUndefined();
+});
+
+it('clusters crosswalks from intersections closer than 30 m', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const concrete = new THREE.MeshStandardMaterial();
+  const arms = (cx: number, prefix: string) => [
+    { id: `${prefix}w`, start: { x: cx - 40, y: 0 }, end: { x: cx, y: 0 } },
+    { id: `${prefix}e`, start: { x: cx, y: 0 }, end: { x: cx + 40, y: 0 } },
+    { id: `${prefix}s`, start: { x: cx, y: -40 }, end: { x: cx, y: 0 } },
+    { id: `${prefix}n`, start: { x: cx, y: 0 }, end: { x: cx, y: 40 } },
+  ];
+  const layer = createRoadLayer(
+    [...arms(0, 'a'), ...arms(10, 'b')],
+    25,
+    material,
+    6,
+    concrete,
+  );
+  let stripes = 0;
+  layer.getObjectByName('road-crosswalks')!.traverse((object) => {
+    if (object instanceof THREE.InstancedMesh) stripes += object.count;
+  });
+  expect(stripes).toBe(16);
 });

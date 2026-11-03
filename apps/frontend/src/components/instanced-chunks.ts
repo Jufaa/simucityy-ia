@@ -24,6 +24,7 @@ export function createChunkedInstances({
   receiveShadow = false,
   uvScales,
   ids,
+  colors,
 }: {
   name: string;
   geometry: THREE.BufferGeometry;
@@ -35,6 +36,8 @@ export function createChunkedInstances({
   /** Optional per-instance vec3 consumed by the facade UV shader. */
   uvScales?: number[] | undefined;
   ids?: string[] | undefined;
+  /** Optional per-instance RGB multiplier, aligned with placements. */
+  colors?: readonly (readonly [number, number, number])[] | undefined;
 }): THREE.Group {
   const group = new THREE.Group();
   group.name = name;
@@ -76,6 +79,14 @@ export function createChunkedInstances({
       dummy.updateMatrix();
       mesh.setMatrixAt(index, dummy.matrix);
     });
+    if (colors) {
+      const tint = new THREE.Color();
+      cell.indexes.forEach((source, index) => {
+        const rgb = colors[source] ?? [1, 1, 1];
+        mesh.setColorAt(index, tint.setRGB(rgb[0], rgb[1], rgb[2]));
+      });
+      if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true;
+    }
     mesh.instanceMatrix.needsUpdate = true;
     mesh.castShadow = castShadow;
     mesh.receiveShadow = receiveShadow;

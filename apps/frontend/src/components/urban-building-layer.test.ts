@@ -294,3 +294,69 @@ it('chunks instances spatially instead of creating meshes per building', () => {
   expect(meshCount(large)).toBeLessThan(120);
   expect(meshCount(large)).toBeGreaterThan(meshCount(small));
 });
+
+it('tints facade instances per building and varies roof colours', () => {
+  const buildings = Array.from({ length: 12 }, (_, index) => ({
+    id: `tint-${index}`,
+    minCorner: { x: index * 20, y: 0 },
+    maxCorner: { x: index * 20 + 10, y: 12 },
+    heightInMeters: 12,
+    architecture: { ...architecture, facade: 'sand' as const },
+  }));
+  const layer = createBuildingLayer(flatCity(buildings));
+  const tints = new Set<string>();
+  layer.getObjectByName('building-facade-sand')!.traverse((object) => {
+    if (!(object instanceof THREE.InstancedMesh)) return;
+    expect(object.instanceColor).not.toBeNull();
+    const color = new THREE.Color();
+    for (let i = 0; i < object.count; i++) {
+      object.getColorAt(i, color);
+      tints.add(`${color.r.toFixed(3)},${color.g.toFixed(3)}`);
+    }
+  });
+  expect(tints.size).toBeGreaterThan(3);
+  const capMaterials = new Set<number>();
+  layer.getObjectByName('building-caps')!.traverse((object) => {
+    if (object instanceof THREE.Mesh)
+      capMaterials.add(
+        (object.material as THREE.MeshStandardMaterial).color.getHex(),
+      );
+  });
+  expect(capMaterials.size).toBeGreaterThan(1);
+});
+
+it('scales exact-footprint wall UVs to the 3 m facade module', () => {
+  const complex = {
+    id: 'church',
+    minCorner: { x: 20, y: 20 },
+    maxCorner: { x: 50, y: 40 },
+    heightInMeters: 24,
+    footprint: [
+      { x: 20, y: 20 },
+      { x: 50, y: 20 },
+      { x: 50, y: 40 },
+      { x: 35, y: 40 },
+      { x: 35, y: 30 },
+      { x: 20, y: 30 },
+    ],
+    footprintHoles: [
+      [
+        { x: 24, y: 24 },
+        { x: 30, y: 24 },
+        { x: 30, y: 28 },
+        { x: 24, y: 28 },
+      ],
+    ],
+    architecture,
+  };
+  const layer = createBuildingLayer(flatCity([complex]));
+  const group = layer.getObjectByName('footprint:church')!;
+  const walls = group.children[0] as THREE.Mesh;
+  const uv = walls.geometry.getAttribute('uv');
+  expect(uv).toBeDefined();
+  let maxU = 0;
+  for (let i = 0; i < uv.count; i++)
+    maxU = Math.max(maxU, Math.abs(uv.getX(i)));
+  // Unscaled extrude UVs are metres (up to ~30); scaled they stay module-sized.
+  expect(maxU).toBeLessThanOrEqual(11);
+});

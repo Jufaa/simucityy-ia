@@ -339,7 +339,10 @@ export default function Scene() {
       city.config.heightInMeters / 2,
     );
     dirLight.castShadow = true;
-    dirLight.shadow.mapSize.set(2048, 2048);
+    // Large districts pay the shadow pass over ~1 km; a 1024 map keeps
+    // the frame fluid there, small districts keep 2048 detail.
+    const shadowMapSize = extent > 700 ? 1024 : 2048;
+    dirLight.shadow.mapSize.set(shadowMapSize, shadowMapSize);
     dirLight.shadow.camera.left = dirLight.shadow.camera.bottom = -extent * 0.8;
     dirLight.shadow.camera.right = dirLight.shadow.camera.top = extent * 0.8;
     dirLight.shadow.camera.far = extent * 4;
@@ -404,18 +407,41 @@ export default function Scene() {
     const roadMaterial = new THREE.MeshStandardMaterial({
       color: textures.asphalt ? 0xffffff : 0x555555,
       roughness: 1,
+      // Draped roads sit centimetres over the DEM ground; polygon offset
+      // keeps the two near-coplanar surfaces from z-fighting into shards.
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
       ...(textures.asphalt ? { map: textures.asphalt } : {}),
     });
     const bridgeRoadIds = new Set(
       city.organic?.bridges.flatMap((bridge) => bridge.roadIds),
     );
+    // Real imported zones carry no sidewalk blocks: the road layer grows
+    // its own concrete sidewalks, junction plates and crosswalks instead.
+    const sidewalkMaterial = city.real
+      ? new THREE.MeshStandardMaterial({
+          color: textures.concrete ? 0xffffff : 0xc1c5c7,
+          roughness: 1,
+          polygonOffset: true,
+          polygonOffsetFactor: -1,
+          polygonOffsetUnits: -1,
+          ...(textures.concrete ? { map: textures.concrete } : {}),
+        })
+      : undefined;
     const roadLayer = createRoadLayer(
       city.roads.filter((road) => !bridgeRoadIds.has(road.id)),
       city.terrain.elevationInMeters,
       roadMaterial,
       city.organic ? (city.district?.roadWidthInMeters ?? 6) : 6,
+      sidewalkMaterial,
+      // Real streets read small at district scale; a 1.2x presentation
+      // widening (sidewalks, plates, crosswalks included) keeps them
+      // legible without touching simulation widths or centrelines.
+      city.real ? 1.2 : 1,
     );
-    scene.add(drapeSurfaceLayer(roadLayer, city));
+    const drapedRoadLayer = drapeSurfaceLayer(roadLayer, city);
+    scene.add(drapedRoadLayer);
     scene.add(drapeSurfaceLayer(createDistrictLayer(city), city));
     const urbanDetailLayer = createUrbanDetailLayer(city, textures.concrete);
     scene.add(drapeSurfaceLayer(urbanDetailLayer, city));
@@ -423,14 +449,27 @@ export default function Scene() {
     const detailObjects = [
       ...collectDetailObjects(fallbackBuildings),
       ...collectDetailObjects(urbanDetailLayer),
+      ...collectDetailObjects(drapedRoadLayer),
     ];
     let detailsShown = true;
 
     // Suelo
+    // Imported districts are paved city fabric: grass there read as
+    // green patches between streets. Parks keep their own green boxes
+    // above this base; synthetic cities keep the grass ground.
+    // Clone before tiling: the shared concrete texture also dresses park
+    // paths at repeat 1, and must not inherit the ground's 96x tiling.
+    const groundTexture = city.real
+      ? textures.concrete?.clone()
+      : textures.grass;
+    if (groundTexture && city.real) {
+      groundTexture.repeat.set(96, 96);
+      groundTexture.needsUpdate = true;
+    }
     const groundMaterial = new THREE.MeshStandardMaterial({
-      color: textures.grass ? 0xffffff : 0xa6b09a,
+      color: groundTexture ? 0xffffff : city.real ? 0xb9bcba : 0xa6b09a,
       roughness: 1,
-      ...(textures.grass ? { map: textures.grass } : {}),
+      ...(groundTexture ? { map: groundTexture } : {}),
     });
     const ground = createCityGround(city, groundMaterial);
     scene.add(ground);
@@ -631,6 +670,10 @@ export default function Scene() {
       }
       return moved;
     };
+    // Subtle distance haze in clear weather; storm fog replaces it while
+    // a simulation is running, exactly as before.
+    const clearFog = new THREE.Fog(0xcbd5df, viewExtent * 1.4, viewExtent * 5);
+    scene.fog = clearFog;
     const stormFog = new THREE.Fog(
       hazardKind === 'earthquake'
         ? 0xd8c9a8
@@ -712,7 +755,7 @@ export default function Scene() {
         stormActive = active;
         if (scene.background instanceof THREE.Color)
           scene.background.set(active ? 0xb9cdd4 : 0xcbd5df);
-        scene.fog = active ? stormFog : null;
+        scene.fog = active ? stormFog : clearFog;
         dirLight.intensity = active ? 2.3 : 2.5;
         skyLight.intensity = active ? 1.9 : 2;
       }

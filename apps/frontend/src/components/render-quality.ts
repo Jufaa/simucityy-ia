@@ -27,7 +27,7 @@ export function loadCachedPixelRatio(
   } catch {
     // Storage can throw in private mode; falling back is harmless.
   }
-  return Math.min(ceiling, 1.5);
+  return Math.min(ceiling, 1.25);
 }
 
 export function saveCachedPixelRatio(

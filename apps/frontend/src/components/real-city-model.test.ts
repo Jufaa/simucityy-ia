@@ -201,6 +201,16 @@ describe('createRealCity', () => {
     expect(metadata.estimatedBuildingHeights).toBe(2);
     expect(city.buildings[2]!.heightInMeters).toBeGreaterThanOrEqual(6);
     expect(city.district!.parks).toHaveLength(1);
+    const trees = city.district!.urban!.amenities.filter(
+      (item) => item.kind === 'tree',
+    );
+    expect(trees.length).toBeGreaterThan(0);
+    expect(trees.every((tree) => tree.parkId === 'real-park-0')).toBe(true);
+    // Deterministic: converting again yields identical placement.
+    const again = createRealCity(fixture());
+    expect(again.city.district!.urban!.amenities).toEqual(
+      city.district!.urban!.amenities,
+    );
   });
 
   it('stitches relation fragments into a footprint with courtyard holes', () => {
