@@ -55,9 +55,9 @@ export function generateCityScenario({
   if (
     !Number.isInteger(populationCount) ||
     populationCount < 0 ||
-    populationCount > 300
+    populationCount > 1200
   )
-    throw new RangeError('Population must be an integer between 0 and 300.');
+    throw new RangeError('Population must be an integer between 0 and 1200.');
   const city = generateCity(effectiveConfig);
   const estimatedBlocks =
     Math.floor(config.widthInMeters / config.streetSpacingInMeters) *

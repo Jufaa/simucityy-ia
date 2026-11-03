@@ -10,7 +10,7 @@ describe('loading screen and comparison slider', () => {
       createElement(LoadingScreen, { message: 'Importando la zona…' }),
     );
     expect(html).toContain('Importando la zona…');
-    expect(html).toContain('Atrapar la gota');
+    expect(html).toContain('dino saltando cactus');
     expect(html).toContain('Mini-juego');
     expect(html).toContain('aria-busy="true"');
   });

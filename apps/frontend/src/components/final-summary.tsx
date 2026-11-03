@@ -6,6 +6,7 @@ export function FinalSummary(props: {
   input: FinalSummaryInput;
   narrative: string[];
   onDownloadReport(): void;
+  onSaveScenario?(): void;
   onRestart(): void;
   onClose(): void;
 }) {
@@ -85,6 +86,23 @@ export function FinalSummary(props: {
           >
             ⬇ Descargar reporte
           </button>
+          {props.onSaveScenario && (
+            <button
+              type="button"
+              onClick={props.onSaveScenario}
+              style={{
+                padding: '9px 13px',
+                borderRadius: 9,
+                border: '1px solid #b6c4c9',
+                background: '#fff',
+                color: '#20353a',
+                font: '600 13px system-ui',
+                cursor: 'pointer',
+              }}
+            >
+              💾 Guardar escenario
+            </button>
+          )}
           <button
             type="button"
             onClick={props.onRestart}

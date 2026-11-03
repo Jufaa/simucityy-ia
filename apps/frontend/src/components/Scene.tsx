@@ -27,6 +27,14 @@ import {
   shouldFinishSimulation,
 } from './simulation-launch';
 import { FinalSummary } from './final-summary';
+import { buildEventLog, type EventSample } from './event-log';
+import { recommendImprovements } from './recommendation';
+import {
+  deleteSavedScenario,
+  loadSavedScenarios,
+  saveScenario,
+  type SavedScenario,
+} from './saved-scenarios';
 import { HAZARD_KINDS } from '@simulicity/hazards';
 import { CityTraffic } from './city-traffic-model';
 import { createCityTrafficLayer } from './city-traffic-layer';
@@ -79,6 +87,7 @@ import {
   createCityGround,
   createTerrainSkirt,
   drapeSurfaceLayer,
+  sampleTerrainHeight,
 } from './terrain-view';
 import {
   hazardPreset,
@@ -113,6 +122,24 @@ const civicLabels = {
   market: 'Mercado',
   museum: 'Museo',
 };
+
+/** Ray-casting point-in-polygon for footprint picking (presentation only). */
+function pointInPolygon(
+  point: { x: number; y: number },
+  polygon: readonly { x: number; y: number }[],
+): boolean {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const a = polygon[i]!,
+      b = polygon[j]!;
+    if (
+      a.y > point.y !== b.y > point.y &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x
+    )
+      inside = !inside;
+  }
+  return inside;
+}
 
 export default function Scene() {
   const mountRef = useRef<HTMLDivElement>(null);
@@ -216,6 +243,23 @@ export default function Scene() {
   const [afterImage, setAfterImage] = useState<string | null>(null);
   const [wipePercent, setWipePercent] = useState(50);
   const [durationMinutes, setDurationMinutes] = useState<number>(5);
+  const [rainIntensity, setRainIntensity] = useState<number>(
+    hazardPreset('rain').rainIntensityMmPerHour,
+  );
+  const rainIntensityRef = useRef(rainIntensity);
+  rainIntensityRef.current = rainIntensity;
+  const [userDrains, setUserDrains] = useState<{ x: number; y: number }[]>([]);
+  const [hazardMeasure, setHazardMeasure] = useState(true);
+  const hazardMeasureRef = useRef(true);
+  const userDrainsRef = useRef(userDrains);
+  userDrainsRef.current = userDrains;
+  const [drainMode, setDrainMode] = useState(false);
+  const drainModeRef = useRef(false);
+  const [eventSamples, setEventSamples] = useState<EventSample[]>([]);
+  const [inspectedId, setInspectedId] = useState<string | null>(null);
+  const [savedScenarios, setSavedScenarios] = useState<SavedScenario[]>(() =>
+    loadSavedScenarios(),
+  );
   const [showFinalSummary, setShowFinalSummary] = useState(false);
   const worldLayerRef = useRef<ReturnType<typeof createWorldLayer> | null>(
     null,
@@ -235,23 +279,29 @@ export default function Scene() {
 
     (async () => {
       try {
-        const res = await fetch(`${API_URL}/api/v1/cities/generate`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            layout: 'district',
-            detailLevel: 'urban',
-            config: {
-              widthInMeters: 500,
-              heightInMeters: 500,
-              streetSpacingInMeters: 50,
-              seed: 123,
-            },
-            terrain: { kind: 'flat', elevationInMeters: 25 },
-            minBuildingHeightInMeters: 4,
-            maxBuildingHeightInMeters: 40,
-          }),
-        });
+        const requestCity = (populationCount?: number) =>
+          fetch(`${API_URL}/api/v1/cities/generate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              layout: 'district',
+              detailLevel: 'urban',
+              config: {
+                widthInMeters: 500,
+                heightInMeters: 500,
+                streetSpacingInMeters: 50,
+                seed: 123,
+                ...(populationCount ? { populationCount } : {}),
+              },
+              terrain: { kind: 'flat', elevationInMeters: 25 },
+              minBuildingHeightInMeters: 4,
+              maxBuildingHeightInMeters: 40,
+            }),
+          });
+        let res = await requestCity(600);
+        // An older backend caps population at 300 and rejects the larger
+        // request; fall back to its default instead of failing the load.
+        if (res.status === 400) res = await requestCity();
         if (!res.ok) {
           const text = await res.text();
           throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
@@ -330,6 +380,67 @@ export default function Scene() {
     controls.screenSpacePanning = false;
     controls.zoomToCursor = true;
     controls.update();
+    // Map clicks: place drains while that mode is on, otherwise inspect
+    // the building under the cursor. Drags (camera moves) are ignored.
+    const raycaster = new THREE.Raycaster();
+    const drainMarkers = new THREE.Group();
+    drainMarkers.name = 'user-drain-markers';
+    scene.add(drainMarkers);
+    for (const point of userDrainsRef.current) {
+      const marker = new THREE.Mesh(
+        new THREE.CylinderGeometry(2.2, 2.2, 3, 12),
+        new THREE.MeshStandardMaterial({ color: 0x1d7fd4, roughness: 0.6 }),
+      );
+      marker.position.set(
+        point.x,
+        sampleTerrainHeight(city, point.x, point.y) + 1.5,
+        point.y,
+      );
+      drainMarkers.add(marker);
+    }
+    let downAt: { x: number; y: number } | null = null;
+    renderer.domElement.addEventListener('pointerdown', (event) => {
+      downAt = { x: event.clientX, y: event.clientY };
+    });
+    renderer.domElement.addEventListener('pointerup', (event) => {
+      if (!downAt) return;
+      const moved = Math.hypot(
+        event.clientX - downAt.x,
+        event.clientY - downAt.y,
+      );
+      downAt = null;
+      if (moved > 5) return;
+      const rect = renderer.domElement.getBoundingClientRect();
+      const ndc = new THREE.Vector2(
+        ((event.clientX - rect.left) / rect.width) * 2 - 1,
+        -((event.clientY - rect.top) / rect.height) * 2 + 1,
+      );
+      raycaster.setFromCamera(ndc, camera);
+      const hit = raycaster.intersectObject(ground, false)[0];
+      if (!hit) return;
+      const point = { x: hit.point.x, y: hit.point.z };
+      if (drainModeRef.current) {
+        const next = [...userDrainsRef.current, point].slice(-12);
+        setUserDrains(next);
+        simulationRef.current?.applyExtraDrains(next);
+        const marker = new THREE.Mesh(
+          new THREE.CylinderGeometry(2.2, 2.2, 3, 12),
+          new THREE.MeshStandardMaterial({ color: 0x1d7fd4, roughness: 0.6 }),
+        );
+        marker.position.set(point.x, hit.point.y + 1.5, point.y);
+        drainMarkers.add(marker);
+        return;
+      }
+      const building = city.buildings.find((candidate) =>
+        candidate.footprint
+          ? pointInPolygon(point, candidate.footprint)
+          : point.x >= candidate.minCorner.x &&
+            point.x <= candidate.maxCorner.x &&
+            point.y >= candidate.minCorner.y &&
+            point.y <= candidate.maxCorner.y,
+      );
+      setInspectedId(building?.id ?? null);
+    });
     const pressedKeys = new Set<string>();
     const onKeyDown = (event: KeyboardEvent) => {
       if (
@@ -563,6 +674,7 @@ export default function Scene() {
     window.addEventListener('resize', resize);
 
     let simulation: DistrictSimulation | null = null;
+    let lastSampleSeconds = -1;
     let citizenLayer: ReturnType<typeof createCitizenLayer> | null = null;
     let drainLayer: ReturnType<typeof createDrainLayer> | null = null;
     let floodLayer: ReturnType<typeof createFloodLayer> | null = null;
@@ -587,6 +699,12 @@ export default function Scene() {
             // runs on its own when a city loads.
             autoStart: false,
             hazard: hazardKind,
+            ...(hazardKind === 'rain' || hazardKind === 'river-overflow'
+              ? { rainIntensityMmPerHour: rainIntensityRef.current }
+              : {}),
+            extraDrains: userDrainsRef.current,
+            earlyWarning: hazardKind === 'tsunami' && hazardMeasureRef.current,
+            reinforcement: hazardMeasureRef.current,
           },
         );
         simulation.selectArm(armRef.current);
@@ -784,10 +902,33 @@ export default function Scene() {
           ? 0
           : Math.min((time - previousTime) / 1000, 0.25);
       previousTime = time;
-      const simulationDelta = delta * timeScaleRef.current;
+      // Spiral-of-death guard: the visible time multiplier (x1..x64)
+      // stacks on the simulation speed (3x/30x/300x), so an uncapped
+      // x64 frame would try to advance hundreds of simulated seconds
+      // at once (flood + evacuation of every citizen, both arms) and
+      // tank the frame rate. Cap the work per frame; at extreme
+      // multipliers simulated time simply flows as fast as stays fluid.
+      const simulationDelta = Math.min(delta * timeScaleRef.current, 0.5);
       if (!document.hidden && simulation?.advance(simulationDelta)) {
         setFlood(simulation.snapshot);
         setComparison(simulation.comparison);
+        const snap = simulation.snapshot;
+        if (
+          snap.elapsedTimeInSeconds - lastSampleSeconds >= 30 ||
+          (snap.elapsedTimeInSeconds > 0 && lastSampleSeconds < 0)
+        ) {
+          lastSampleSeconds = snap.elapsedTimeInSeconds;
+          const sample: EventSample = {
+            elapsedSeconds: snap.elapsedTimeInSeconds,
+            maxWaterDepthInMeters: snap.maxWaterDepthInMeters,
+            blockedRoads: simulation.selectedBlockedRoadEdgeIds.length,
+            exposedBuildings: snap.exposedBuildingIds.length,
+            evacuated: simulation.evacuation.evacuatedCount,
+            trapped: simulation.evacuation.trappedCount,
+            totalCitizens: simulation.evacuation.citizens.length,
+          };
+          setEventSamples((previous) => [...previous.slice(-40), sample]);
+        }
         setAlarmTime(simulation.alarmTime);
         if (!observedAlarm && simulation.alarmTime !== null) {
           // Antes la alarma forzaba el ritmo base a 3× y la catástrofe
@@ -1037,6 +1178,7 @@ export default function Scene() {
     const simulation = simulationRef.current;
     if (!simulation) return;
     simulation.reset();
+    setEventSamples([]);
     trafficRef.current?.reset();
     simulation.setSpeed(30);
     speedRef.current = 30;
@@ -1052,6 +1194,10 @@ export default function Scene() {
 
   function applyHazard(kind: HazardKind) {
     if (kind === hazardKind) return;
+    setRainIntensity(hazardPreset(kind).rainIntensityMmPerHour);
+    setHazardMeasure(true);
+    hazardMeasureRef.current = true;
+    setEventSamples([]);
     setRunning(false);
     setFlood(null);
     setComparison(null);
@@ -1100,6 +1246,10 @@ export default function Scene() {
     setImportedCity(next);
     setLayoutMode('imported');
   }
+
+  useEffect(() => {
+    drainModeRef.current = drainMode;
+  }, [drainMode]);
 
   function generateRandomCity() {
     const values = new Uint32Array(1);
@@ -1158,6 +1308,50 @@ export default function Scene() {
         hazardPreset(hazardKind).label.toLowerCase(),
       )
     : [];
+  const shelterSnapshot = simulationRef.current?.evacuation.shelters ?? [];
+  const shelterCapacity = shelterSnapshot.reduce(
+    (sum, s) => sum + s.capacity,
+    0,
+  );
+  const shelterOccupancy = shelterSnapshot.reduce(
+    (sum, s) => sum + s.occupancy,
+    0,
+  );
+  const vulnerableBuildings = city
+    ? city.buildings.filter((building) => building.vulnerable)
+    : [];
+  const vulnerableExposed = flood
+    ? vulnerableBuildings.filter((building) =>
+        flood.exposedBuildingIds.includes(building.id),
+      ).length
+    : 0;
+  const recommendationLines =
+    comparison && city
+      ? recommendImprovements({
+          before: {
+            evacuated: comparison.before.evacuated,
+            trapped: comparison.before.trapped,
+            exposedBuildings: comparison.before.exposedBuildings,
+            blockedRoadsPeak: comparison.before.peakBlocked,
+            maxWaterDepthInMeters: comparison.before.peakDepth,
+          },
+          after: {
+            evacuated: comparison.after.evacuated,
+            trapped: comparison.after.trapped,
+            exposedBuildings: comparison.after.exposedBuildings,
+            blockedRoadsPeak: comparison.after.peakBlocked,
+            maxWaterDepthInMeters: comparison.after.peakDepth,
+          },
+          vulnerableExposed,
+          vulnerableTotal: vulnerableBuildings.length,
+          shelterOccupancy,
+          shelterCapacity,
+        })
+      : [];
+  const timelineEvents = buildEventLog(eventSamples);
+  const inspectedBuilding = inspectedId
+    ? (city?.buildings.find((building) => building.id === inspectedId) ?? null)
+    : null;
   const demoSteps = city
     ? buildDemoSteps({
         zoneLabel,
@@ -1197,6 +1391,7 @@ export default function Scene() {
     const simulation = simulationRef.current;
     if (!simulation) return;
     simulation.reset();
+    setEventSamples([]);
     trafficRef.current?.reset();
     setRunning(false);
     setShowFinalSummary(false);
@@ -1383,6 +1578,32 @@ export default function Scene() {
               ))}
             </select>
           </label>
+          {(hazardKind === 'rain' || hazardKind === 'river-overflow') && (
+            <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+              Intensidad de lluvia: {rainIntensity} mm/h
+              <input
+                aria-label="Intensidad de lluvia"
+                type="range"
+                min={20}
+                max={200}
+                step={5}
+                value={rainIntensity}
+                disabled={!!simulationRef.current?.started}
+                onChange={(event) => {
+                  setRainIntensity(Number(event.target.value));
+                  rainIntensityRef.current = Number(event.target.value);
+                  if (!simulationRef.current?.started)
+                    simulationRef.current?.applyRainIntensity(
+                      Number(event.target.value),
+                    );
+                }}
+                style={{ width: '100%', marginTop: 3 }}
+              />
+              {simulationRef.current?.started
+                ? 'Se ajusta antes de iniciar (o al reiniciar).'
+                : 'Aplica al iniciar la simulación.'}
+            </label>
+          )}
           <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
             ¿Cuánto tiempo simular?
             <select
@@ -1470,6 +1691,142 @@ export default function Scene() {
                 ? 'En pausa'
                 : 'Lista para iniciar'}
           </p>
+          {(hazardKind === 'rain' || hazardKind === 'river-overflow') && (
+            <>
+              <button
+                type="button"
+                onClick={() => setDrainMode((mode) => !mode)}
+                style={{
+                  width: '100%',
+                  marginTop: 10,
+                  padding: '9px 12px',
+                  borderRadius: 10,
+                  border: drainMode ? '2px solid #1d7fd4' : '1px solid #b6c4c9',
+                  background: drainMode ? '#e3f0fb' : '#fff',
+                  color: '#20353a',
+                  font: '600 13px system-ui',
+                  cursor: 'pointer',
+                }}
+              >
+                {drainMode
+                  ? '📍 Tocá el mapa para sumar drenajes…'
+                  : `📍 Colocar drenajes (${userDrains.length})`}
+              </button>
+              {userDrains.length > 0 && (
+                <button
+                  type="button"
+                  onClick={() => {
+                    setUserDrains([]);
+                    simulationRef.current?.applyExtraDrains([]);
+                  }}
+                  style={{
+                    width: '100%',
+                    marginTop: 6,
+                    padding: '7px 10px',
+                    borderRadius: 10,
+                    border: '1px solid #b6c4c9',
+                    background: '#fff',
+                    color: '#20353a',
+                    font: '600 12px system-ui',
+                    cursor: 'pointer',
+                  }}
+                >
+                  Quitar drenajes colocados
+                </button>
+              )}
+            </>
+          )}
+          {(hazardKind === 'tsunami' ||
+            hazardKind === 'earthquake' ||
+            hazardKind === 'strong-wind') && (
+            <button
+              type="button"
+              onClick={() => {
+                const next = !hazardMeasure;
+                setHazardMeasure(next);
+                hazardMeasureRef.current = next;
+                simulationRef.current?.applyMeasure({
+                  earlyWarning: hazardKind === 'tsunami' && next,
+                  reinforcement: next,
+                });
+              }}
+              style={{
+                width: '100%',
+                marginTop: 10,
+                padding: '9px 12px',
+                borderRadius: 10,
+                border: hazardMeasure
+                  ? '2px solid #1d7fd4'
+                  : '1px solid #b6c4c9',
+                background: hazardMeasure ? '#e3f0fb' : '#fff',
+                color: '#20353a',
+                font: '600 13px system-ui',
+                cursor: 'pointer',
+              }}
+            >
+              {hazardKind === 'tsunami'
+                ? hazardMeasure
+                  ? '📢 Alerta temprana activada (mejora)'
+                  : '📢 Activar alerta temprana'
+                : hazardKind === 'earthquake'
+                  ? hazardMeasure
+                    ? '🏗 Refuerzo estructural activado (mejora)'
+                    : '🏗 Activar refuerzo estructural'
+                  : hazardMeasure
+                    ? '🪟 Protección de fachadas activada (mejora)'
+                    : '🪟 Activar protección de fachadas'}
+            </button>
+          )}
+          {timelineEvents.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <strong style={{ fontSize: 12 }}>🕐 Línea de tiempo</strong>
+              <ul
+                style={{
+                  margin: '6px 0 0',
+                  paddingLeft: 16,
+                  fontSize: 11,
+                  color: '#425466',
+                }}
+              >
+                {timelineEvents.map((event) => (
+                  <li key={event.text}>{event.text}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+          {savedScenarios.length > 0 && (
+            <div style={{ marginTop: 12 }}>
+              <strong style={{ fontSize: 12 }}>💾 Escenarios guardados</strong>
+              <ul
+                style={{
+                  margin: '6px 0 0',
+                  paddingLeft: 16,
+                  fontSize: 11,
+                  color: '#425466',
+                }}
+              >
+                {savedScenarios.map((scenario) => (
+                  <li key={scenario.id}>
+                    {scenario.name}{' '}
+                    <button
+                      type="button"
+                      aria-label={`Borrar ${scenario.name}`}
+                      onClick={() =>
+                        setSavedScenarios(deleteSavedScenario(scenario.id))
+                      }
+                      style={{
+                        border: 0,
+                        background: 'none',
+                        cursor: 'pointer',
+                      }}
+                    >
+                      ✕
+                    </button>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
           <button
             type="button"
             onClick={() => {
@@ -2021,6 +2378,62 @@ export default function Scene() {
           </p>
         </aside>
       )}
+      {inspectedBuilding && (
+        <aside
+          aria-label="Edificio inspeccionado"
+          style={{
+            position: 'absolute',
+            bottom: 16,
+            left: 16,
+            width: 260,
+            padding: 14,
+            borderRadius: 12,
+            background: 'rgba(255,255,255,0.96)',
+            color: '#17252a',
+            fontFamily: 'system-ui, sans-serif',
+            boxShadow: '0 4px 24px #0002',
+            zIndex: 5,
+            fontSize: 13,
+          }}
+        >
+          <strong>🏢 Edificio inspeccionado</strong>
+          <button
+            type="button"
+            aria-label="Cerrar inspector"
+            onClick={() => setInspectedId(null)}
+            style={{
+              float: 'right',
+              border: 0,
+              background: 'none',
+              cursor: 'pointer',
+            }}
+          >
+            ✕
+          </button>
+          <p style={{ margin: '8px 0 0' }}>
+            Uso:{' '}
+            {inspectedBuilding.use === 'commercial'
+              ? 'Comercial'
+              : 'Residencial'}
+            {inspectedBuilding.vulnerable
+              ? ` · ⚠ Vulnerable (${inspectedBuilding.vulnerable === 'school' ? 'escuela' : inspectedBuilding.vulnerable === 'hospital' ? 'hospital' : 'residencia de mayores'})`
+              : ''}
+          </p>
+          <p style={{ margin: '4px 0 0' }}>
+            Altura: {inspectedBuilding.heightInMeters.toFixed(0)} m · Personas
+            en casa:{' '}
+            {city?.citizens?.filter(
+              (c) => c.homeBuildingId === inspectedBuilding.id,
+            ).length ?? 0}
+          </p>
+          <p style={{ margin: '4px 0 0' }}>
+            Estado:{' '}
+            {flood?.exposedBuildingIds.includes(inspectedBuilding.id)
+              ? '🌊 Expuesto al agua'
+              : 'Sin exposición por ahora'}
+          </p>
+        </aside>
+      )}
       {showFinalSummary && impactSummary && (
         <FinalSummary
           title={`${hazardPreset(hazardKind).label} en ${zoneLabel}`}
@@ -2035,8 +2448,36 @@ export default function Scene() {
             totalBuildings: city.buildings.length,
             blockedRoads: impactSummary.blockedRoads,
             maxWaterDepthInMeters: impactSummary.maxWaterDepthInMeters,
+            withoutShelter: Math.max(
+              0,
+              (city.citizens?.length ?? 0) -
+                (comparison?.[arm].evacuated ?? 0) -
+                (comparison?.[arm].trapped ?? 0),
+            ),
+            shelterOccupancy,
+            shelterCapacity,
+            vulnerableExposed,
+            vulnerableTotal: vulnerableBuildings.length,
           }}
-          narrative={impactNarrative}
+          narrative={[...impactNarrative, ...recommendationLines]}
+          onSaveScenario={() => {
+            setSavedScenarios(
+              saveScenario({
+                id: `scenario-${Date.now()}`,
+                name: `${hazardPreset(hazardKind).label} en ${zoneLabel}`,
+                hazard: hazardKind,
+                zoneLabel,
+                durationInMinutes: durationMinutes,
+                rainIntensityMmPerHour:
+                  hazardKind === 'rain' || hazardKind === 'river-overflow'
+                    ? rainIntensity
+                    : null,
+                drains: userDrains,
+                createdAt: new Date().toISOString(),
+                resultLine: impactNarrative[0] ?? '',
+              }),
+            );
+          }}
           onDownloadReport={downloadCurrentReport}
           onRestart={restartSimulation}
           onClose={() => setShowFinalSummary(false)}

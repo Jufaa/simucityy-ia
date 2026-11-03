@@ -43,6 +43,14 @@ export interface DistrictSimulationOptions {
   alarmMode?: 'automatic' | 'manual';
   autoStart?: boolean;
   hazard?: HazardKind;
+  /** Overrides the hazard preset rain intensity (mm/h), both arms alike. */
+  rainIntensityMmPerHour?: number;
+  /** Extra user-placed drains, active only in the improved arm. */
+  extraDrains?: readonly { x: number; y: number }[];
+  /** Tsunami early warning: improved-arm citizens react much sooner. */
+  earlyWarning?: boolean;
+  /** Structural reinforcement of the improved arm (quake/wind measure). */
+  reinforcement?: boolean;
 }
 interface Arm {
   flood: FloodSimulation;
@@ -68,6 +76,10 @@ export class DistrictSimulation {
   private elapsed = 0;
   private speed = 300;
   readonly drains: readonly FloodDrain[];
+  private rainIntensityMmPerHour: number | undefined;
+  private earlyWarning = false;
+  private reinforcement = true;
+  private extraDrains: readonly FloodDrain[];
   readonly hazard: HazardKind;
   readonly evacuationEnabled: boolean;
   private readonly alarmMode: 'automatic' | 'manual';
@@ -83,6 +95,14 @@ export class DistrictSimulation {
     this.evacuationEnabled = options.evacuationEnabled ?? true;
     this.alarmMode = options.alarmMode ?? 'automatic';
     this.hazard = options.hazard ?? 'rain';
+    this.rainIntensityMmPerHour = options.rainIntensityMmPerHour;
+    this.earlyWarning = options.earlyWarning ?? false;
+    this.reinforcement = options.reinforcement ?? true;
+    this.extraDrains = (options.extraDrains ?? []).map((point, index) => ({
+      id: `drain:user-${index}`,
+      position: { x: point.x, y: point.y },
+      capacityInCubicMetersPerSecond: 0.15,
+    }));
     if (!city.terrainGrid || !city.roadGraph?.edges)
       throw new Error('Missing simulation grid or graph.');
     this.input = {
@@ -128,14 +148,19 @@ export class DistrictSimulation {
         obstacles: true,
         permeableAreas: this.city.district?.parks ?? [],
         infiltrationRateMmPerHour: improved ? 60 : 15,
-        drains: improved ? this.drains : [],
+        drains: improved ? [...this.drains, ...this.extraDrains] : [],
       }),
       ...organicFloodEnvironment(this.city),
     };
-    const flood = new FloodSimulation(this.input, environment, this.hazard);
+    const flood = new FloodSimulation(
+      this.input,
+      environment,
+      this.hazard,
+      this.rainIntensityMmPerHour,
+    );
     const structural = assessStructuralDamage(this.input, this.hazard, {
       seed: this.city.config.seed ?? 123,
-      reinforced: improved,
+      reinforced: improved && this.reinforcement,
     });
     const shelters = (this.city.shelters ?? []).flatMap((s) =>
       s.capacity === undefined ? [] : [{ ...s, capacity: s.capacity }],
@@ -156,6 +181,9 @@ export class DistrictSimulation {
       else if (this.hazard === 'strong-wind')
         delay = (delay + 240) * (homeDamage?.damaged ? 0.6 : 1);
       else if (this.hazard === 'tsunami') delay *= 0.5;
+      // Sirens and drills only help the improved arm: people there start
+      // moving well before the wave arrives.
+      if (improved && this.earlyWarning) delay *= 0.35;
       else if (this.hazard === 'river-overflow') delay *= 0.8;
       return { ...citizen, reactionDelayInSeconds: delay };
     });
@@ -177,6 +205,34 @@ export class DistrictSimulation {
       floodDamage: new Map(),
       blockedCache: { collapsedCount: -1, roadIds: [] },
     };
+  }
+
+  /** Applies the hazard-specific measure and rebuilds both arms. */
+  applyMeasure(measure: { earlyWarning: boolean; reinforcement: boolean }) {
+    this.earlyWarning = measure.earlyWarning;
+    this.reinforcement = measure.reinforcement;
+    this.reset();
+  }
+
+  /** Changes rain intensity and rebuilds both arms (setup-time choice). */
+  applyRainIntensity(mmPerHour: number) {
+    this.rainIntensityMmPerHour = mmPerHour;
+    this.reset();
+  }
+
+  /** Replaces user-placed drains and rebuilds both arms (setup-time choice). */
+  applyExtraDrains(points: readonly { x: number; y: number }[]) {
+    this.extraDrains = points.map((point, index) => ({
+      id: `drain:user-${index}`,
+      position: { x: point.x, y: point.y },
+      capacityInCubicMetersPerSecond: 0.15,
+    }));
+    this.reset();
+  }
+
+  /** All drains of the improved arm, including user-placed ones. */
+  get improvedDrains(): readonly FloodDrain[] {
+    return [...this.drains, ...this.extraDrains];
   }
 
   get preset() {

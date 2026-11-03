@@ -30,6 +30,12 @@ export interface FinalSummaryInput {
   totalBuildings: number;
   blockedRoads: number;
   maxWaterDepthInMeters: number;
+  /** People who neither reached a shelter nor are trapped (still exposed). */
+  withoutShelter?: number;
+  shelterOccupancy?: number;
+  shelterCapacity?: number;
+  vulnerableExposed?: number;
+  vulnerableTotal?: number;
 }
 
 /** Loss/impact rows for the end-of-simulation summary, in display order. */
@@ -59,5 +65,24 @@ export function finalSummaryRows(
       label: 'Agua máxima',
       value: `${(input.maxWaterDepthInMeters * 100).toFixed(1)} cm`,
     },
+    ...(input.withoutShelter !== undefined
+      ? [{ label: 'Sin refugio al terminar', value: `${input.withoutShelter}` }]
+      : []),
+    ...(input.shelterCapacity !== undefined
+      ? [
+          {
+            label: 'Refugios (ocupación/capacidad)',
+            value: `${input.shelterOccupancy ?? 0} / ${input.shelterCapacity}`,
+          },
+        ]
+      : []),
+    ...(input.vulnerableTotal !== undefined && input.vulnerableTotal > 0
+      ? [
+          {
+            label: 'Edificios vulnerables expuestos',
+            value: `${input.vulnerableExposed ?? 0} de ${input.vulnerableTotal} (escuela/hospital/residencia)`,
+          },
+        ]
+      : []),
   ];
 }

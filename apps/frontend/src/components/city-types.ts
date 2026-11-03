@@ -54,6 +54,8 @@ export interface Building {
     'religious' | 'cathedral' | 'health' | 'stadium' | 'civic' | 'monument';
   /** Silhouette hint for landmark monuments: human figure vs obelisk. */
   monumentShape?: 'figure' | 'obelisk';
+  /** Occupancy that evacuates slower and alerts first, from source tags. */
+  vulnerable?: 'school' | 'hospital' | 'care-home';
   /** Real 3D parts (OSM building:part) with measured heights, rendering only. */
   parts?: BuildingPart[];
   /** True only for clearly-labelled synthetic infill, never source data. */

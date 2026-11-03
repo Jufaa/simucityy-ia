@@ -100,6 +100,31 @@ export type LandmarkKind =
  * to carry a Wikidata id, e.g. Luján) render twin towers, ordinary
  * churches a single spire, statues a modelled figure, obelisks a shaft.
  */
+/** Schools, hospitals and care homes evacuate slower and alert first. */
+export function vulnerableKindFor(
+  tags: Record<string, string>,
+): Building['vulnerable'] {
+  if (
+    ['school', 'kindergarten', 'university', 'college'].includes(
+      tags.amenity ?? '',
+    ) ||
+    tags.building === 'school'
+  )
+    return 'school';
+  if (
+    ['hospital', 'clinic', 'doctors'].includes(tags.amenity ?? '') ||
+    tags.building === 'hospital'
+  )
+    return 'hospital';
+  if (
+    tags.amenity === 'nursing_home' ||
+    tags.social_facility === 'nursing_home' ||
+    tags['social_facility:for'] === 'elderly'
+  )
+    return 'care-home';
+  return undefined;
+}
+
 export function landmarkKindFor(
   tags: Record<string, string>,
 ): LandmarkKind | undefined {
@@ -840,6 +865,7 @@ export function createRealCity(
       heightInMeters = floors * 3;
     }
     const landmark = landmarkKindFor(tags);
+    const vulnerable = vulnerableKindFor(tags);
     const religious = landmark === 'religious' || landmark === 'cathedral';
     if (landmark === 'stadium' && !heightMeasured) {
       // No surveyed height in OSM for most stadiums: representative bowl
@@ -878,6 +904,7 @@ export function createRealCity(
       },
       use: commercial ? 'commercial' : 'residential',
       ...(landmark ? { landmark } : {}),
+      ...(vulnerable ? { vulnerable } : {}),
       ...(landmark === 'monument'
         ? {
             monumentShape:
@@ -1373,7 +1400,22 @@ export function createRealCity(
     throw new RangeError('Real city seed must be an unsigned 32-bit integer.');
   const citizenCount = Math.max(
     0,
-    Math.min(2000, Math.floor(options.citizenCount ?? 200)),
+    Math.min(
+      2000,
+      Math.floor(
+        options.citizenCount ??
+          // Default population scales with the district: roughly one
+          // person per home, clamped so evacuation stays fluid.
+          Math.min(
+            1200,
+            Math.max(
+              400,
+              buildings.filter((b) => b.use === 'residential').length ||
+                buildings.length,
+            ),
+          ),
+      ),
+    ),
   );
   const random = createCityRandom(seed);
   const residential = buildings.filter((b) => b.use === 'residential');
@@ -1398,8 +1440,14 @@ export function createRealCity(
       homeBuildingId: home.id,
       nodeId: nearest.id,
       position,
-      mobilityFactor: 0.8 + random() * 0.2,
-      reactionDelayInSeconds: random() * 12,
+      // People in schools, hospitals and care homes need more time:
+      // they move slower and react later. Same IDs and homes as before.
+      mobilityFactor:
+        home.vulnerable !== undefined
+          ? 0.5 + random() * 0.15
+          : 0.8 + random() * 0.2,
+      reactionDelayInSeconds:
+        home.vulnerable !== undefined ? 30 + random() * 30 : random() * 12,
     };
   });
 

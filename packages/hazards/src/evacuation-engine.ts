@@ -20,6 +20,8 @@ type Agent = {
   edge: Arc | null;
   progress: number;
   arrival: number | null;
+  lastPlanEpoch: number;
+  lastPlanGeneration: number;
 };
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const finitePoint = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -31,6 +33,10 @@ export class EvacuationEngine {
   private readonly shelters: Shelter[];
   private readonly agents: Agent[];
   private elapsed = 0;
+  /** Bumps when shelter capacity frees; gates stranded replanning. */
+  private capacityGeneration = 0;
+  /** Bumps per advance call; a new call may bring new road closures. */
+  private planEpoch = 0;
 
   constructor(scenario: EvacuationScenario) {
     for (const node of scenario.roadGraph.nodes) {
@@ -112,6 +118,8 @@ export class EvacuationEngine {
           phase: 'home' as const,
           status: 'waiting' as const,
           route: [],
+          lastPlanEpoch: -1,
+          lastPlanGeneration: -1,
           shelter: null,
           edge: null,
           progress: 0,
@@ -167,7 +175,10 @@ export class EvacuationEngine {
   }
 
   private release(agent: Agent) {
-    if (agent.shelter) agent.shelter.reserved--;
+    if (agent.shelter) {
+      agent.shelter.reserved--;
+      this.capacityGeneration++;
+    }
     agent.shelter = null;
     agent.route = [];
   }
@@ -248,12 +259,32 @@ export class EvacuationEngine {
       }
       return top;
     };
+    // Shelters with capacity right now; the nearest one wins, so the
+    // search can stop once every unsettled node is farther than the
+    // best shelter already settled (its route is final by then: any
+    // equal-distance predecessor settles earlier). Same chosen route.
+    const availableShelterNodes = new Set(
+      this.shelters
+        .filter(
+          (shelter) =>
+            shelter.active &&
+            shelter.occupancy + shelter.reserved < shelter.capacity,
+        )
+        .map((shelter) => shelter.nodeId),
+    );
+    let bestShelterDistance = Number.POSITIVE_INFINITY;
     heapPush({ id: agent.nodeId, distance: 0 });
     while (heap.length) {
+      if (heap[0]!.distance > bestShelterDistance) break;
       const { id: selected } = heapPop();
       if (visited.has(selected)) continue;
       const current = paths.get(selected)!;
       visited.add(selected);
+      if (
+        availableShelterNodes.has(selected) &&
+        current.distance < bestShelterDistance
+      )
+        bestShelterDistance = current.distance;
       for (const arc of this.adjacency.get(selected)!) {
         if (blocked.has(arc.id) || visited.has(arc.to)) continue;
         const distance = current.distance + arc.length;
@@ -313,20 +344,28 @@ export class EvacuationEngine {
         'Evacuation time increment must be finite and nonnegative.',
       );
     const blocked = new Set(blockedRoadEdgeIds);
+    this.planEpoch++;
     const end = this.elapsed + seconds;
     let time = this.elapsed;
     // Process common reaction/arrival events, not one citizen's whole interval first.
     // This keeps capacity allocation independent of the caller's time-step size.
+    // The blocked set is fixed for the whole call and routes planned
+    // during the call already avoid it, so a route only needs checking
+    // when its owner reaches a node: initially everyone, afterwards
+    // only agents who just finished crossing an edge.
+    const routeCheck = new Set(this.agents);
     while (true) {
-      for (const agent of this.agents) {
-        if (
-          blocked.size > 0 &&
-          agent.phase !== 'done' &&
-          agent.phase !== 'edge' &&
-          agent.shelter &&
-          agent.route.some((arc) => blocked.has(arc.id))
-        )
-          this.release(agent);
+      if (blocked.size > 0 && routeCheck.size > 0) {
+        for (const agent of routeCheck) {
+          if (agent.phase === 'edge') continue;
+          routeCheck.delete(agent);
+          if (
+            agent.phase !== 'done' &&
+            agent.shelter &&
+            agent.route.some((arc) => blocked.has(arc.id))
+          )
+            this.release(agent);
+        }
       }
       for (const agent of this.agents) {
         if (
@@ -343,9 +382,24 @@ export class EvacuationEngine {
           agent.status = 'evacuating';
           continue;
         }
-        if (!agent.shelter && !this.plan(agent, blocked)) {
-          agent.status = 'stranded';
-          continue;
+        if (!agent.shelter) {
+          // A failed plan can only succeed later if capacity freed or a
+          // new advance call brought different closures; retrying it on
+          // every micro-event made stranded citizens replan forever.
+          const stale =
+            agent.lastPlanEpoch !== this.planEpoch ||
+            agent.lastPlanGeneration !== this.capacityGeneration;
+          if (stale) {
+            agent.lastPlanEpoch = this.planEpoch;
+            agent.lastPlanGeneration = this.capacityGeneration;
+            if (!this.plan(agent, blocked)) {
+              agent.status = 'stranded';
+              continue;
+            }
+          } else {
+            agent.status = 'stranded';
+            continue;
+          }
         }
         agent.status = 'evacuating';
         if (agent.phase === 'home') agent.phase = 'connector';
@@ -424,7 +478,10 @@ export class EvacuationEngine {
         };
         if (length - agent.progress > 1e-9) continue;
         agent.position = { ...to };
-        if (agent.phase === 'edge') agent.nodeId = agent.edge!.to;
+        if (agent.phase === 'edge') {
+          agent.nodeId = agent.edge!.to;
+          routeCheck.add(agent);
+        }
         agent.edge = null;
         agent.progress = 0;
         agent.phase = 'node';

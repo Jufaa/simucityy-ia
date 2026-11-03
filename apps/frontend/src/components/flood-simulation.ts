@@ -20,6 +20,7 @@ export class FloodSimulation {
     private readonly city: CityScenarioInput,
     private readonly environment: FloodEnvironment = {},
     hazard: HazardKind = 'rain',
+    private readonly rainIntensityOverrideMmPerHour?: number,
   ) {
     this.hazard = hazard;
     this.engine = this.createEngine();
@@ -62,7 +63,8 @@ export class FloodSimulation {
       this.city,
       {
         syntheticRelief: 'none',
-        rainIntensityMmPerHour: preset.rainIntensityMmPerHour,
+        rainIntensityMmPerHour:
+          this.rainIntensityOverrideMmPerHour ?? preset.rainIntensityMmPerHour,
         drainRateMmPerHour: preset.drainRateMmPerHour,
         flowTransferRatio: preset.flowTransferRatio,
       },

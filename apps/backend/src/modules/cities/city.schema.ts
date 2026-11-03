@@ -69,7 +69,7 @@ export const cityScenarioConfigSchema = z
     minBuildingHeightInMeters: z.number().finite().positive(),
     maxBuildingHeightInMeters: z.number().finite().positive(),
     terrainCellSizeInMeters: z.number().finite().positive(),
-    populationCount: z.number().int().min(0).max(300),
+    populationCount: z.number().int().min(0).max(1200),
   })
   // agrega una regla entre campos path indica cual debe aparecer señalado cuando falla la validacion
   .refine(

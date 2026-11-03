@@ -14,8 +14,8 @@ export function generateResidents(
   count: number,
   seed: number,
 ): Citizen[] {
-  if (!Number.isInteger(count) || count < 0 || count > 300)
-    throw new RangeError('Population must be an integer between 0 and 300.');
+  if (!Number.isInteger(count) || count < 0 || count > 1200)
+    throw new RangeError('Population must be an integer between 0 and 1200.');
   if (count > 0 && buildings.length === 0)
     throw new RangeError('Population requires at least one building.');
   const random = createRandom((seed ^ 0x706f7075) >>> 0);
