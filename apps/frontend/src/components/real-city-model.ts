@@ -703,6 +703,33 @@ export function createRealCity(
     estimatedBuildingHeights,
   };
 
+  // Deterministic park trees: placement lives in the converted data (a
+  // separate random stream, so citizen assignment is unchanged), and the
+  // existing urban detail layer renders them as instanced trunks/crowns.
+  const parkRandom = createCityRandom((seed ^ 0x51ab3c9d) >>> 0);
+  const parkAmenities: NonNullable<
+    NonNullable<CityResponse['district']>['urban']
+  >['amenities'] = [];
+  for (const park of parks) {
+    const width = park.maxCorner.x - park.minCorner.x;
+    const depth = park.maxCorner.y - park.minCorner.y;
+    if (width < 12 || depth < 12) continue;
+    const count = Math.max(2, Math.min(24, Math.floor((width * depth) / 900)));
+    for (let i = 0; i < count; i++) {
+      parkAmenities.push({
+        id: `real-park-tree-${parkAmenities.length}`,
+        parkId: park.id,
+        kind: 'tree',
+        position: {
+          x: park.minCorner.x + 3 + parkRandom() * (width - 6),
+          y: park.minCorner.y + 3 + parkRandom() * (depth - 6),
+        },
+        rotation: parkRandom() * Math.PI,
+        radiusInMeters: 2.2 + parkRandom() * 1.2,
+      });
+    }
+  }
+
   const city: CityResponse = {
     config: {
       widthInMeters: Math.round(extentX * 10) / 10,
@@ -726,7 +753,12 @@ export function createRealCity(
       sidewalkWidthInMeters: 2,
       parks,
       sidewalks: [],
-      urban: { yards: [], parkPaths: [], amenities: [], streetDetails: [] },
+      urban: {
+        yards: [],
+        parkPaths: [],
+        amenities: parkAmenities,
+        streetDetails: [],
+      },
     },
     terrainGrid: {
       xCoordinates: [...xs],

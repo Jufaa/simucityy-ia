@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Building, CityResponse, Point } from './city-types';
 import { createUrbanTextures } from './urban-materials';
+import { buildingTint, roofColorForBuilding } from './building-palette';
 import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
 import { createChunkedInstances } from './instanced-chunks';
 import { collapsePose } from './collapse-animation';
@@ -259,10 +260,16 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       return [name, material];
     }),
   ) as Record<FacadeName, THREE.MeshStandardMaterial>;
-  const roof = new THREE.MeshStandardMaterial({
-    color: 0x8c4c39,
-    roughness: 0.95,
-  });
+  const roofMaterials = new Map<number, THREE.MeshStandardMaterial>();
+  const roofMaterialFor = (buildingId: string) => {
+    const color = roofColorForBuilding(buildingId);
+    let material = roofMaterials.get(color);
+    if (!material) {
+      material = new THREE.MeshStandardMaterial({ color, roughness: 0.95 });
+      roofMaterials.set(color, material);
+    }
+    return material;
+  };
   const flatRoof = new THREE.MeshStandardMaterial({
     color: 0x737974,
     roughness: 1,
@@ -289,21 +296,32 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
   );
   const bodies: Record<
     FacadeName,
-    { placements: BoxPlacement[]; ids: string[]; uvScales: number[] }
+    {
+      placements: BoxPlacement[];
+      ids: string[];
+      uvScales: number[];
+      colors: [number, number, number][];
+    }
   > = {
-    sand: { placements: [], ids: [], uvScales: [] },
-    brick: { placements: [], ids: [], uvScales: [] },
-    stone: { placements: [], ids: [], uvScales: [] },
+    sand: { placements: [], ids: [], uvScales: [], colors: [] },
+    brick: { placements: [], ids: [], uvScales: [], colors: [] },
+    stone: { placements: [], ids: [], uvScales: [], colors: [] },
   };
-  const caps: BoxPlacement[] = [],
-    roofs: BoxPlacement[] = [],
+  const capsByRoof = new Map<
+      number,
+      { placements: BoxPlacement[]; ids: string[] }
+    >(),
+    roofsByRoof = new Map<
+      number,
+      { placements: BoxPlacement[]; ids: string[] }
+    >(),
     foundations: BoxPlacement[] = [],
     foundationIds: string[] = [],
     doors: PlanePlacement[] = [],
     storefronts: PlanePlacement[] = [],
     signs: PlanePlacement[][] = signMaterials.map(() => []);
-  const capsIds: string[] = [],
-    roofsIds: string[] = [],
+  const litWindows: PlanePlacement[] = [],
+    litWindowIds: string[] = [],
     doorsIds: string[] = [],
     storefrontIds: string[] = [],
     signIds: string[][] = signMaterials.map(() => []);
@@ -312,12 +330,15 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     rails: BoxPlacement[] = [],
     railIds: string[] = [];
   const exactFootprints = selectExactFootprints(city.buildings);
-  // Plain-colour materials for exact footprints (no per-instance UV shader).
-  const footprintFacadeMaterials = {
-    sand: new THREE.MeshStandardMaterial({ color: 0xdbc9a5, roughness: 0.88 }),
-    brick: new THREE.MeshStandardMaterial({ color: 0xbd876c, roughness: 0.88 }),
-    stone: new THREE.MeshStandardMaterial({ color: 0xbdc8cc, roughness: 0.88 }),
-  } as Record<FacadeName, THREE.MeshStandardMaterial>;
+  // Exact footprints share the instanced facades' canvas textures. The
+  // extrude UV generator emits metre-scale coordinates, so wall UVs are
+  // divided by the 3 m facade module below to match window density.
+  const FACADE_MODULE_IN_METERS = 3;
+  const footprintBaseColors = {
+    sand: 0xdbc9a5,
+    brick: 0xbd876c,
+    stone: 0xbdc8cc,
+  } as Record<FacadeName, number>;
   const createFootprintGroup = (
     building: Building,
     root: THREE.Group,
@@ -352,14 +373,38 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     extruded.rotateX(-Math.PI / 2);
     const { caps, walls } = splitExtrudeByNormal(extruded);
     extruded.dispose();
+    const wallUv = walls.getAttribute('uv');
+    if (wallUv) {
+      for (let i = 0; i < wallUv.count; i++)
+        wallUv.setXY(
+          i,
+          wallUv.getX(i) / FACADE_MODULE_IN_METERS,
+          wallUv.getY(i) / FACADE_MODULE_IN_METERS,
+        );
+      wallUv.needsUpdate = true;
+    }
     const group = new THREE.Group();
     group.name = `footprint:${building.id}`;
     group.position.copy(root.position);
-    const wallsMesh = new THREE.Mesh(
-      walls,
-      footprintFacadeMaterials[building.architecture?.facade ?? 'sand'],
-    );
-    const capsMesh = new THREE.Mesh(caps, flatRoof);
+    const tint = buildingTint(building.id);
+    const facadeName = building.architecture?.facade ?? 'sand';
+    const facadeTexture = textures.facades[facadeName];
+    const wallMaterial = new THREE.MeshStandardMaterial({
+      roughness: 0.88,
+      ...(facadeTexture
+        ? { map: facadeTexture }
+        : { color: footprintBaseColors[facadeName] }),
+    });
+    // With a map, colour is the near-white tint; without one (headless
+    // tests have no canvas), tint the plain base colour instead.
+    if (facadeTexture) wallMaterial.color.setRGB(tint[0], tint[1], tint[2]);
+    else {
+      wallMaterial.color.r *= tint[0];
+      wallMaterial.color.g *= tint[1];
+      wallMaterial.color.b *= tint[2];
+    }
+    const wallsMesh = new THREE.Mesh(walls, wallMaterial);
+    const capsMesh = new THREE.Mesh(caps, roofMaterialFor(building.id));
     wallsMesh.castShadow = wallsMesh.receiveShadow = true;
     capsMesh.castShadow = capsMesh.receiveShadow = true;
     group.add(wallsMesh, capsMesh);
@@ -405,19 +450,30 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     if (!complex) {
       bucket.placements.push(body);
       bucket.ids.push(building.id);
+      bucket.colors.push(buildingTint(building.id));
       bucket.uvScales.push(
         ...(a ? [(d - balcony) / 3, w / 3, a.floors] : [1, 1, 1]),
       );
-      caps.push(body);
-      capsIds.push(building.id);
+      const capBucket = capsByRoof.get(roofColorForBuilding(building.id)) ?? {
+        placements: [],
+        ids: [],
+      };
+      capBucket.placements.push(body);
+      capBucket.ids.push(building.id);
+      capsByRoof.set(roofColorForBuilding(building.id), capBucket);
     }
     if (!complex && a?.roof === 'gable') {
-      roofs.push({
+      const roofBucket = roofsByRoof.get(roofColorForBuilding(building.id)) ?? {
+        placements: [],
+        ids: [],
+      };
+      roofBucket.placements.push({
         position: worldAt(0, h, 0),
         scale: new THREE.Vector3(w, rise, d),
         yaw,
       });
-      roofsIds.push(building.id);
+      roofBucket.ids.push(building.id);
+      roofsByRoof.set(roofColorForBuilding(building.id), roofBucket);
     }
     if (!complex && a) {
       const sideWidth =
@@ -452,6 +508,17 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         doorHeight,
         doorHeight / 2,
       );
+      // Presentation-only lit window on some taller buildings; the choice
+      // is a pure function of the stable id via its tint channels.
+      if (a.floors >= 3 && buildingTint(building.id)[0] > 0.95 && h > 4) {
+        front(
+          litWindows,
+          litWindowIds,
+          Math.min(1.1, sideWidth * 0.25),
+          1.1,
+          Math.min(h - 0.8, doorHeight + 1.8),
+        );
+      }
       if (a.style === 'shop') {
         const height = Math.min(3, h * 0.6);
         front(
@@ -558,33 +625,40 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         receiveShadow: true,
         uvScales: bucket.uvScales,
         ids: bucket.ids,
+        colors: bucket.colors,
       }),
     );
   }
-  if (caps.length)
-    group.add(
+  const capsGroup = new THREE.Group();
+  capsGroup.name = 'building-caps';
+  for (const [color, bucket] of capsByRoof)
+    capsGroup.add(
       createChunkedInstances({
-        name: 'building-caps',
+        name: `building-caps-${color.toString(16)}`,
         geometry: boxFaces([2, 3]),
-        material: flatRoof,
-        placements: caps,
+        material: roofMaterialFor(bucket.ids[0]!),
+        placements: bucket.placements,
         castShadow: true,
         receiveShadow: true,
-        ids: capsIds,
+        ids: bucket.ids,
       }),
     );
-  if (roofs.length)
-    group.add(
+  if (capsGroup.children.length) group.add(capsGroup);
+  const roofsGroup = new THREE.Group();
+  roofsGroup.name = 'building-roofs';
+  for (const [color, bucket] of roofsByRoof)
+    roofsGroup.add(
       createChunkedInstances({
-        name: 'building-roofs',
+        name: `building-roofs-${color.toString(16)}`,
         geometry: gableGeometry(),
-        material: roof,
-        placements: roofs,
+        material: roofMaterialFor(bucket.ids[0]!),
+        placements: bucket.placements,
         castShadow: true,
         receiveShadow: true,
-        ids: roofsIds,
+        ids: bucket.ids,
       }),
     );
+  if (roofsGroup.children.length) group.add(roofsGroup);
   const planes = (
     name: string,
     placements: PlanePlacement[],
@@ -603,6 +677,17 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     );
   };
   planes('building-doors', doors, door, doorsIds);
+  planes(
+    'building-lit-windows',
+    litWindows,
+    new THREE.MeshStandardMaterial({
+      color: 0x59431f,
+      emissive: 0xffc978,
+      emissiveIntensity: 1.1,
+      roughness: 0.4,
+    }),
+    litWindowIds,
+  );
   planes('building-storefronts', storefronts, glass, storefrontIds);
   signs.forEach((placements, index) =>
     planes(

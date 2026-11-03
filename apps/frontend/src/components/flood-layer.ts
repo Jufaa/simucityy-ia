@@ -28,6 +28,9 @@ export function createFloodLayer(
       normalMap: normals,
       normalScale: new THREE.Vector2(0.12, 0.12),
       depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
     }),
     cells.length,
   );

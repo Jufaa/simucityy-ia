@@ -123,7 +123,8 @@ export function createCivicLandmarkLayer(
     mesh.name = name;
     mesh.position.set(x, y, z);
     mesh.scale.set(w, h, d);
-    mesh.castShadow = mesh.receiveShadow = true;
+    mesh.castShadow = false;
+    mesh.receiveShadow = true;
     root.add(mesh);
     return mesh;
   };
@@ -159,7 +160,22 @@ export function createCivicLandmarkLayer(
   const candidates = city.buildings
     .filter((building) => suitable(city, building))
     .sort((a, b) => a.id.localeCompare(b.id));
+  // Decorative rooftop props are individual meshes; on a real district
+  // with ~1,500 buildings they dominated draw calls. Role landmarks always
+  // render; decorative props are deterministically subsampled to a budget.
+  const MAX_DECORATIVE_ROOFTOPS = 120;
+  const decorativeTotal = candidates.filter(
+    (building) => !assignments.has(building.id),
+  ).length;
+  const decorativeStride = Math.max(
+    1,
+    Math.ceil(decorativeTotal / MAX_DECORATIVE_ROOFTOPS),
+  );
+  let decorativeIndex = 0;
   for (const [index, building] of candidates.entries()) {
+    if (!assignments.has(building.id)) {
+      if (decorativeIndex++ % decorativeStride !== 0) continue;
+    }
     const root = new THREE.Group();
     root.name = `rooftop:${building.id}`;
     root.userData.buildingId = building.id;
