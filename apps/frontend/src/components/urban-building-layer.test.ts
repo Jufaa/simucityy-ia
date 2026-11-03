@@ -208,6 +208,48 @@ it('collapses instanced buildings and footprint groups, restoring exact transfor
   expect(group.rotation.z).toBeCloseTo(0);
 });
 
+it('adds a representative spire to religious buildings in both render paths', () => {
+  const boxChurch = {
+    id: 'box-church',
+    minCorner: { x: 20, y: 20 },
+    maxCorner: { x: 38, y: 34 },
+    heightInMeters: 21,
+    landmark: 'religious' as const,
+    architecture,
+  };
+  const layer = createBuildingLayer(flatCity([boxChurch]));
+  const spireIds: string[] = [];
+  layer.getObjectByName('building-spires')!.traverse((object) => {
+    if (object instanceof THREE.InstancedMesh)
+      spireIds.push(...(object.userData.buildingIds as string[]));
+  });
+  expect(spireIds).toEqual(['box-church']);
+
+  const footprintChurch = {
+    id: 'footprint-church',
+    minCorner: { x: 20, y: 20 },
+    maxCorner: { x: 50, y: 50 },
+    heightInMeters: 29,
+    landmark: 'religious' as const,
+    presentation: { widthInMeters: 30, depthInMeters: 30, yawInRadians: 0 },
+    footprint: [
+      { x: 20, y: 20 },
+      { x: 50, y: 20 },
+      { x: 50, y: 35 },
+      { x: 35, y: 35 },
+      { x: 35, y: 50 },
+      { x: 20, y: 50 },
+    ],
+    architecture,
+  };
+  const footprintLayer = createBuildingLayer(flatCity([footprintChurch]));
+  const group = footprintLayer.getObjectByName('footprint:footprint-church')!;
+  // Walls, caps and the spire.
+  expect(group.children).toHaveLength(3);
+  const bounds = new THREE.Box3().setFromObject(group);
+  expect(bounds.max.y).toBeGreaterThan(25 + 29 + 6);
+});
+
 it('chunks instances spatially instead of creating meshes per building', () => {
   const makeCity = (count: number): CityResponse => ({
     config: {

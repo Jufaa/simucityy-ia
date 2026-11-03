@@ -1231,9 +1231,12 @@ export default function Scene() {
                 : `DEM de ${city.real.demCellSizeInMeters} m`}
               . Alturas de la fuente: {city.real.measuredBuildingHeights}{' '}
               medidas y {city.real.estimatedBuildingHeights} estimadas (marcadas
-              como inferidas, no oficiales). Población y refugios sintéticos
-              sobre la red real. {city.real.attribution}. Simulación
-              experimental, no pronóstico de inundación real.
+              como inferidas, no oficiales).
+              {city.real.syntheticBuildings > 0 &&
+                ` Más ${city.real.syntheticBuildings} casas sintéticas de relleno (no reales).`}{' '}
+              Población y refugios sintéticos sobre la red real.{' '}
+              {city.real.attribution}. Simulación experimental, no pronóstico de
+              inundación real.
             </p>
           )}
           <p style={{ margin: '8px 0' }}>

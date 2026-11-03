@@ -1,6 +1,13 @@
-import { useRef, useState, type CSSProperties } from 'react';
+import { useEffect, useRef, useState, type CSSProperties } from 'react';
 import type { CityResponse } from './city-types';
 import { createRealCity } from './real-city-model';
+import {
+  deleteSavedZone,
+  getSavedZone,
+  listSavedZones,
+  saveSavedZone,
+  type SavedZoneSummary,
+} from './saved-zones';
 import {
   elementsFromGeoJson,
   fetchOsmSource,
@@ -61,8 +68,11 @@ const PRESETS: { label: string; center: LatLon }[] = [
  */
 export function RealCityImporter(props: {
   onImported(city: CityResponse): void;
+  initialTab?: 'search' | 'plan';
 }) {
-  const [tab, setTab] = useState<'search' | 'plan'>('search');
+  const [tab, setTab] = useState<'search' | 'plan'>(
+    props.initialTab ?? 'search',
+  );
   const [query, setQuery] = useState('');
   const [results, setResults] = useState<PlaceResult[]>([]);
   const [searchError, setSearchError] = useState<string | null>(null);
@@ -76,10 +86,60 @@ export function RealCityImporter(props: {
   const [plan, setPlan] = useState<ParsedPlan | null>(null);
   const [planName, setPlanName] = useState('');
   const [useRealDem, setUseRealDem] = useState(true);
+  const [infill, setInfill] = useState(false);
   const [stage, setStage] = useState<string | null>(null);
   const [importError, setImportError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [savedZones, setSavedZones] = useState<SavedZoneSummary[]>([]);
+  const [planFileName, setPlanFileName] = useState<string | null>(null);
   const requestRef = useRef(0);
+
+  const refreshSavedZones = async () => {
+    try {
+      setSavedZones(await listSavedZones());
+    } catch {
+      // Local storage is a convenience; failing to read it must not block imports.
+    }
+  };
+  useEffect(() => {
+    void refreshSavedZones();
+  }, []);
+
+  const loadSavedZone = async (summary: SavedZoneSummary) => {
+    if (busy) return;
+    setBusy(true);
+    setImportError(null);
+    try {
+      const saved = await getSavedZone(summary.id);
+      if (!saved) throw new Error('La zona guardada ya no está disponible.');
+      setStage(`Cargando «${saved.name}» guardada…`);
+      const { city } = createRealCity(saved.source, {
+        infillSyntheticHouses: saved.infillSyntheticHouses,
+      });
+      props.onImported(city);
+      setStage(
+        `Zona guardada lista: ${city.buildings.length} edificios, ${city.roads.length} tramos. La simulación ya corre sobre esta zona.`,
+      );
+    } catch (error) {
+      setImportError(
+        error instanceof Error
+          ? error.message
+          : 'No se pudo cargar la zona guardada.',
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const removeSavedZone = async (id: string) => {
+    try {
+      await deleteSavedZone(id);
+      await refreshSavedZones();
+    } catch {
+      // Deleting is best-effort; the list refresh below reflects reality.
+      void refreshSavedZones();
+    }
+  };
 
   const goTo = (center: LatLon, name: string) => {
     setViewCenter(center);
@@ -106,6 +166,7 @@ export function RealCityImporter(props: {
 
   const onPlanFile = async (file: File | undefined) => {
     if (!file) return;
+    setPlanFileName(file.name);
     setImportError(null);
     try {
       if (file.size > 10 * 1024 * 1024)
@@ -149,14 +210,34 @@ export function RealCityImporter(props: {
           : await fetchOsmSource(bbox, placeName || 'Zona elegida', setStage);
       if (request !== requestRef.current) return;
       setStage('Convirtiendo a ciudad simulable…');
-      const { city } = createRealCity(source);
+      const { city } = createRealCity(source, {
+        infillSyntheticHouses: infill,
+      });
       if (request !== requestRef.current) return;
       props.onImported(city);
+      // Keep the zone in this browser for one-click access next time.
+      void saveSavedZone({
+        name:
+          tab === 'plan'
+            ? planName || 'Plano subido'
+            : placeName || 'Zona elegida',
+        kind: tab === 'plan' ? 'plan' : 'osm',
+        buildingCount: city.buildings.length,
+        roadCount: city.roads.length,
+        infillSyntheticHouses: infill,
+        source,
+      })
+        .then(refreshSavedZones)
+        .catch(() => {});
       setStage(
         `Zona lista: ${city.buildings.length} edificios, ${city.roads.length} tramos, ${city.citizens?.length ?? 0} personas sintéticas. La simulación ya corre sobre esta zona.` +
+          (city.real && city.real.syntheticBuildings > 0
+            ? ` Incluye ${city.real.syntheticBuildings} casas sintéticas de relleno (no son datos reales).`
+            : '') +
           (city.buildings.length < 150
-            ? ' Ojo: la fuente trae pocos edificios cargados para esta zona (la cobertura de OpenStreetMap varía mucho por ciudad); se representa lo que existe en los datos.'
-            : ''),
+            ? ' Ojo: la fuente trae pocos edificios cargados para esta zona (la cobertura de OpenStreetMap varía mucho por ciudad); se representa lo que existe en los datos. Podés agrandar el cuadrado o activar el relleno sintético.'
+            : '') +
+          ' Quedó guardada en este navegador para acceso rápido.',
       );
     } catch (error) {
       if (request !== requestRef.current) return;
@@ -176,6 +257,66 @@ export function RealCityImporter(props: {
         sobre el mapa para elegir la zona (250–1500 m por lado) y cargala en la
         simulación. Datos gratuitos: © OpenStreetMap (ODbL) y DEM Terrarium.
       </p>
+      <div style={{ marginBottom: 10 }}>
+        <strong style={{ fontSize: 12 }}>Zonas guardadas</strong>
+        {savedZones.length === 0 ? (
+          <p style={{ fontSize: 12, margin: '2px 0', color: '#425466' }}>
+            Todavía no guardaste ninguna. Al importar una zona queda acá, en
+            este navegador, para cargarla en un clic sin volver a subir ni
+            descargar nada.
+          </p>
+        ) : (
+          <div style={{ display: 'grid', gap: 4, marginTop: 4 }}>
+            {savedZones.map((zone) => (
+              <div
+                key={zone.id}
+                style={{
+                  display: 'flex',
+                  alignItems: 'center',
+                  gap: 6,
+                  border: '1px solid #d3dfdf',
+                  borderRadius: 9,
+                  padding: '5px 8px',
+                  background: '#fff',
+                }}
+              >
+                <span style={{ flex: 1, fontSize: 12 }}>
+                  <strong>{zone.name}</strong>{' '}
+                  <span style={{ color: '#60787a' }}>
+                    {zone.kind === 'plan' ? 'Plano' : 'OSM'} ·{' '}
+                    {zone.buildingCount} edificios ·{' '}
+                    {new Date(zone.savedAt).toLocaleDateString('es')}
+                  </span>
+                </span>
+                <button
+                  type="button"
+                  style={{
+                    ...secondaryButtonStyle,
+                    padding: '5px 9px',
+                    fontSize: 12,
+                  }}
+                  disabled={busy}
+                  onClick={() => void loadSavedZone(zone)}
+                >
+                  Cargar
+                </button>
+                <button
+                  type="button"
+                  aria-label={`Borrar ${zone.name}`}
+                  style={{
+                    ...secondaryButtonStyle,
+                    padding: '5px 8px',
+                    fontSize: 12,
+                  }}
+                  onClick={() => void removeSavedZone(zone.id)}
+                >
+                  ✕
+                </button>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
       <div
         role="group"
         aria-label="Fuente de la zona"
@@ -271,14 +412,34 @@ export function RealCityImporter(props: {
         </div>
       ) : (
         <div>
-          <label style={{ fontSize: 12, display: 'block' }}>
-            Plano GeoJSON (WGS84){' '}
-            <input
-              type="file"
-              accept=".geojson,.json,application/geo+json,application/json"
-              onChange={(event) => void onPlanFile(event.target.files?.[0])}
-            />
-          </label>
+          <div>
+            <label
+              style={{
+                ...primaryButtonStyle,
+                display: 'block',
+                width: 'auto',
+                textAlign: 'center',
+                padding: '10px 14px',
+                fontSize: 13,
+              }}
+            >
+              Elegir plano GeoJSON…
+              <input
+                type="file"
+                hidden
+                accept=".geojson,.json,application/geo+json,application/json"
+                onClick={(event) => {
+                  event.currentTarget.value = '';
+                }}
+                onChange={(event) => void onPlanFile(event.target.files?.[0])}
+              />
+            </label>
+            <p style={{ fontSize: 12, margin: '4px 0', color: '#425466' }}>
+              {planFileName
+                ? `Archivo: ${planFileName}`
+                : 'Ningún archivo elegido todavía (GeoJSON en WGS84, hasta 10 MB).'}
+            </p>
+          </div>
           {plan && (
             <p style={{ fontSize: 12 }}>
               {planName}: {plan.elements.length} elementos listos. El plano se
@@ -335,6 +496,15 @@ export function RealCityImporter(props: {
           }
           style={{ width: '100%' }}
         />
+      </label>
+      <label style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
+        <input
+          type="checkbox"
+          checked={infill}
+          onChange={(event) => setInfill(event.target.checked)}
+        />{' '}
+        Completar huecos con casas sintéticas donde la fuente no tiene edificios
+        (relleno visual estimado, no datos reales)
       </label>
       <button
         type="button"

@@ -47,6 +47,10 @@ export interface Building {
     yawInRadians: number;
   };
   use?: 'residential' | 'commercial';
+  /** Landmark hint from source tags (e.g. places of worship get a spire). */
+  landmark?: 'religious';
+  /** True only for clearly-labelled synthetic infill, never source data. */
+  synthetic?: boolean;
   /** Exact local footprint (x/y metres) when known, e.g. imported real buildings. Rendering metadata; hazard bounds stay min/max. */
   footprint?: Point[];
   /** Courtyard holes inside the footprint, same coordinate space. */
@@ -121,6 +125,8 @@ export interface RealCityMetadata {
   demCellSizeInMeters: number;
   measuredBuildingHeights: number;
   estimatedBuildingHeights: number;
+  /** Houses invented by the opt-in infill (never presented as real data). */
+  syntheticBuildings: number;
 }
 
 export interface CityResponse {

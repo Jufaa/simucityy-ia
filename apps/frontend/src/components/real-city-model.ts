@@ -1,4 +1,5 @@
 import { createCityRandom } from './random-city-profile';
+import { getRoadProfile } from './road-profile';
 import type {
   Block,
   Building,
@@ -60,7 +61,24 @@ export interface RealCitySource {
 export interface RealCityOptions {
   seed?: number;
   citizenCount?: number;
+  /**
+   * Opt-in visual filler: deterministic synthetic houses along streets where
+   * the source has no buildings. Counted separately in metadata and flagged
+   * per building; never presented as real data.
+   */
+  infillSyntheticHouses?: boolean;
 }
+
+const RELIGIOUS_BUILDINGS = new Set([
+  'church',
+  'cathedral',
+  'chapel',
+  'basilica',
+  'temple',
+  'mosque',
+  'synagogue',
+  'monastery',
+]);
 
 const EARTH_METERS_PER_DEGREE_LAT = (phi: number) =>
   111132.92 - 559.82 * Math.cos(2 * phi) + 1.175 * Math.cos(4 * phi);
@@ -136,6 +154,20 @@ const COMMERCIAL_BUILDINGS = new Set([
   'kiosk',
   'hotel',
 ]);
+
+function distanceToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  const length = dx * dx + dy * dy;
+  const t =
+    length === 0
+      ? 0
+      : Math.max(
+          0,
+          Math.min(1, ((p.x - a.x) * dx + (p.y - a.y) * dy) / length),
+        );
+  return Math.hypot(p.x - a.x - t * dx, p.y - a.y - t * dy);
+}
 
 function hashId(value: number): number {
   let state = 2166136261;
@@ -572,6 +604,7 @@ export function createRealCity(
     )
       continue;
     let heightInMeters: number;
+    let heightMeasured = false;
     const taggedHeight = Number.parseFloat(tags.height ?? '');
     const taggedLevels = Number.parseFloat(tags['building:levels'] ?? '');
     if (
@@ -580,14 +613,14 @@ export function createRealCity(
       taggedHeight <= 200
     ) {
       heightInMeters = taggedHeight;
-      measuredBuildingHeights++;
+      heightMeasured = true;
     } else if (
       Number.isFinite(taggedLevels) &&
       taggedLevels >= 1 &&
       taggedLevels <= 60
     ) {
       heightInMeters = taggedLevels * 3;
-      measuredBuildingHeights++;
+      heightMeasured = true;
     } else {
       // Deterministic estimate by OSM id; metadata counts these as inferred.
       const floors =
@@ -595,8 +628,21 @@ export function createRealCity(
           ? 2
           : 2 + (hashId(shape.osmId) % 5);
       heightInMeters = floors * 3;
-      estimatedBuildingHeights++;
     }
+    const religious =
+      RELIGIOUS_BUILDINGS.has(tags.building ?? '') ||
+      tags.amenity === 'place_of_worship';
+    if (religious && heightInMeters < 18) {
+      // A nave is not two storeys: OSM often tags churches with the base
+      // building's levels (the Sagrada Familia reads 6 m). Give landmarks a
+      // representative, explicitly-estimated height scaled by footprint.
+      heightInMeters = Math.round(
+        18 + Math.min(22, Math.abs(polygonArea(polygon)) / 350),
+      );
+      heightMeasured = false;
+    }
+    if (heightMeasured) measuredBuildingHeights++;
+    else estimatedBuildingHeights++;
     const floors = Math.max(1, Math.round(heightInMeters / 3));
     const commercial = COMMERCIAL_BUILDINGS.has(tags.building ?? '');
     buildings.push({
@@ -610,6 +656,7 @@ export function createRealCity(
         yawInRadians: -rect.angleInRadians,
       },
       use: commercial ? 'commercial' : 'residential',
+      ...(religious ? { landmark: 'religious' as const } : {}),
       footprint: polygon.map((point) => ({ ...point })),
       ...(shape.holes.length
         ? {
@@ -621,13 +668,221 @@ export function createRealCity(
       architecture: {
         style: commercial ? 'shop' : floors >= 4 ? 'apartment' : 'house',
         floors,
-        roof: commercial || floors >= 4 ? 'flat' : 'gable',
-        roofRiseInMeters: commercial || floors >= 4 ? 0 : 2,
+        roof: commercial || (floors >= 4 && !religious) ? 'flat' : 'gable',
+        roofRiseInMeters:
+          commercial || (floors >= 4 && !religious) ? 0 : religious ? 3 : 2,
         facade: commercial ? 'brick' : floors >= 4 ? 'stone' : 'sand',
         entranceSide: 'south',
         balconyDepthInMeters: floors >= 4 ? 0.6 : 0,
       },
     });
+  }
+  // Opt-in synthetic infill: deterministic houses along motor streets where
+  // the source has no buildings. Clearly flagged per building and counted in
+  // metadata; off by default and never mixed into measured data.
+  let syntheticBuildings = 0;
+  if (options.infillSyntheticHouses) {
+    const infillRandom = createCityRandom(
+      ((options.seed ?? 42) ^ 0x51ab27) >>> 0,
+    );
+    const cellSize = 25;
+    const register = (
+      map: Map<string, number[]>,
+      index: number,
+      minX: number,
+      minY: number,
+      maxX: number,
+      maxY: number,
+    ) => {
+      for (
+        let cx = Math.floor(minX / cellSize);
+        cx <= Math.floor(maxX / cellSize);
+        cx++
+      )
+        for (
+          let cy = Math.floor(minY / cellSize);
+          cy <= Math.floor(maxY / cellSize);
+          cy++
+        ) {
+          const key = `${cx},${cy}`;
+          const list = map.get(key) ?? [];
+          list.push(index);
+          map.set(key, list);
+        }
+    };
+    const segmentCells = new Map<string, number[]>();
+    roads.forEach((road, index) =>
+      register(
+        segmentCells,
+        index,
+        Math.min(road.start.x, road.end.x) - 14,
+        Math.min(road.start.y, road.end.y) - 14,
+        Math.max(road.start.x, road.end.x) + 14,
+        Math.max(road.start.y, road.end.y) + 14,
+      ),
+    );
+    const occupied: { minCorner: Point; maxCorner: Point }[] = buildings.map(
+      (building) => ({
+        minCorner: building.minCorner,
+        maxCorner: building.maxCorner,
+      }),
+    );
+    const occupiedCells = new Map<string, number[]>();
+    occupied.forEach((rect, index) =>
+      register(
+        occupiedCells,
+        index,
+        rect.minCorner.x - 3,
+        rect.minCorner.y - 3,
+        rect.maxCorner.x + 3,
+        rect.maxCorner.y + 3,
+      ),
+    );
+    const nearby = (
+      map: Map<string, number[]>,
+      x: number,
+      y: number,
+    ): number[] => {
+      const found = new Set<number>();
+      for (
+        let cx = Math.floor(x / cellSize) - 1;
+        cx <= Math.floor(x / cellSize) + 1;
+        cx++
+      )
+        for (
+          let cy = Math.floor(y / cellSize) - 1;
+          cy <= Math.floor(y / cellSize) + 1;
+          cy++
+        )
+          for (const index of map.get(`${cx},${cy}`) ?? []) found.add(index);
+      return [...found];
+    };
+    for (const road of roads) {
+      if (syntheticBuildings >= 1500) break;
+      const profile = getRoadProfile(road);
+      if (!profile.motorVehiclesAllowed) continue;
+      const dx = road.end.x - road.start.x;
+      const dy = road.end.y - road.start.y;
+      const length = Math.hypot(dx, dy);
+      if (length < 20) continue;
+      const ux = dx / length;
+      const uy = dy / length;
+      const angle = Math.atan2(dy, dx);
+      for (const side of [-1, 1]) {
+        for (let t = 9; t < length - 6 && syntheticBuildings < 1500; t += 15) {
+          if (infillRandom() < 0.18) continue;
+          const houseWidth = 9;
+          const houseDepth = 8;
+          const offset =
+            profile.widthInMeters / 2 +
+            profile.sidewalkWidthInMeters +
+            houseDepth / 2 +
+            1.5;
+          const center = {
+            x: road.start.x + ux * t - uy * offset * side,
+            y: road.start.y + uy * t + ux * offset * side,
+          };
+          const hx =
+            (Math.abs(Math.cos(angle)) * houseWidth +
+              Math.abs(Math.sin(angle)) * houseDepth) /
+            2;
+          const hz =
+            (Math.abs(Math.sin(angle)) * houseWidth +
+              Math.abs(Math.cos(angle)) * houseDepth) /
+            2;
+          const rect = {
+            minCorner: { x: center.x - hx, y: center.y - hz },
+            maxCorner: { x: center.x + hx, y: center.y + hz },
+          };
+          if (
+            rect.minCorner.x < 3 ||
+            rect.minCorner.y < 3 ||
+            rect.maxCorner.x > extentX - 3 ||
+            rect.maxCorner.y > extentY - 3
+          )
+            continue;
+          if (
+            parks.some(
+              (park) =>
+                rect.minCorner.x < park.maxCorner.x + 2 &&
+                rect.maxCorner.x > park.minCorner.x - 2 &&
+                rect.minCorner.y < park.maxCorner.y + 2 &&
+                rect.maxCorner.y > park.minCorner.y - 2,
+            )
+          )
+            continue;
+          if (
+            nearby(occupiedCells, center.x, center.y).some((index) => {
+              const other = occupied[index]!;
+              return (
+                rect.minCorner.x < other.maxCorner.x + 2.5 &&
+                rect.maxCorner.x > other.minCorner.x - 2.5 &&
+                rect.minCorner.y < other.maxCorner.y + 2.5 &&
+                rect.maxCorner.y > other.minCorner.y - 2.5
+              );
+            })
+          )
+            continue;
+          if (
+            nearby(segmentCells, center.x, center.y).some((index) => {
+              const other = roads[index]!;
+              if (other.id === road.id) return false;
+              return (
+                distanceToSegment(center, other.start, other.end) <
+                houseDepth / 2 + getRoadProfile(other).widthInMeters / 2 + 1.5
+              );
+            })
+          )
+            continue;
+          const floors = 1 + Math.floor(infillRandom() * 2);
+          const cos = Math.cos(angle);
+          const sin = Math.sin(angle);
+          const footprint = [
+            { x: -houseWidth / 2, y: -houseDepth / 2 },
+            { x: houseWidth / 2, y: -houseDepth / 2 },
+            { x: houseWidth / 2, y: houseDepth / 2 },
+            { x: -houseWidth / 2, y: houseDepth / 2 },
+          ].map((local) => ({
+            x: center.x + local.x * cos - local.y * sin,
+            y: center.y + local.x * sin + local.y * cos,
+          }));
+          const building: Building = {
+            id: `real-infill-${syntheticBuildings}`,
+            minCorner: rect.minCorner,
+            maxCorner: rect.maxCorner,
+            heightInMeters: floors * 3,
+            presentation: {
+              widthInMeters: houseWidth,
+              depthInMeters: houseDepth,
+              yawInRadians: -angle,
+            },
+            use: 'residential',
+            synthetic: true,
+            footprint,
+            architecture: {
+              style: 'house',
+              floors,
+              roof: 'gable',
+              roofRiseInMeters: 2,
+              facade: 'sand',
+              entranceSide: 'south',
+              balconyDepthInMeters: 0,
+            },
+          };
+          buildings.push(building);
+          occupied.push(rect);
+          register(
+            occupiedCells,
+            occupied.length - 1,
+            rect.minCorner.x - 3,
+            rect.minCorner.y - 3,
+            rect.maxCorner.x + 3,
+            rect.maxCorner.y + 3,
+          );
+          syntheticBuildings++;
+        }
+      }
+    }
   }
   if (!buildings.length)
     throw new RangeError('Real city source contains no usable buildings.');
@@ -701,6 +956,7 @@ export function createRealCity(
     demCellSizeInMeters: Math.round(cellSizeInMeters * 10) / 10,
     measuredBuildingHeights,
     estimatedBuildingHeights,
+    syntheticBuildings,
   };
 
   const city: CityResponse = {

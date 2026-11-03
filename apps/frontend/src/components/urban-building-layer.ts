@@ -311,6 +311,8 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     slabIds: string[] = [],
     rails: BoxPlacement[] = [],
     railIds: string[] = [];
+  const spires: BoxPlacement[] = [],
+    spireIds: string[] = [];
   const exactFootprints = selectExactFootprints(city.buildings);
   // Plain-colour materials for exact footprints (no per-instance UV shader).
   const footprintFacadeMaterials = {
@@ -363,6 +365,40 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     wallsMesh.castShadow = wallsMesh.receiveShadow = true;
     capsMesh.castShadow = capsMesh.receiveShadow = true;
     group.add(wallsMesh, capsMesh);
+    if (building.landmark === 'religious') {
+      // Representative spire (not a 1:1 reconstruction): a tapered stone
+      // prism over the footprint centroid so churches read as churches.
+      const centroid = footprint.reduce(
+        (acc, point) => ({
+          x: acc.x + point.x / footprint.length,
+          y: acc.y + point.y / footprint.length,
+        }),
+        { x: 0, y: 0 },
+      );
+      const spireHeight = Math.max(
+        6,
+        Math.min(16, building.heightInMeters * 0.45),
+      );
+      const baseRadius = Math.max(
+        1.2,
+        Math.min(
+          building.presentation?.widthInMeters ?? 10,
+          building.presentation?.depthInMeters ?? 10,
+        ) * 0.16,
+      );
+      const spire = new THREE.Mesh(
+        new THREE.CylinderGeometry(0.05, baseRadius, spireHeight, 4),
+        footprintFacadeMaterials.stone,
+      );
+      spire.position.set(
+        centroid.x - root.position.x,
+        building.heightInMeters + spireHeight / 2,
+        centroid.y - root.position.z,
+      );
+      spire.rotation.y = Math.PI / 4;
+      spire.castShadow = true;
+      group.add(spire);
+    }
     return group;
   };
   for (const building of city.buildings) {
@@ -410,6 +446,22 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       );
       caps.push(body);
       capsIds.push(building.id);
+    }
+    if (!complex && building.landmark === 'religious') {
+      const spireHeight = Math.max(
+        6,
+        Math.min(16, building.heightInMeters * 0.45),
+      );
+      spires.push({
+        position: worldAt(0, building.heightInMeters + spireHeight / 2, 0),
+        scale: new THREE.Vector3(
+          Math.min(w, d) * 0.36,
+          spireHeight,
+          Math.min(w, d) * 0.36,
+        ),
+        yaw,
+      });
+      spireIds.push(building.id);
     }
     if (!complex && a?.roof === 'gable') {
       roofs.push({
@@ -612,6 +664,18 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       signIds[index],
     ),
   );
+  if (spires.length)
+    group.add(
+      createChunkedInstances({
+        name: 'building-spires',
+        geometry: new THREE.CylinderGeometry(0, 0.5, 1, 4),
+        material: footprintFacadeMaterials.stone,
+        placements: spires,
+        castShadow: true,
+        receiveShadow: true,
+        ids: spireIds,
+      }),
+    );
   boxes('building-foundations', foundations, flatRoof, true, foundationIds);
   boxes('balcony-slabs', slabs, flatRoof, true, slabIds);
   boxes(

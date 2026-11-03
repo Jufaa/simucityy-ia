@@ -88,6 +88,18 @@ function fixture(): RealCitySource {
     },
     {
       type: 'way',
+      id: 25,
+      tags: { building: 'church', 'building:levels': '1' },
+      geometry: [
+        at(20, 180),
+        at(32, 180),
+        at(32, 190),
+        at(20, 190),
+        at(20, 180),
+      ],
+    },
+    {
+      type: 'way',
       id: 30,
       tags: { leisure: 'park' },
       geometry: [at(20, 20), at(50, 20), at(50, 45), at(20, 45), at(20, 20)],
@@ -173,7 +185,7 @@ describe('createRealCity', () => {
 
   it('converts building footprints to contained rotated rectangles with height provenance', () => {
     const { city, metadata } = createRealCity(fixture());
-    expect(city.buildings).toHaveLength(4);
+    expect(city.buildings).toHaveLength(5);
     const measured = city.buildings[0]!;
     expect(measured.heightInMeters).toBe(21);
     const shop = city.buildings[1]!;
@@ -186,7 +198,7 @@ describe('createRealCity', () => {
     expect(shop.presentation!.widthInMeters).toBeCloseTo(21.2, 0);
     expect(Math.abs(shop.presentation!.yawInRadians)).toBeGreaterThan(0.5);
     expect(metadata.measuredBuildingHeights).toBe(3);
-    expect(metadata.estimatedBuildingHeights).toBe(1);
+    expect(metadata.estimatedBuildingHeights).toBe(2);
     expect(city.buildings[2]!.heightInMeters).toBeGreaterThanOrEqual(6);
     expect(city.district!.parks).toHaveLength(1);
   });
@@ -209,6 +221,60 @@ describe('createRealCity', () => {
     }
     // Every real building carries its exact footprint for rendering.
     expect(city.buildings.every((building) => building.footprint)).toBe(true);
+  });
+
+  it('gives churches a representative estimated height and landmark flag', () => {
+    const { city, metadata } = createRealCity(fixture());
+    const chapel = city.buildings.find(
+      (building) =>
+        building.landmark === 'religious' && building.heightInMeters < 20,
+    )!;
+    expect(chapel).toBeDefined();
+    // Tagged as 1 level (3 m) in the source; a nave is not 3 m tall.
+    expect(chapel.heightInMeters).toBeGreaterThanOrEqual(18);
+    expect(metadata.syntheticBuildings).toBe(0);
+    const basilica = city.buildings.find(
+      (building) =>
+        building.landmark === 'religious' && building.heightInMeters === 24,
+    )!;
+    expect(basilica).toBeDefined();
+  });
+
+  it('fills empty street frontage only when synthetic infill is requested', () => {
+    const plain = createRealCity(fixture(), { citizenCount: 0 });
+    const filled = createRealCity(fixture(), {
+      citizenCount: 0,
+      infillSyntheticHouses: true,
+    });
+    const filledAgain = createRealCity(fixture(), {
+      citizenCount: 0,
+      infillSyntheticHouses: true,
+    });
+    expect(filled.city).toEqual(filledAgain.city);
+    expect(filled.city.buildings.length).toBeGreaterThan(
+      plain.city.buildings.length,
+    );
+    expect(filled.metadata.syntheticBuildings).toBe(
+      filled.city.buildings.length - plain.city.buildings.length,
+    );
+    const originals = plain.city.buildings;
+    for (const building of filled.city.buildings) {
+      if (!building.synthetic) continue;
+      expect(building.id).toMatch(/^real-infill-/);
+      const cx = (building.minCorner.x + building.maxCorner.x) / 2;
+      const cy = (building.minCorner.y + building.maxCorner.y) / 2;
+      expect(
+        originals.some(
+          (other) =>
+            cx > other.minCorner.x - 1 &&
+            cx < other.maxCorner.x + 1 &&
+            cy > other.minCorner.y - 1 &&
+            cy < other.maxCorner.y + 1,
+        ),
+      ).toBe(false);
+    }
+    expect(plain.metadata.syntheticBuildings).toBe(0);
+    expect(plain.city.buildings.every((b) => !b.synthetic)).toBe(true);
   });
 
   it('keeps DEM grid, citizens, shelters and metadata consistent and deterministic', () => {

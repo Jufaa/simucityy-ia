@@ -9,6 +9,18 @@ it('presents search, plan upload, the zone map and a clear primary action', () =
   );
   expect(html).toContain('Buscar ciudad/barrio');
   expect(html).toContain('Subir plano');
+  expect(html).toContain('Zonas guardadas');
+  const planHtml = renderToStaticMarkup(
+    createElement(RealCityImporter, {
+      onImported: () => {},
+      initialTab: 'plan',
+    }),
+  );
+  // The file picker reads as a real button, not the raw browser control.
+  expect(planHtml).toContain('Elegir plano GeoJSON…');
+  expect(planHtml).toContain('Ningún archivo elegido');
+  expect(planHtml).toContain('type="file"');
+  expect(planHtml).toContain('hidden=""');
   expect(html).toContain('Ciudad o barrio a buscar');
   expect(html).toContain('Ciudades ofrecidas:');
   expect(html).toContain('Eixample, Barcelona');

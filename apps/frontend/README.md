@@ -157,8 +157,12 @@ to select 250–1500 m, and import it live with the card's primary
 **Representar esta zona en la simulación** button (Overpass + Terrarium in
 the browser, no keys). The same card accepts an uploaded GeoJSON plan —
 drawn over the map and cropped with the same square, with real DEM or flat
-terrain. Imported zones live in memory as **Trazado → Zona importada**;
-nothing is stored server-side.
+terrain. Imported zones live as **Trazado → Zona importada** and are kept
+in the browser's IndexedDB (**Zonas guardadas**, newest 8) for one-click
+reload; nothing is stored server-side. Churches get a representative estimated
+height and spire (OSM often tags only base storeys), and an opt-in,
+clearly labelled synthetic-house infill can fill street frontage where
+OSM has almost nothing mapped.
 
 ## Free local model preview
 

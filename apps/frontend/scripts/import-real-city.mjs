@@ -252,6 +252,7 @@ const TAG_WHITELIST = [
   'height',
   'leisure',
   'landuse',
+  'amenity',
 ];
 const roundPoint = (point) => ({
   lat: Math.round(point.lat * 1e7) / 1e7,

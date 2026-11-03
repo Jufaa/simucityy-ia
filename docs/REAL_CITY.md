@@ -27,8 +27,14 @@ surroundings and simulation settings:
 3. **Representar esta zona en la simulación**: downloads OSM geometry
    (Overpass) and Terrarium DEM tiles in the browser (all CORS-enabled,
    free, keyless), converts with the same `createRealCity()` and switches
-   the scene to **Trazado → Zona importada**. Imported zones stay in
-   memory only; nothing is uploaded or persisted server-side.
+   the scene to **Trazado → Zona importada**.
+
+Successfully imported zones are also **saved in the browser** (IndexedDB,
+`saved-zones.ts`, newest 8): the import card lists them under **Zonas
+guardadas** for one-click reload without re-uploading or re-downloading.
+Nothing leaves the device, no server persistence; clearing browser data
+removes them. Uploads pick the file through a styled **Elegir plano
+GeoJSON…** button, not the raw browser file control.
 
 ### Uploading your own plan
 
@@ -114,7 +120,17 @@ Then point the import in `Scene.tsx` at the new file (and adjust the label).
 - **Heights:** 1,131 of 1,483 buildings carry OSM
   `height`/`building:levels`; the other 352 heights are deterministic
   estimates by OSM id and are counted as _estimated_ in the metadata and
-  panel, never presented as measured data.
+  panel, never presented as measured data. Places of worship are the one
+  deliberate override: OSM often tags only the base storeys (the Sagrada
+  Familia reads 6 m), so churches/temples below 18 m get a representative
+  estimated height scaled by footprint (the basilica becomes 35 m) plus a
+  simple spire — recognizable, explicitly not a 1:1 reconstruction.
+- **Sparse cities:** where OSM has almost no buildings mapped (Río Cuarto
+  has ~157 footprints in 1.5 km²), the import card offers an opt-in
+  _synthetic infill_: deterministic houses along streets, flagged per
+  building (`real-infill-*`, `synthetic: true`), counted separately in the
+  metadata and declared in the panel. Off by default; the simulation
+  treats them as ordinary houses, but they are never real data.
 - **Population and shelters are synthetic** (200 residents; three shelters
   on the highest road nodes). No real population or shelter capacity data
   is claimed.

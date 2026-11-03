@@ -34,6 +34,7 @@ const TAG_WHITELIST = [
   'height',
   'leisure',
   'landuse',
+  'amenity',
 ];
 
 export async function searchPlaces(query: string): Promise<PlaceResult[]> {
@@ -328,6 +329,8 @@ function tagsFromProperties(
   const kind = String(properties.kind ?? properties.type ?? '').toLowerCase();
   if (!tags.building && ['building', 'edificio'].includes(kind))
     tags.building = 'yes';
+  if (!tags.building && ['church', 'iglesia', 'temple'].includes(kind))
+    tags.building = 'church';
   if (!tags.highway && ['road', 'street', 'calle'].includes(kind))
     tags.highway = 'residential';
   if (!tags.leisure && ['park', 'parque'].includes(kind)) tags.leisure = 'park';
