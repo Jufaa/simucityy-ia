@@ -418,7 +418,7 @@ export default function Scene() {
       city.organic?.bridges.flatMap((bridge) => bridge.roadIds),
     );
     // Real imported zones carry no sidewalk blocks: the road layer grows
-    // its own concrete sidewalks, junction plates and crosswalks instead.
+    // its own concrete sidewalks and crosswalks instead.
     const sidewalkMaterial = city.real
       ? new THREE.MeshStandardMaterial({
           color: textures.concrete ? 0xffffff : 0xc1c5c7,
@@ -435,10 +435,8 @@ export default function Scene() {
       roadMaterial,
       city.organic ? (city.district?.roadWidthInMeters ?? 6) : 6,
       sidewalkMaterial,
-      // Real streets read small at district scale; a 1.2x presentation
-      // widening (sidewalks, plates, crosswalks included) keeps them
-      // legible without touching simulation widths or centrelines.
-      city.real ? 1.2 : 1,
+      // Crosswalks must never land inside a building footprint.
+      city.real ? city.buildings : [],
     );
     const drapedRoadLayer = drapeSurfaceLayer(roadLayer, city);
     scene.add(drapedRoadLayer);
