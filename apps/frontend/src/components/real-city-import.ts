@@ -1,7 +1,7 @@
 import {
+  landmarkKindFor,
   projectedExtentInMeters,
   type OsmElementInput,
-  type OsmWayInput,
   type RealCitySource,
 } from './real-city-model';
 import { latLonToWorldPixels, type LatLon } from './map-projection';
@@ -22,7 +22,6 @@ export interface PlaceResult {
   lon: number;
 }
 
-const USER_AGENT_HINT = 'simulicity-ia real-city import';
 const OVERPASS_ENDPOINTS = [
   'https://overpass-api.de/api/interpreter',
   'https://overpass.kumi.systems/api/interpreter',
@@ -39,6 +38,10 @@ const TAG_WHITELIST = [
   'amenity',
   'tourism',
   'historic',
+  'man_made',
+  'monument',
+  'wikidata',
+  'artwork_type',
 ];
 
 export async function searchPlaces(query: string): Promise<PlaceResult[]> {
@@ -191,8 +194,12 @@ export async function fetchOsmSource(
 (
   way["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
-  way["building:part"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["leisure"="stadium"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["tourism"~"^(attraction|artwork)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["historic"~"^(monument|memorial|castle|fort|ruins)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  node["tourism"="artwork"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  node["historic"~"^(monument|memorial)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  node["man_made"~"^(obelisk|column|statue)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["amenity"~"^(hospital|clinic)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["leisure"~"^(park|garden)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["landuse"~"^(grass|meadow|recreation_ground|village_green)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
@@ -206,6 +213,8 @@ out geom;`;
       type: string;
       id: number;
       tags?: Record<string, string>;
+      lat?: number;
+      lon?: number;
       geometry?: { lat: number; lon: number }[];
       members?: {
         type: string;
@@ -215,34 +224,71 @@ out geom;`;
     }[];
     osm3s?: { timestamp_osm_base?: string };
   };
-  let osm: OverpassResponse | null = null;
-  let lastError: unknown = null;
-  for (const endpoint of OVERPASS_ENDPOINTS) {
-    if (osm) break;
-    for (let attempt = 1; attempt <= 2 && !osm; attempt++) {
-      try {
-        onStage?.(
-          `Descargando calles y edificios de OpenStreetMap (intento ${attempt})…`,
-        );
-        const response = await fetch(endpoint, {
-          method: 'POST',
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-            'X-Client-Hint': USER_AGENT_HINT,
-          },
-          body: new URLSearchParams({ data: query }),
-          signal: AbortSignal.timeout(150000),
-        });
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        osm = (await response.json()) as OverpassResponse;
-      } catch (error) {
-        lastError = error;
+  const fetchOverpass = async (
+    queryText: string,
+    stageLabel: string,
+    attemptsPerEndpoint: number,
+    timeoutMs = 150000,
+  ): Promise<OverpassResponse> => {
+    let lastError: unknown = null;
+    for (const endpoint of OVERPASS_ENDPOINTS) {
+      for (let attempt = 1; attempt <= attemptsPerEndpoint; attempt++) {
+        try {
+          onStage?.(`${stageLabel} (intento ${attempt})…`);
+          const response = await fetch(endpoint, {
+            method: 'POST',
+            headers: {
+              // No custom headers: a plain form POST stays a CORS-simple
+              // request and avoids a preflight round-trip to Overpass.
+              'Content-Type': 'application/x-www-form-urlencoded',
+            },
+            body: new URLSearchParams({ data: queryText }),
+            signal: AbortSignal.timeout(timeoutMs),
+          });
+          if (!response.ok) throw new Error(`HTTP ${response.status}`);
+          return (await response.json()) as OverpassResponse;
+        } catch (error) {
+          lastError = error;
+        }
       }
     }
-  }
-  if (!osm)
+    throw lastError instanceof Error ? lastError : new Error('sin respuesta');
+  };
+  // The three downloads are independent: run them concurrently instead of
+  // queueing parts and DEM behind the main query. Same data, same render
+  // quality, roughly the slowest single download instead of their sum.
+  const partsPromise = fetchOverpass(
+    `[out:json][timeout:90];(way["building:part"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});relation["building:part"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`,
+    'Descargando detalle 3D de monumentos',
+    1,
+    90000,
+  ).catch(() => null);
+  const demSamplerPromise = loadTerrariumElevationSampler(bbox);
+  demSamplerPromise.catch(() => undefined);
+  let osm: OverpassResponse;
+  try {
+    osm = await fetchOverpass(
+      query,
+      'Descargando calles y edificios de OpenStreetMap',
+      2,
+    );
+  } catch (error) {
     throw new Error(
-      `No se pudo descargar la zona desde OpenStreetMap (${lastError instanceof Error ? lastError.message : 'sin respuesta'}). Probá de nuevo en unos segundos.`,
+      `No se pudo descargar la zona desde OpenStreetMap (${error instanceof Error ? error.message : 'sin respuesta'}). Probá de nuevo en unos segundos.`,
+      { cause: error },
+    );
+  }
+  // 3D parts are best-effort landmark detail: if that query failed, the
+  // zone still imports without tower volumes (the UI says so).
+  const parts = await partsPromise;
+  if (parts)
+    osm = {
+      ...osm,
+      elements: [...(osm.elements ?? []), ...(parts.elements ?? [])],
+    };
+  else
+    onStage?.(
+      'El detalle 3D de monumentos tardó demasiado; la zona entra sin torres.',
     );
   const roundPoint = (point: { lat: number; lon: number }) => ({
     lat: Math.round(point.lat * 1e7) / 1e7,
@@ -254,6 +300,20 @@ out geom;`;
     );
   const elements: OsmElementInput[] = (osm.elements ?? []).flatMap(
     (element): OsmElementInput[] => {
+      if (
+        element.type === 'node' &&
+        typeof element.lat === 'number' &&
+        typeof element.lon === 'number'
+      )
+        return [
+          {
+            type: 'node',
+            id: element.id,
+            tags: pickTags(element.tags),
+            lat: Math.round(element.lat * 1e7) / 1e7,
+            lon: Math.round(element.lon * 1e7) / 1e7,
+          },
+        ];
       if (element.type === 'way' && Array.isArray(element.geometry))
         return [
           {
@@ -284,7 +344,7 @@ out geom;`;
   if (!elements.some((element) => element.tags?.highway))
     throw new Error('La zona elegida no devolvió calles utilizables.');
   onStage?.('Descargando el relieve (DEM)…');
-  const sampler = await loadTerrariumElevationSampler(bbox);
+  const sampler = await demSamplerPromise;
   return {
     name,
     bbox,
@@ -299,7 +359,7 @@ out geom;`;
 // ---------- Uploaded plans (GeoJSON) ----------
 
 export interface ParsedPlan {
-  elements: OsmWayInput[];
+  elements: OsmElementInput[];
   bounds: Bbox;
   featureCount: number;
   skippedCount: number;
@@ -328,10 +388,23 @@ function tagsFromProperties(
   properties: Record<string, unknown>,
 ): Record<string, string> {
   const tags: Record<string, string> = {};
-  for (const key of TAG_WHITELIST) {
-    const value = properties[key];
-    if (typeof value === 'string' || typeof value === 'number')
-      tags[key] = String(value);
+  // Whitelisted OSM keys, matched case-insensitively (exports often use
+  // Height/Levels), plus common Spanish aliases from hand-made plans.
+  const canonicalByLower = new Map(
+    TAG_WHITELIST.map((key) => [key.toLowerCase(), key]),
+  );
+  const aliases: Record<string, string> = {
+    altura: 'height',
+    min_altura: 'min_height',
+    niveles: 'building:levels',
+    plantas: 'building:levels',
+  };
+  for (const [key, value] of Object.entries(properties)) {
+    if (typeof value !== 'string' && typeof value !== 'number') continue;
+    const lower = key.toLowerCase();
+    const canonical = canonicalByLower.get(lower) ?? aliases[lower];
+    if (canonical && tags[canonical] === undefined)
+      tags[canonical] = String(value);
   }
   const kind = String(properties.kind ?? properties.type ?? '').toLowerCase();
   if (!tags.building && ['building', 'edificio'].includes(kind))
@@ -344,6 +417,18 @@ function tagsFromProperties(
   if (!tags.highway && ['road', 'street', 'calle'].includes(kind))
     tags.highway = 'residential';
   if (!tags.leisure && ['park', 'parque'].includes(kind)) tags.leisure = 'park';
+  if (
+    !tags.tourism &&
+    [
+      'monument',
+      'monumento',
+      'statue',
+      'estatua',
+      'obelisk',
+      'obelisco',
+    ].includes(kind)
+  )
+    tags.tourism = 'artwork';
   if (!tags['building:levels'] && typeof properties.levels === 'number')
     tags['building:levels'] = String(properties.levels);
   if (!tags.height && typeof properties.heightInMeters === 'number')
@@ -369,7 +454,7 @@ export function elementsFromGeoJson(input: unknown): ParsedPlan {
   if (!features.length) throw new Error('El GeoJSON no contiene features.');
   if (features.length > 50000)
     throw new Error('El plano supera el máximo de 50000 features.');
-  const elements: OsmWayInput[] = [];
+  const elements: OsmElementInput[] = [];
   let skipped = 0;
   let south = Infinity,
     west = Infinity,
@@ -390,7 +475,7 @@ export function elementsFromGeoJson(input: unknown): ParsedPlan {
     const properties = isRecord(feature.properties) ? feature.properties : {};
     const tags = tagsFromProperties(properties);
     const geometry = feature.geometry;
-    const addWay = (points: LatLon[]) => {
+    const addWay = (points: LatLon[], holes: LatLon[][] = []) => {
       if (points.length < 2) {
         skipped++;
         return;
@@ -401,6 +486,13 @@ export function elementsFromGeoJson(input: unknown): ParsedPlan {
         id: nextId++,
         tags,
         geometry: points.map((p) => ({ lat: p.lat, lon: p.lon })),
+        ...(holes.length
+          ? {
+              holes: holes.map((hole) =>
+                hole.map((p) => ({ lat: p.lat, lon: p.lon })),
+              ),
+            }
+          : {}),
       });
     };
     const ring = (coordinates: unknown): LatLon[] =>
@@ -409,17 +501,48 @@ export function elementsFromGeoJson(input: unknown): ParsedPlan {
             .map(positionToLatLon)
             .filter((p): p is LatLon => p !== null)
         : [];
-    if (geometry.type === 'Polygon' && Array.isArray(geometry.coordinates)) {
+    if (geometry.type === 'Point') {
+      // Points only mean something as monuments (statues, obelisks):
+      // anything else in a plan is a label/annotation and stays skipped.
+      const point =
+        landmarkKindFor(tags) === 'monument'
+          ? positionToLatLon(geometry.coordinates)
+          : null;
+      if (point) {
+        extend(point);
+        elements.push({
+          type: 'node',
+          id: nextId++,
+          tags,
+          lat: point.lat,
+          lon: point.lon,
+        });
+      } else skipped++;
+    } else if (
+      geometry.type === 'Polygon' &&
+      Array.isArray(geometry.coordinates)
+    ) {
+      // Inner rings are courtyards: keep them, the converter renders them
+      // as footprint holes (dropping them filled basilica cloisters in).
       const outer = ring(geometry.coordinates[0]);
-      if (outer.length >= 3) addWay(outer);
+      const holes = geometry.coordinates
+        .slice(1)
+        .map((inner) => ring(inner))
+        .filter((inner) => inner.length >= 3);
+      if (outer.length >= 3) addWay(outer, holes);
       else skipped++;
     } else if (
       geometry.type === 'MultiPolygon' &&
       Array.isArray(geometry.coordinates)
     ) {
       for (const polygon of geometry.coordinates) {
-        const outer = ring(Array.isArray(polygon) ? polygon[0] : undefined);
-        if (outer.length >= 3) addWay(outer);
+        const rings = Array.isArray(polygon) ? polygon : [];
+        const outer = ring(rings[0]);
+        const holes = rings
+          .slice(1)
+          .map((inner) => ring(inner))
+          .filter((inner) => inner.length >= 3);
+        if (outer.length >= 3) addWay(outer, holes);
         else skipped++;
       }
     } else if (
@@ -450,15 +573,17 @@ export function elementsFromGeoJson(input: unknown): ParsedPlan {
 
 /** Buildings/parks stay only when their ring centre falls inside the selection; roads are clipped later by the converter. */
 export function filterElementsToBbox(
-  elements: OsmWayInput[],
+  elements: OsmElementInput[],
   bbox: Bbox,
-): OsmWayInput[] {
+): OsmElementInput[] {
   const inside = (point: { lat: number; lon: number }) =>
     point.lat >= bbox.south &&
     point.lat <= bbox.north &&
     point.lon >= bbox.west &&
     point.lon <= bbox.east;
   return elements.filter((element) => {
+    if (element.type === 'node') return inside(element);
+    if (element.type !== 'way') return true;
     if (element.tags?.highway) return true;
     const geometry = element.geometry ?? [];
     if (!geometry.length) return false;
@@ -466,7 +591,9 @@ export function filterElementsToBbox(
       lat: geometry.reduce((sum, p) => sum + p.lat, 0) / geometry.length,
       lon: geometry.reduce((sum, p) => sum + p.lon, 0) / geometry.length,
     };
-    return inside(centre);
+    // Centre OR any vertex inside: a crop that merely clips a large
+    // building (a basilica cut by the square's edge) must not drop it.
+    return inside(centre) || geometry.some(inside);
   });
 }
 

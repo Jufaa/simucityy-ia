@@ -27,7 +27,9 @@ surroundings and simulation settings:
 3. **Representar esta zona en la simulación**: downloads OSM geometry
    (Overpass) and Terrarium DEM tiles in the browser (all CORS-enabled,
    free, keyless), converts with the same `createRealCity()` and switches
-   the scene to **Trazado → Zona importada**.
+   the scene to **Trazado → Zona importada**. The main query, the 3D-parts
+   query and the DEM tiles download concurrently; imported zones are
+   cached in the browser (below), so repeats skip the network entirely.
 
 Successfully imported zones are also **saved in the browser** (IndexedDB,
 `saved-zones.ts`, newest 8): the import card lists them under **Zonas
@@ -48,7 +50,14 @@ Expected format — GeoJSON in WGS84 lon/lat coordinates:
 - Properties: `kind`: `building` | `road` | `park` (Spanish `edificio`,
   `calle`, `parque` also accepted), or native OSM tags (`building`,
   `highway`, `leisure`, `landuse`). Height via `levels`,
-  `building:levels` or `height` (metres).
+  `building:levels` or `height` (metres); OSM keys match
+  case-insensitively and Spanish aliases (`altura`, `niveles`,
+  `min_altura`) are accepted. Polygon inner rings become courtyard
+  holes, a crop keeps any building with a vertex inside it (a basilica
+  clipped by the square's edge is not dropped), and `Point` features
+  with `kind: estatua/monumento` become point monuments. A plan only
+  draws towers if the file itself carries `building:part` polygons with
+  heights — a single-outline GeoJSON has no 3D detail to recover.
 - Relief: by default the real DEM under the plan is downloaded; uncheck
   the option (or if tiles fail) for flat terrain at elevation 0, which the
   metadata reports as `plan-flat-elevation-0`.
@@ -120,15 +129,47 @@ Then point the import in `Scene.tsx` at the new file (and adjust the label).
 - **Heights:** most buildings carry OSM `height`/`building:levels`; the
   rest are deterministic estimates by OSM id, counted as _estimated_ in
   the metadata and panel, never presented as measured data.
+- **DEM noise vs building pads:** the Terrarium/SRTM elevation is a
+  surface model — over the Buenos Aires Obelisco zone it spans
+  18.6–49.9 m with building-height spikes. Building pads therefore
+  clear the highest DEM point under the whole footprint (corners plus
+  interior grid nodes) and foundations reach the lowest, instead of
+  sampling only the four corners (which left 316 of 323 buildings there
+  with terrain poking through their ground floor, reading as sunken).
+  This is view-only placement; the flood solver keeps the raw grid.
+  Imported zones do **not** reuse the synthetic city's river/lake
+  terrain: the surroundings layer leaves the city interior empty and
+  the ground is the zone's own DEM.
 - **Landmarks render 1:1 where OSM allows.** Churches, hospitals,
   stadiums and civic icons (`landmarkKindFor`) always get their exact
   footprint, and OSM `building:part` volumes are attached to their parent
-  building at surveyed heights — the Sagrada Familia rises to ~179 m with
-  its towers instead of the 6 m its base storeys suggest. Hospitals get a
-  red-cross roof marker, stadiums floodlight poles, churches a spire when
-  no parts exist. Where no surveyed height exists (e.g. Camp Nou), the
-  height is a declared estimate scaled by footprint. Ordinary buildings
-  and houses stay on the fast instanced rectangles.
+  building at surveyed heights (merged into two meshes per building) —
+  the Sagrada Familia rises to ~179 m with its towers instead of the 6 m
+  its base storeys suggest. Tall slender parts get a tapered pinnacle so
+  towers finish. Outlines tagged both `building` and `building:part`
+  (e.g. the Statue of Liberty) stay buildings in their own right.
+  Volumes that only exist above ground (`building` + `min_height`, e.g.
+  the Liberty statue body at 46.9–93 m) attach to their pedestal as parts
+  instead of becoming ground-extruded slabs, and monuments render as
+  plinth + modelled weathered-bronze statue (lathe-turned robe, crown,
+  raised torch arm with emissive flame, tablet — never a bare cone).
+  Obelisks get a low plinth and a tapered square shaft with a
+  pyramidion tip at exactly their declared height. Monuments mapped
+  only as OSM nodes (statues, obelisks, memorials) get a
+  declared-estimate plinth + figure unless a footprint already covers
+  the point. Hospitals get a red-cross roof marker, stadiums an open
+  bowl (sloped stands down to a green pitch, never a flat roof slab)
+  with floodlight poles, churches a spire plus a cross finial on their
+  highest tower. Landmarks are tiered by OSM tags: cathedrals and
+  basílicas — including places of worship carrying a Wikidata id, e.g.
+  the Basílica de Luján (`building=church` + `wikidata`, no surveyed
+  towers in OSM) — get twin spired facade towers with crosses unless
+  surveyed 3D parts already provide their towers; ordinary churches
+  keep the single spire. Where no surveyed height exists
+  (e.g. Camp Nou), the height is a declared estimate scaled by footprint.
+  Ordinary buildings and houses stay on the fast instanced rectangles.
+  The parts query is a separate Overpass call: if it times out, the zone
+  still imports without tower volumes (the UI says so).
 - **Sparse cities:** where OSM has almost no buildings mapped (Río Cuarto
   has ~157 footprints in 1.5 km²), the import card offers an opt-in
   _synthetic infill_: deterministic houses along streets, flagged per

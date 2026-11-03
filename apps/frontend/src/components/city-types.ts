@@ -48,7 +48,10 @@ export interface Building {
   };
   use?: 'residential' | 'commercial';
   /** Landmark hint from source tags: standout buildings render exact/1:1. */
-  landmark?: 'religious' | 'health' | 'stadium' | 'civic';
+  landmark?:
+    'religious' | 'cathedral' | 'health' | 'stadium' | 'civic' | 'monument';
+  /** Silhouette hint for landmark monuments: human figure vs obelisk. */
+  monumentShape?: 'figure' | 'obelisk';
   /** Real 3D parts (OSM building:part) with measured heights, rendering only. */
   parts?: BuildingPart[];
   /** True only for clearly-labelled synthetic infill, never source data. */

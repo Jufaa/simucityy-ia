@@ -1,8 +1,12 @@
 import * as THREE from 'three';
+import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js';
 import type { Building, CityResponse, Point } from './city-types';
 import { createUrbanTextures } from './urban-materials';
 import { buildingTint, roofColorForBuilding } from './building-palette';
-import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
+import {
+  buildingBaseHeight,
+  buildingGroundRangeInMeters,
+} from './terrain-view';
 import { createChunkedInstances } from './instanced-chunks';
 import { collapsePose } from './collapse-animation';
 
@@ -310,6 +314,34 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     emissiveIntensity: 1.4,
     roughness: 0.4,
   });
+  // Weathered bronze/copper for monument figures (statues read greenish at
+  // city scale) and plain metal for church cross finials.
+  const monumentMaterial = new THREE.MeshStandardMaterial({
+    color: 0x5e8f7f,
+    roughness: 0.55,
+    metalness: 0.25,
+  });
+  const torchFlameMaterial = new THREE.MeshStandardMaterial({
+    color: 0xffb347,
+    emissive: 0xff8c2e,
+    emissiveIntensity: 2.2,
+    roughness: 0.4,
+  });
+  const stadiumStandMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9aa0a3,
+    roughness: 0.9,
+    side: THREE.DoubleSide,
+  });
+  const stadiumPitchMaterial = new THREE.MeshStandardMaterial({
+    color: 0x4d7d3c,
+    roughness: 1,
+    side: THREE.DoubleSide,
+  });
+  const finialMaterial = new THREE.MeshStandardMaterial({
+    color: 0x8a8f7a,
+    roughness: 0.45,
+    metalness: 0.5,
+  });
   /** Roof-top red-cross marker so hospitals read as hospitals at a glance. */
   const createHealthMarker = (topY: number): THREE.Group => {
     const marker = new THREE.Group();
@@ -425,8 +457,26 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       path.closePath();
       shape.holes.push(path);
     }
+    // Monuments extrude only their plinth from the footprint: the figure
+    // (statue body, obelisk shaft) is modelled above it, tapered, instead
+    // of a solid block up to the total surveyed height.
+    const floatingParts = (building.parts ?? []).filter(
+      (part) => part.minHeightInMeters > 0,
+    );
+    const isMonument = building.landmark === 'monument';
+    const baseDepthInMeters = isMonument
+      ? floatingParts.length
+        ? Math.min(
+            building.heightInMeters,
+            ...floatingParts.map((part) => part.minHeightInMeters),
+          )
+        : building.monumentShape === 'obelisk'
+          ? // An obelisk is almost all shaft: only a low plinth below it.
+            Math.max(1.2, building.heightInMeters * 0.12)
+          : Math.max(2, building.heightInMeters * 0.35)
+      : building.heightInMeters;
     const extruded = new THREE.ExtrudeGeometry(shape, {
-      depth: building.heightInMeters,
+      depth: baseDepthInMeters,
       bevelEnabled: false,
     });
     extruded.rotateX(-Math.PI / 2);
@@ -463,10 +513,106 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       wallMaterial.color.b *= tint[2];
     }
     const wallsMesh = new THREE.Mesh(walls, wallMaterial);
-    const capsMesh = new THREE.Mesh(caps, roofMaterialFor(building.id));
     wallsMesh.castShadow = wallsMesh.receiveShadow = true;
-    capsMesh.castShadow = capsMesh.receiveShadow = true;
-    group.add(wallsMesh, capsMesh);
+    group.add(wallsMesh);
+    if (building.landmark === 'stadium') {
+      // Open bowl, never a flat roof slab: sloped stands from the rim down
+      // to a green pitch, so the stadium reads as a stadium from the air.
+      caps.dispose();
+      const localRing = footprint.map((point) => ({
+        x: point.x - root.position.x,
+        z: point.y - root.position.z,
+      }));
+      const bowlCx =
+        localRing.reduce((sum, p) => sum + p.x, 0) / localRing.length;
+      const bowlCz =
+        localRing.reduce((sum, p) => sum + p.z, 0) / localRing.length;
+      const rimY = building.heightInMeters;
+      const innerY = rimY * 0.55;
+      const pitchY = rimY * 0.52;
+      const inner = localRing.map((point) => ({
+        x: bowlCx + (point.x - bowlCx) * 0.7,
+        z: bowlCz + (point.z - bowlCz) * 0.7,
+      }));
+      const pitch = localRing.map((point) => ({
+        x: bowlCx + (point.x - bowlCx) * 0.68,
+        z: bowlCz + (point.z - bowlCz) * 0.68,
+      }));
+      const standPositions: number[] = [];
+      const pitchPositions: number[] = [];
+      for (let i = 0; i < localRing.length; i++) {
+        const a = localRing[i]!;
+        const b = localRing[(i + 1) % localRing.length]!;
+        const aIn = inner[i]!;
+        const bIn = inner[(i + 1) % localRing.length]!;
+        standPositions.push(
+          a.x,
+          rimY,
+          a.z,
+          b.x,
+          rimY,
+          b.z,
+          bIn.x,
+          innerY,
+          bIn.z,
+          a.x,
+          rimY,
+          a.z,
+          bIn.x,
+          innerY,
+          bIn.z,
+          aIn.x,
+          innerY,
+          aIn.z,
+        );
+        const aPitch = pitch[i]!;
+        const bPitch = pitch[(i + 1) % localRing.length]!;
+        pitchPositions.push(
+          bowlCx,
+          pitchY,
+          bowlCz,
+          aPitch.x,
+          pitchY,
+          aPitch.z,
+          bPitch.x,
+          pitchY,
+          bPitch.z,
+        );
+      }
+      const buildFlat = (positions: number[]) => {
+        const geometry = new THREE.BufferGeometry();
+        geometry.setAttribute(
+          'position',
+          new THREE.Float32BufferAttribute(positions, 3),
+        );
+        geometry.setAttribute(
+          'uv',
+          new THREE.Float32BufferAttribute(
+            new Array((positions.length / 3) * 2).fill(0),
+            2,
+          ),
+        );
+        geometry.computeVertexNormals();
+        return geometry;
+      };
+      const bowl = new THREE.Mesh(
+        buildFlat(standPositions),
+        stadiumStandMaterial,
+      );
+      bowl.name = `stadium-bowl:${building.id}`;
+      bowl.receiveShadow = true;
+      const pitchMesh = new THREE.Mesh(
+        buildFlat(pitchPositions),
+        stadiumPitchMaterial,
+      );
+      pitchMesh.name = `stadium-pitch:${building.id}`;
+      pitchMesh.receiveShadow = true;
+      group.add(bowl, pitchMesh);
+    } else {
+      const capsMesh = new THREE.Mesh(caps, roofMaterialFor(building.id));
+      capsMesh.castShadow = capsMesh.receiveShadow = true;
+      group.add(capsMesh);
+    }
     const footprintCentroid = footprint.reduce(
       (acc, point) => ({
         x: acc.x + point.x / footprint.length,
@@ -475,9 +621,185 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       { x: 0, y: 0 },
     );
     // Real 3D parts at 1:1 (OSM building:part heights): towers and vaults
-    // rise from their surveyed min-height to their surveyed height.
+    // rise from their surveyed min-height to their surveyed height. All
+    // part geometries merge into two meshes per building, however many
+    // parts the source model has. Tall slender parts get a tapered
+    // pinnacle so towers finish instead of ending in a flat cut.
+    const partWallGeometries: THREE.BufferGeometry[] = [];
+    const partCapGeometries: THREE.BufferGeometry[] = [];
+    const monumentGeometries: THREE.BufferGeometry[] = [];
+    const torchGeometries: THREE.BufferGeometry[] = [];
+    let renderedStatueFigure = false;
+    /**
+     * Modelled robed-statue figure (never a bare cone): lathe-turned robe
+     * with a dress profile, torso, head with crown spikes, raised torch
+     * arm with flame, and a tablet in the other arm. Built around the
+     * origin at its base; the caller translates it into place. Heights
+     * are fractions of the figure height, radii of the robe radius.
+     */
+    const buildStatueFigure = (
+      heightInMeters: number,
+      radiusInMeters: number,
+    ): { figure: THREE.BufferGeometry[]; torch: THREE.BufferGeometry[] } => {
+      const H = heightInMeters;
+      const R = radiusInMeters;
+      const figure: THREE.BufferGeometry[] = [];
+      const torch: THREE.BufferGeometry[] = [];
+      const robeProfile: [number, number][] = [
+        [0, 0],
+        [0.94, 0],
+        [1.0, 0.03],
+        [0.88, 0.16],
+        [0.7, 0.38],
+        [0.55, 0.6],
+        [0.47, 0.74],
+      ];
+      figure.push(
+        new THREE.LatheGeometry(
+          robeProfile.map(([rx, hy]) => new THREE.Vector2(rx * R, hy * H)),
+          14,
+        ).toNonIndexed(),
+      );
+      const torso = new THREE.CylinderGeometry(
+        R * 0.4,
+        R * 0.47,
+        H * 0.14,
+        10,
+      ).toNonIndexed();
+      torso.translate(0, H * 0.81, 0);
+      figure.push(torso);
+      const headRadius = Math.max(0.35, Math.min(1.9, H * 0.035, R * 0.24));
+      const headY = H * 0.9;
+      const head = new THREE.SphereGeometry(headRadius, 10, 8).toNonIndexed();
+      head.translate(0, headY, 0);
+      figure.push(head);
+      if (H >= 12) {
+        // Crown of seven spikes, tilted outward from the head.
+        for (let i = 0; i < 7; i++) {
+          const angle = (i / 7) * Math.PI * 2;
+          const spike = new THREE.ConeGeometry(
+            headRadius * 0.16,
+            headRadius * 1.7,
+            5,
+          ).toNonIndexed();
+          const direction = new THREE.Vector3(
+            Math.cos(angle) * 0.55,
+            1,
+            Math.sin(angle) * 0.55,
+          ).normalize();
+          spike.applyQuaternion(
+            new THREE.Quaternion().setFromUnitVectors(
+              new THREE.Vector3(0, 1, 0),
+              direction,
+            ),
+          );
+          spike.translate(
+            Math.cos(angle) * headRadius * 0.55,
+            headY + headRadius * 0.6,
+            Math.sin(angle) * headRadius * 0.55,
+          );
+          figure.push(spike);
+        }
+      }
+      const limb = (
+        from: [number, number, number],
+        to: [number, number, number],
+        radius: number,
+      ): THREE.BufferGeometry => {
+        const start = new THREE.Vector3(...from);
+        const end = new THREE.Vector3(...to);
+        const direction = end.clone().sub(start);
+        const length = direction.length();
+        const geometry = new THREE.CylinderGeometry(
+          radius * 0.85,
+          radius,
+          length,
+          6,
+        ).toNonIndexed();
+        geometry.applyQuaternion(
+          new THREE.Quaternion().setFromUnitVectors(
+            new THREE.Vector3(0, 1, 0),
+            direction.normalize(),
+          ),
+        );
+        const middle = start.add(end).multiplyScalar(0.5);
+        geometry.translate(middle.x, middle.y, middle.z);
+        return geometry;
+      };
+      const armRadius = Math.max(0.18, headRadius * 0.32);
+      // Raised right arm holding the torch high.
+      figure.push(
+        limb([R * 0.34, H * 0.84, 0], [R * 0.6, H * 0.92, 0], armRadius),
+      );
+      figure.push(
+        limb([R * 0.6, H * 0.92, 0], [R * 0.74, H * 1.0, 0], armRadius * 0.9),
+      );
+      // Left arm bent, holding a tablet against the body.
+      figure.push(
+        limb([R * -0.34, H * 0.84, 0], [R * -0.56, H * 0.68, 0], armRadius),
+      );
+      const tablet = new THREE.BoxGeometry(
+        R * 0.36,
+        R * 0.46,
+        R * 0.07,
+      ).toNonIndexed();
+      tablet.rotateZ(0.18);
+      tablet.translate(R * -0.6, H * 0.7, 0);
+      figure.push(tablet);
+      // Torch handle + emissive flame above the raised hand.
+      figure.push(
+        limb([R * 0.74, H * 1.0, 0], [R * 0.78, H * 1.05, 0], armRadius * 0.55),
+      );
+      const flameRadius = Math.max(0.4, headRadius * 0.55);
+      const flame = new THREE.ConeGeometry(
+        flameRadius,
+        flameRadius * 2.4,
+        8,
+      ).toNonIndexed();
+      flame.translate(R * 0.78, H * 1.05 + flameRadius * 1.1, 0);
+      torch.push(flame);
+      return { figure, torch };
+    };
     for (const part of building.parts ?? []) {
       if (part.heightInMeters <= part.minHeightInMeters) continue;
+      // The monument's tallest volume, floating in its own upper half, is
+      // its figure (e.g. the Liberty statue body, 46.9-93 m): tapered.
+      // Lower stacked volumes are pedestal steps and keep straight walls.
+      const isStatueFigure =
+        isMonument &&
+        part.minHeightInMeters > 0 &&
+        part.minHeightInMeters >= part.heightInMeters * 0.5 &&
+        part.heightInMeters - part.minHeightInMeters >= 8 &&
+        part.heightInMeters >=
+          Math.max(
+            0,
+            ...(building.parts ?? []).map((other) => other.heightInMeters),
+          );
+      if (isStatueFigure) {
+        renderedStatueFigure = true;
+        const figureXs = part.footprint.map((p) => p.x - root.position.x);
+        const figureZs = part.footprint.map((p) => p.y - root.position.z);
+        const figureCx = (Math.min(...figureXs) + Math.max(...figureXs)) / 2;
+        const figureCz = (Math.min(...figureZs) + Math.max(...figureZs)) / 2;
+        const statue = buildStatueFigure(
+          part.heightInMeters - part.minHeightInMeters,
+          (Math.min(
+            Math.max(...figureXs) - Math.min(...figureXs),
+            Math.max(...figureZs) - Math.min(...figureZs),
+          ) /
+            2) *
+            0.95,
+        );
+        for (const geometry of statue.figure) {
+          geometry.translate(figureCx, part.minHeightInMeters, figureCz);
+          monumentGeometries.push(geometry);
+        }
+        for (const geometry of statue.torch) {
+          geometry.translate(figureCx, part.minHeightInMeters, figureCz);
+          torchGeometries.push(geometry);
+        }
+        continue;
+      }
       const partShape = new THREE.Shape();
       part.footprint.forEach((point, index) => {
         const [x, y] = toShapePoint(point);
@@ -493,14 +815,140 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       partGeometry.translate(0, part.minHeightInMeters, 0);
       const partSplit = splitExtrudeByNormal(partGeometry);
       partGeometry.dispose();
-      const partWalls = new THREE.Mesh(partSplit.walls, wallMaterial);
-      const partCaps = new THREE.Mesh(
-        partSplit.caps,
-        roofMaterialFor(building.id),
-      );
-      partWalls.castShadow = partWalls.receiveShadow = true;
-      partCaps.castShadow = partCaps.receiveShadow = true;
-      group.add(partWalls, partCaps);
+      partWallGeometries.push(partSplit.walls);
+      partCapGeometries.push(partSplit.caps);
+      const partXs = part.footprint.map((p) => p.x);
+      const partZs = part.footprint.map((p) => p.y);
+      const partWidth = Math.max(...partXs) - Math.min(...partXs);
+      const partDepth = Math.max(...partZs) - Math.min(...partZs);
+      if (part.heightInMeters >= 45 && Math.max(partWidth, partDepth) <= 16) {
+        const capHeight = Math.max(4, Math.min(14, part.heightInMeters * 0.16));
+        const pinnacle = new THREE.CylinderGeometry(
+          0.05,
+          Math.min(partWidth, partDepth) * 0.42,
+          capHeight,
+          4,
+        ).toNonIndexed();
+        pinnacle.rotateY(Math.PI / 4);
+        pinnacle.translate(
+          (Math.min(...partXs) + Math.max(...partXs)) / 2 - root.position.x,
+          part.heightInMeters + capHeight / 2,
+          (Math.min(...partZs) + Math.max(...partZs)) / 2 - root.position.z,
+        );
+        partCapGeometries.push(pinnacle);
+      }
+    }
+    if (partWallGeometries.length) {
+      const mergedWalls = mergeGeometries(partWallGeometries);
+      const mergedCaps = mergeGeometries(partCapGeometries);
+      for (const geometry of partWallGeometries) geometry.dispose();
+      for (const geometry of partCapGeometries) geometry.dispose();
+      if (mergedWalls) {
+        const partWalls = new THREE.Mesh(mergedWalls, wallMaterial);
+        partWalls.castShadow = partWalls.receiveShadow = true;
+        group.add(partWalls);
+      }
+      if (mergedCaps) {
+        const partCaps = new THREE.Mesh(
+          mergedCaps,
+          roofMaterialFor(building.id),
+        );
+        partCaps.castShadow = partCaps.receiveShadow = true;
+        group.add(partCaps);
+      }
+    }
+    // Monument with no surveyed figure at all (point-mapped statues and
+    // obelisks): representative tapered figure on the plinth, so the full
+    // declared height reads as a monument, not a solid block.
+    if (isMonument && !renderedStatueFigure && !building.parts?.length) {
+      const figureHeightInMeters = building.heightInMeters - baseDepthInMeters;
+      if (figureHeightInMeters >= 4) {
+        const localXs = footprint.map((p) => p.x - root.position.x);
+        const localZs = footprint.map((p) => p.y - root.position.z);
+        const minDimension = Math.min(
+          Math.max(...localXs) - Math.min(...localXs),
+          Math.max(...localZs) - Math.min(...localZs),
+        );
+        if (building.monumentShape === 'obelisk') {
+          // Tapered square shaft plus a small pyramidion (the "mini cone"
+          // tip), reaching exactly the declared height.
+          const shaftHeightInMeters = figureHeightInMeters * 0.85;
+          const shaft = new THREE.CylinderGeometry(
+            Math.max(0.25, minDimension * 0.09),
+            Math.max(0.5, minDimension * 0.2),
+            shaftHeightInMeters,
+            4,
+          ).toNonIndexed();
+          shaft.rotateY(Math.PI / 4);
+          shaft.translate(
+            footprintCentroid.x - root.position.x,
+            baseDepthInMeters + shaftHeightInMeters / 2,
+            footprintCentroid.y - root.position.z,
+          );
+          monumentGeometries.push(shaft);
+          const pyramidion = new THREE.ConeGeometry(
+            Math.max(0.35, minDimension * 0.13),
+            figureHeightInMeters - shaftHeightInMeters,
+            4,
+          ).toNonIndexed();
+          pyramidion.rotateY(Math.PI / 4);
+          pyramidion.translate(
+            footprintCentroid.x - root.position.x,
+            baseDepthInMeters +
+              shaftHeightInMeters +
+              (figureHeightInMeters - shaftHeightInMeters) / 2,
+            footprintCentroid.y - root.position.z,
+          );
+          monumentGeometries.push(pyramidion);
+        } else {
+          // Modelled robed statue on its plinth (same builder as the
+          // surveyed floating figures, scaled to the declared height).
+          const statue = buildStatueFigure(
+            figureHeightInMeters,
+            minDimension * 0.4,
+          );
+          for (const geometry of statue.figure) {
+            geometry.translate(
+              footprintCentroid.x - root.position.x,
+              baseDepthInMeters,
+              footprintCentroid.y - root.position.z,
+            );
+            monumentGeometries.push(geometry);
+          }
+          for (const geometry of statue.torch) {
+            geometry.translate(
+              footprintCentroid.x - root.position.x,
+              baseDepthInMeters,
+              footprintCentroid.y - root.position.z,
+            );
+            torchGeometries.push(geometry);
+          }
+        }
+      }
+    }
+    if (monumentGeometries.length) {
+      const mergedFigure = mergeGeometries(monumentGeometries);
+      for (const geometry of monumentGeometries) geometry.dispose();
+      if (mergedFigure) {
+        const figureMesh = new THREE.Mesh(
+          mergedFigure,
+          building.monumentShape === 'obelisk'
+            ? footprintFacadeMaterials.stone
+            : monumentMaterial,
+        );
+        figureMesh.name = `monument-figure:${building.id}`;
+        figureMesh.castShadow = figureMesh.receiveShadow = true;
+        group.add(figureMesh);
+      }
+    }
+    if (torchGeometries.length) {
+      const mergedTorch = mergeGeometries(torchGeometries);
+      for (const geometry of torchGeometries) geometry.dispose();
+      if (mergedTorch) {
+        const torchMesh = new THREE.Mesh(mergedTorch, torchFlameMaterial);
+        torchMesh.name = `monument-torch:${building.id}`;
+        group.add(torchMesh);
+      }
     }
     if (building.landmark === 'health') {
       const marker = createHealthMarker(building.heightInMeters);
@@ -570,6 +1018,153 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       spire.castShadow = true;
       group.add(spire);
     }
+    let cathedralTowersAdded = false;
+    if (
+      building.landmark === 'cathedral' &&
+      !(building.parts ?? []).some(
+        (part) => part.heightInMeters > building.heightInMeters,
+      )
+    ) {
+      // Cathedrals/basílicas without surveyed towers (e.g. Luján) get the
+      // archetype they are known by: twin facade towers with spires and
+      // crosses, at the footprint's front corners. Surveyed 3D parts
+      // (Sagrada Familia) always win over this archetype.
+      cathedralTowersAdded = true;
+      const localXs = footprint.map((p) => p.x - root.position.x);
+      const localZs = footprint.map((p) => p.y - root.position.z);
+      const footprintWidth = Math.max(...localXs) - Math.min(...localXs);
+      const footprintDepth = Math.max(...localZs) - Math.min(...localZs);
+      const towerSizeInMeters = Math.max(
+        3,
+        Math.min(9, Math.min(footprintWidth, footprintDepth) * 0.18),
+      );
+      const towerTopInMeters =
+        building.heightInMeters +
+        Math.max(18, Math.min(42, building.heightInMeters * 0.9));
+      const spireHeightInMeters = Math.max(
+        8,
+        Math.min(22, towerTopInMeters * 0.32),
+      );
+      const frontZ = Math.min(...localZs) + towerSizeInMeters / 2 + 1;
+      const towers = new THREE.Group();
+      towers.name = `cathedral-towers:${building.id}`;
+      for (const towerX of [
+        Math.min(...localXs) + towerSizeInMeters / 2 + 1,
+        Math.max(...localXs) - towerSizeInMeters / 2 - 1,
+      ]) {
+        const shaft = new THREE.Mesh(
+          new THREE.BoxGeometry(
+            towerSizeInMeters,
+            towerTopInMeters,
+            towerSizeInMeters,
+          ),
+          footprintFacadeMaterials.stone,
+        );
+        shaft.position.set(towerX, towerTopInMeters / 2, frontZ);
+        shaft.castShadow = shaft.receiveShadow = true;
+        const towerSpire = new THREE.Mesh(
+          new THREE.CylinderGeometry(
+            0.05,
+            towerSizeInMeters * 0.62,
+            spireHeightInMeters,
+            4,
+          ),
+          footprintFacadeMaterials.stone,
+        );
+        towerSpire.rotation.y = Math.PI / 4;
+        towerSpire.position.set(
+          towerX,
+          towerTopInMeters + spireHeightInMeters / 2,
+          frontZ,
+        );
+        towerSpire.castShadow = true;
+        const crossHeightInMeters = Math.max(
+          1.4,
+          Math.min(3.5, (towerTopInMeters + spireHeightInMeters) * 0.05),
+        );
+        const crossVertical = new THREE.Mesh(
+          new THREE.BoxGeometry(0.2, crossHeightInMeters, 0.2),
+          finialMaterial,
+        );
+        crossVertical.position.set(
+          towerX,
+          towerTopInMeters + spireHeightInMeters + crossHeightInMeters / 2,
+          frontZ,
+        );
+        const crossHorizontal = new THREE.Mesh(
+          new THREE.BoxGeometry(crossHeightInMeters * 0.6, 0.2, 0.2),
+          finialMaterial,
+        );
+        crossHorizontal.position.set(
+          towerX,
+          towerTopInMeters + spireHeightInMeters + crossHeightInMeters * 0.68,
+          frontZ,
+        );
+        towers.add(shaft, towerSpire, crossVertical, crossHorizontal);
+      }
+      group.add(towers);
+    }
+    if (
+      building.landmark === 'religious' ||
+      (building.landmark === 'cathedral' && !cathedralTowersAdded)
+    ) {
+      // Cross finial on the highest point (tallest tower part, pinnacle
+      // included, else the spire): churches read from the air by it.
+      let topX = footprintCentroid.x - root.position.x;
+      let topZ = footprintCentroid.y - root.position.z;
+      let topHeightInMeters =
+        building.heightInMeters +
+        Math.max(6, Math.min(16, building.heightInMeters * 0.45));
+      const tallestPart = (building.parts ?? [])
+        .filter((part) => part.heightInMeters > building.heightInMeters)
+        .sort((a, b) => b.heightInMeters - a.heightInMeters)[0];
+      if (tallestPart) {
+        const partXs = tallestPart.footprint.map((p) => p.x);
+        const partZs = tallestPart.footprint.map((p) => p.y);
+        topX =
+          (Math.min(...partXs) + Math.max(...partXs)) / 2 - root.position.x;
+        topZ =
+          (Math.min(...partZs) + Math.max(...partZs)) / 2 - root.position.z;
+        topHeightInMeters = tallestPart.heightInMeters;
+        const partWidth = Math.max(...partXs) - Math.min(...partXs);
+        const partDepth = Math.max(...partZs) - Math.min(...partZs);
+        if (
+          tallestPart.heightInMeters >= 45 &&
+          Math.max(partWidth, partDepth) <= 16
+        )
+          topHeightInMeters += Math.max(
+            4,
+            Math.min(14, tallestPart.heightInMeters * 0.16),
+          );
+      }
+      const crossHeightInMeters = Math.max(
+        1.2,
+        Math.min(4, topHeightInMeters * 0.06),
+      );
+      const cross = new THREE.Group();
+      cross.name = `cross:${building.id}`;
+      const vertical = new THREE.Mesh(
+        new THREE.BoxGeometry(0.22, crossHeightInMeters, 0.22),
+        finialMaterial,
+      );
+      vertical.position.set(
+        topX,
+        topHeightInMeters + crossHeightInMeters / 2,
+        topZ,
+      );
+      const horizontal = new THREE.Mesh(
+        new THREE.BoxGeometry(crossHeightInMeters * 0.6, 0.22, 0.22),
+        finialMaterial,
+      );
+      horizontal.position.set(
+        topX,
+        topHeightInMeters + crossHeightInMeters * 0.68,
+        topZ,
+      );
+      vertical.castShadow = horizontal.castShadow = true;
+      cross.add(vertical, horizontal);
+      group.add(cross);
+    }
     return group;
   };
   for (const building of city.buildings) {
@@ -630,7 +1225,10 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       marker.position.copy(root.position);
       group.add(marker);
     }
-    if (!complex && building.landmark === 'religious') {
+    if (
+      !complex &&
+      (building.landmark === 'religious' || building.landmark === 'cathedral')
+    ) {
       const spireHeight = Math.max(
         6,
         Math.min(16, building.heightInMeters * 0.45),
@@ -754,13 +1352,9 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         }
     }
     if (city.terrainProfile === 'basin' || city.organic || city.real) {
-      const minimum = Math.min(
-        ...[building.minCorner.x, building.maxCorner.x].flatMap((x) =>
-          [building.minCorner.y, building.maxCorner.y].map((z) =>
-            sampleTerrainHeight(city, x, z),
-          ),
-        ),
-      );
+      // Foundation reaches the lowest terrain under the footprint, not
+      // just its corners, so raised pads never float over DEM dips.
+      const minimum = buildingGroundRangeInMeters(city, building).minInMeters;
       const depth = baseHeight - minimum + 0.05;
       foundationIds.push(building.id);
       foundations.push({

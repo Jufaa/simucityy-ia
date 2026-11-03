@@ -244,8 +244,8 @@ it('adds a representative spire to religious buildings in both render paths', ()
   };
   const footprintLayer = createBuildingLayer(flatCity([footprintChurch]));
   const group = footprintLayer.getObjectByName('footprint:footprint-church')!;
-  // Walls, caps and the spire.
-  expect(group.children).toHaveLength(3);
+  // Walls, caps, the spire and its cross finial.
+  expect(group.children).toHaveLength(4);
   const bounds = new THREE.Box3().setFromObject(group);
   expect(bounds.max.y).toBeGreaterThan(25 + 29 + 6);
 });
@@ -310,8 +310,9 @@ it('renders landmarks exact with 3D parts, hospital cross and stadium floodlight
   expect(stadiumGroup.children.length).toBeGreaterThanOrEqual(10);
   const basilicaGroup = layer.getObjectByName('footprint:basilica')!;
   const basilicaBounds = new THREE.Box3().setFromObject(basilicaGroup);
-  // The tower part reaches its real 60 m, far above the 24 m base.
-  expect(basilicaBounds.max.y).toBeCloseTo(25 + 60);
+  // The tower part reaches its real 60 m plus its tapered pinnacle cap
+  // and the cross finial on top of it.
+  expect(basilicaBounds.max.y).toBeCloseTo(25 + 60 + 9.6 + 4);
   // Box-rendered hospital still gets its red-cross roof marker, and the
   // marker participates in collapse transforms.
   const marker = layer.getObjectByName('marker:hospital-central')!;
@@ -322,6 +323,162 @@ it('renders landmarks exact with 3D parts, hospital cross and stadium floodlight
   expect(marker.scale.y).toBeLessThan(0.5);
   collapse('hospital-central', 0);
   expect(marker.scale.y).toBe(1);
+});
+
+it('renders a monument as plinth plus tapered figure at its real height', () => {
+  const statue = {
+    id: 'statue',
+    minCorner: { x: 20, y: 20 },
+    maxCorner: { x: 80, y: 80 },
+    heightInMeters: 10,
+    landmark: 'monument' as const,
+    presentation: { widthInMeters: 60, depthInMeters: 60, yawInRadians: 0 },
+    footprint: [
+      { x: 20, y: 20 },
+      { x: 80, y: 20 },
+      { x: 80, y: 80 },
+      { x: 20, y: 80 },
+    ],
+    parts: [
+      {
+        footprint: [
+          { x: 35, y: 35 },
+          { x: 65, y: 35 },
+          { x: 65, y: 65 },
+          { x: 35, y: 65 },
+        ],
+        heightInMeters: 47,
+        minHeightInMeters: 10,
+      },
+      {
+        // The figure itself: floating in the upper half, 47-93 m.
+        footprint: [
+          { x: 45, y: 45 },
+          { x: 55, y: 45 },
+          { x: 55, y: 55 },
+          { x: 45, y: 55 },
+        ],
+        heightInMeters: 93,
+        minHeightInMeters: 47,
+      },
+    ],
+    architecture,
+  };
+  const layer = createBuildingLayer(flatCity([statue]));
+  const group = layer.getObjectByName('footprint:statue')!;
+  const figure = layer.getObjectByName('monument-figure:statue')!;
+  expect(figure).toBeInstanceOf(THREE.Mesh);
+  // A raised torch arm with an emissive flame finishes the figure.
+  expect(layer.getObjectByName('monument-torch:statue')).toBeInstanceOf(
+    THREE.Mesh,
+  );
+  const bounds = new THREE.Box3().setFromObject(group);
+  // Flat base at terrain 25 m; the flame lands near the real 93 m top.
+  expect(bounds.max.y).toBeGreaterThan(25 + 93);
+  expect(bounds.max.y).toBeLessThan(25 + 98);
+  // The plinth does not become a solid 93 m block: the tallest geometry
+  // is only the narrow figure plus its arm.
+  const figureBounds = new THREE.Box3().setFromObject(figure);
+  expect(figureBounds.max.x - figureBounds.min.x).toBeLessThan(18);
+});
+
+it('gives cathedrals twin spired towers unless surveyed parts exist', () => {
+  const cathedral = {
+    id: 'lujan-like',
+    minCorner: { x: 20, y: 20 },
+    maxCorner: { x: 50, y: 80 },
+    heightInMeters: 26,
+    landmark: 'cathedral' as const,
+    presentation: { widthInMeters: 30, depthInMeters: 60, yawInRadians: 0 },
+    footprint: [
+      { x: 20, y: 20 },
+      { x: 50, y: 20 },
+      { x: 50, y: 80 },
+      { x: 20, y: 80 },
+    ],
+    architecture,
+  };
+  const layer = createBuildingLayer(flatCity([cathedral]));
+  const towers = layer.getObjectByName('cathedral-towers:lujan-like')!;
+  expect(towers).toBeInstanceOf(THREE.Group);
+  expect(towers.children).toHaveLength(8);
+  const bounds = new THREE.Box3().setFromObject(
+    layer.getObjectByName('footprint:lujan-like')!,
+  );
+  // Nave 26 m + tower rise (23.4) + spire + cross, well above the nave.
+  expect(bounds.max.y).toBeGreaterThan(25 + 26 + 18 + 8);
+
+  const surveyed = {
+    ...cathedral,
+    id: 'sagrada-like',
+    parts: [
+      {
+        footprint: [
+          { x: 32, y: 32 },
+          { x: 38, y: 32 },
+          { x: 38, y: 38 },
+          { x: 32, y: 38 },
+        ],
+        heightInMeters: 90,
+        minHeightInMeters: 26,
+      },
+    ],
+  };
+  const surveyedLayer = createBuildingLayer(flatCity([surveyed]));
+  // Surveyed towers win: no archetype towers, but the cross finial stays.
+  expect(
+    surveyedLayer.getObjectByName('cathedral-towers:sagrada-like'),
+  ).toBeUndefined();
+  expect(surveyedLayer.getObjectByName('cross:sagrada-like')).toBeInstanceOf(
+    THREE.Group,
+  );
+});
+
+it('renders stadiums as an open bowl and obelisks with a pyramidion tip', () => {
+  const stadium = {
+    id: 'bowl',
+    minCorner: { x: 20, y: 20 },
+    maxCorner: { x: 70, y: 60 },
+    heightInMeters: 16,
+    landmark: 'stadium' as const,
+    presentation: { widthInMeters: 50, depthInMeters: 40, yawInRadians: 0 },
+    footprint: [
+      { x: 20, y: 20 },
+      { x: 70, y: 20 },
+      { x: 70, y: 60 },
+      { x: 20, y: 60 },
+    ],
+    architecture,
+  };
+  const obelisk = {
+    id: 'obelisk',
+    minCorner: { x: 120, y: 20 },
+    maxCorner: { x: 127, y: 27 },
+    heightInMeters: 18,
+    landmark: 'monument' as const,
+    monumentShape: 'obelisk' as const,
+    presentation: { widthInMeters: 7, depthInMeters: 7, yawInRadians: 0 },
+    footprint: [
+      { x: 120, y: 20 },
+      { x: 127, y: 20 },
+      { x: 127, y: 27 },
+      { x: 120, y: 27 },
+    ],
+    architecture,
+  };
+  const layer = createBuildingLayer(flatCity([stadium, obelisk]));
+  // No flat roof slab over the bowl: pitch sits at 52% of the rim height.
+  const pitch = layer.getObjectByName('stadium-pitch:bowl')!;
+  expect(pitch).toBeInstanceOf(THREE.Mesh);
+  layer.updateMatrixWorld(true);
+  const pitchBounds = new THREE.Box3().setFromObject(pitch);
+  expect(pitchBounds.max.y).toBeCloseTo(25 + 16 * 0.52);
+  expect(layer.getObjectByName('stadium-bowl:bowl')).toBeInstanceOf(THREE.Mesh);
+  // Obelisk: tapered shaft + pyramidion reaches exactly its 18 m, no more.
+  const obeliskGroup = layer.getObjectByName('footprint:obelisk')!;
+  const obeliskBounds = new THREE.Box3().setFromObject(obeliskGroup);
+  expect(obeliskBounds.max.y).toBeCloseTo(25 + 18);
+  expect(layer.getObjectByName('monument-torch:obelisk')).toBeUndefined();
 });
 
 it('chunks instances spatially instead of creating meshes per building', () => {

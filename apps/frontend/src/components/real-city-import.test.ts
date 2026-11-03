@@ -78,6 +78,65 @@ describe('elementsFromGeoJson', () => {
     expect(parsed.bounds.east).toBeCloseTo(2.165, 6);
   });
 
+  it('keeps polygon inner rings as holes and reads Spanish/cased aliases', () => {
+    const parsed = elementsFromGeoJson({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { kind: 'iglesia', Altura: '24', Niveles: '3' },
+          geometry: {
+            type: 'Polygon',
+            coordinates: [
+              [
+                [2.16, 41.39],
+                [2.161, 41.39],
+                [2.161, 41.391],
+                [2.16, 41.391],
+                [2.16, 41.39],
+              ],
+              [
+                [2.1602, 41.3902],
+                [2.1604, 41.3902],
+                [2.1604, 41.3904],
+                [2.1602, 41.3904],
+                [2.1602, 41.3902],
+              ],
+            ],
+          },
+        },
+      ],
+    });
+    const element = parsed.elements[0]!;
+    expect(element.type).toBe('way');
+    if (element.type === 'way') {
+      expect(element.holes).toHaveLength(1);
+      expect(element.holes![0]).toHaveLength(5);
+    }
+    expect(element.tags).toMatchObject({ height: '24' });
+  });
+
+  it('maps monument points to node elements', () => {
+    const parsed = elementsFromGeoJson({
+      type: 'FeatureCollection',
+      features: [
+        {
+          type: 'Feature',
+          properties: { kind: 'estatua', heightInMeters: 20 },
+          geometry: { type: 'Point', coordinates: [2.162, 41.394] },
+        },
+      ],
+    });
+    expect(parsed.skippedCount).toBe(0);
+    expect(parsed.elements).toHaveLength(1);
+    expect(parsed.elements[0]).toMatchObject({
+      type: 'node',
+      tags: { tourism: 'artwork', height: '20' },
+      lat: 41.394,
+      lon: 2.162,
+    });
+  });
+
   it('rejects empty or local-coordinate content', () => {
     expect(() =>
       elementsFromGeoJson({ type: 'FeatureCollection', features: [] }),

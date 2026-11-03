@@ -5,7 +5,7 @@ import {
   worldPixelsToLatLon,
   type LatLon,
 } from './map-projection';
-import type { OsmWayInput } from './real-city-model';
+import type { OsmElementInput } from './real-city-model';
 
 export interface ZoneSelection {
   center: LatLon;
@@ -37,7 +37,7 @@ export function ZonePicker(props: {
   onViewCenterChange(center: LatLon): void;
   selection: ZoneSelection;
   onSelectionChange(selection: ZoneSelection): void;
-  planElements?: OsmWayInput[];
+  planElements?: OsmElementInput[];
 }) {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 320 });
@@ -98,6 +98,7 @@ export function ZonePicker(props: {
   const planPaths = { filled: '', stroked: '' };
   if (props.planElements && size.width > 0) {
     for (const element of props.planElements) {
+      if (element.type !== 'way') continue;
       const geometry = element.geometry ?? [];
       if (geometry.length < 2) continue;
       const path = geometry

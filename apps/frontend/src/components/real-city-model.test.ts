@@ -143,6 +143,37 @@ function fixture(): RealCitySource {
       geometry: [at(5, 205), at(10, 205), at(10, 210), at(5, 210), at(5, 205)],
     },
     {
+      // Statue-like outline: building AND building:part at once (as OSM
+      // tags the Statue of Liberty), with a taller part stacked on top.
+      type: 'way',
+      id: 31,
+      tags: {
+        building: 'yes',
+        'building:part': 'yes',
+        tourism: 'attraction',
+        height: '10',
+      },
+      geometry: [
+        at(60, 180),
+        at(70, 180),
+        at(70, 190),
+        at(60, 190),
+        at(60, 180),
+      ],
+    },
+    {
+      type: 'way',
+      id: 32,
+      tags: { 'building:part': 'yes', height: '30', min_height: '10' },
+      geometry: [
+        at(63, 183),
+        at(67, 183),
+        at(67, 187),
+        at(63, 187),
+        at(63, 183),
+      ],
+    },
+    {
       type: 'way',
       id: 30,
       tags: { leisure: 'park' },
@@ -229,7 +260,7 @@ describe('createRealCity', () => {
 
   it('converts building footprints to contained rotated rectangles with height provenance', () => {
     const { city, metadata } = createRealCity(fixture());
-    expect(city.buildings).toHaveLength(7);
+    expect(city.buildings).toHaveLength(8);
     const measured = city.buildings[0]!;
     expect(measured.heightInMeters).toBe(21);
     const shop = city.buildings[1]!;
@@ -241,7 +272,7 @@ describe('createRealCity', () => {
     expect(shop.maxCorner.y - shop.minCorner.y).toBeGreaterThan(28);
     expect(shop.presentation!.widthInMeters).toBeCloseTo(21.2, 0);
     expect(Math.abs(shop.presentation!.yawInRadians)).toBeGreaterThan(0.5);
-    expect(metadata.measuredBuildingHeights).toBe(4);
+    expect(metadata.measuredBuildingHeights).toBe(5);
     expect(metadata.estimatedBuildingHeights).toBe(3);
     expect(city.buildings[2]!.heightInMeters).toBeGreaterThanOrEqual(6);
     expect(city.district!.parks).toHaveLength(1);
@@ -286,7 +317,132 @@ describe('createRealCity', () => {
     const hospital = city.buildings.find((b) => b.landmark === 'health')!;
     expect(hospital).toBeDefined();
     expect(hospital.heightInMeters).toBe(9);
-    expect(metadata.landmarkBuildings).toBe(4);
+    expect(metadata.landmarkBuildings).toBe(5);
+  });
+
+  it('attaches floating statue volumes to their pedestal and maps point monuments', () => {
+    const source = fixture();
+    source.elements.push(
+      {
+        type: 'way',
+        id: 40,
+        tags: { building: 'yes', tourism: 'attraction', height: '10' },
+        geometry: [at(15, 15), at(55, 15), at(55, 55), at(15, 55), at(15, 15)],
+      },
+      {
+        // Statue body: a building that only exists from 47 m upwards.
+        type: 'way',
+        id: 41,
+        tags: { building: 'yes', height: '93', min_height: '47' },
+        geometry: [at(30, 30), at(40, 30), at(40, 40), at(30, 40), at(30, 30)],
+      },
+      { type: 'node', id: 50, tags: { tourism: 'artwork' }, ...at(150, 30) },
+      // A point monument already covered by a footprint building is dropped.
+      { type: 'node', id: 51, tags: { tourism: 'artwork' }, ...at(35, 35) },
+    );
+    const { city, metadata } = createRealCity(source);
+    // No ground-extruded 93 m slab: the figure is a part of the pedestal.
+    expect(city.buildings.some((b) => b.heightInMeters === 93)).toBe(false);
+    const pedestal = city.buildings.find((b) =>
+      (b.parts ?? []).some(
+        (part) => part.minHeightInMeters === 47 && part.heightInMeters === 93,
+      ),
+    )!;
+    expect(pedestal).toBeDefined();
+    expect(pedestal.heightInMeters).toBe(10);
+    const monuments = city.buildings.filter((b) => b.landmark === 'monument');
+    expect(monuments).toHaveLength(1);
+    expect(monuments[0]!.heightInMeters).toBe(12);
+    expect(metadata.landmarkBuildings).toBeGreaterThanOrEqual(6);
+  });
+
+  it('classifies building=obelisk ways as obelisk monuments', () => {
+    const source = fixture();
+    source.elements.push({
+      type: 'way',
+      id: 48,
+      tags: { building: 'obelisk', tourism: 'attraction', height: '60' },
+      geometry: [at(58, 20), at(64, 20), at(64, 26), at(58, 26), at(58, 20)],
+    });
+    const { city } = createRealCity(source);
+    const obelisk = city.buildings.find(
+      (b) => b.landmark === 'monument' && b.heightInMeters === 60,
+    )!;
+    expect(obelisk).toBeDefined();
+    expect(obelisk.monumentShape).toBe('obelisk');
+  });
+
+  it('classifies cathedrals and wikidata churches above plain churches', () => {
+    const source = fixture();
+    source.elements.push(
+      {
+        type: 'way',
+        id: 46,
+        tags: { building: 'cathedral' },
+        geometry: [
+          at(90, 120),
+          at(110, 120),
+          at(110, 140),
+          at(90, 140),
+          at(90, 120),
+        ],
+      },
+      {
+        type: 'way',
+        id: 47,
+        tags: { building: 'church', wikidata: 'Q12345' },
+        geometry: [
+          at(145, 95),
+          at(155, 95),
+          at(155, 105),
+          at(145, 105),
+          at(145, 95),
+        ],
+      },
+    );
+    const { city } = createRealCity(source);
+    const cathedrals = city.buildings.filter((b) => b.landmark === 'cathedral');
+    expect(cathedrals).toHaveLength(2);
+    // Cathedral nave estimate clears the 24 m floor (towers rise above).
+    expect(cathedrals.every((b) => b.heightInMeters >= 24)).toBe(true);
+    // The fixture's plain church stays a plain church.
+    expect(city.buildings.some((b) => b.landmark === 'religious')).toBe(true);
+  });
+
+  it('keeps GeoJSON-style courtyard holes on way buildings', () => {
+    const source = fixture();
+    source.elements.push({
+      type: 'way',
+      id: 45,
+      tags: { building: 'church', height: '20' },
+      geometry: [
+        at(90, 170),
+        at(130, 170),
+        at(130, 210),
+        at(90, 210),
+        at(90, 170),
+      ],
+      holes: [
+        [at(105, 185), at(115, 185), at(115, 195), at(105, 195), at(105, 185)],
+      ],
+    });
+    const { city } = createRealCity(source);
+    const church = city.buildings.find(
+      (b) => b.landmark === 'religious' && b.heightInMeters === 20,
+    )!;
+    expect(church).toBeDefined();
+    expect(church.footprintHoles).toHaveLength(1);
+    expect(church.footprintHoles![0]).toHaveLength(4);
+  });
+
+  it('keeps buildings that are also building:part (statue outlines)', () => {
+    const { city } = createRealCity(fixture());
+    const statue = city.buildings.find((b) => b.landmark === 'civic')!;
+    expect(statue).toBeDefined();
+    expect(statue.heightInMeters).toBe(10);
+    expect(
+      statue.parts?.map((part) => part.heightInMeters).sort((a, b) => a - b),
+    ).toEqual([10, 30]);
   });
 
   it('attaches 3D parts to their parent building and drops strays', () => {
@@ -301,7 +457,7 @@ describe('createRealCity', () => {
     });
     // Parts are never standalone buildings.
     expect(city.buildings.every((b) => !b.id.includes('part'))).toBe(true);
-    expect(city.buildings).toHaveLength(7);
+    expect(city.buildings).toHaveLength(8);
   });
 
   it('gives churches a representative estimated height and landmark flag', () => {

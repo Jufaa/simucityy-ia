@@ -30,6 +30,8 @@ export interface OsmWayInput {
   id: number;
   tags?: Record<string, string>;
   geometry?: OsmGeometryPoint[];
+  /** Courtyard rings (GeoJSON polygon inner rings), if the source has them. */
+  holes?: OsmGeometryPoint[][];
 }
 
 export interface OsmRelationInput {
@@ -43,7 +45,15 @@ export interface OsmRelationInput {
   }[];
 }
 
-export type OsmElementInput = OsmWayInput | OsmRelationInput;
+export interface OsmNodeInput {
+  type: 'node';
+  id: number;
+  tags?: Record<string, string>;
+  lat: number;
+  lon: number;
+}
+
+export type OsmElementInput = OsmWayInput | OsmRelationInput | OsmNodeInput;
 
 export interface RealCitySource {
   name: string;
@@ -81,17 +91,33 @@ const RELIGIOUS_BUILDINGS = new Set([
   'monastery',
 ]);
 
-export type LandmarkKind = 'religious' | 'health' | 'stadium' | 'civic';
+export type LandmarkKind =
+  'religious' | 'cathedral' | 'health' | 'stadium' | 'civic' | 'monument';
 
-/** Standout buildings (landmarks) render exact and 1:1 where data allows. */
+/**
+ * Landmark tiers from OSM tags. Distinctive buildings get richer
+ * archetypes: cathedrals/basílicas (or places of worship notable enough
+ * to carry a Wikidata id, e.g. Luján) render twin towers, ordinary
+ * churches a single spire, statues a modelled figure, obelisks a shaft.
+ */
 export function landmarkKindFor(
   tags: Record<string, string>,
 ): LandmarkKind | undefined {
+  if (tags.building === 'cathedral' || tags.building === 'basilica')
+    return 'cathedral';
   if (
     RELIGIOUS_BUILDINGS.has(tags.building ?? '') ||
     tags.amenity === 'place_of_worship'
   )
-    return 'religious';
+    return tags.wikidata ? 'cathedral' : 'religious';
+  if (
+    tags.tourism === 'artwork' ||
+    tags.monument !== undefined ||
+    tags.building === 'obelisk' ||
+    ['monument', 'memorial'].includes(tags.historic ?? '') ||
+    ['obelisk', 'column', 'statue'].includes(tags.man_made ?? '')
+  )
+    return 'monument';
   if (
     ['hospital', 'clinic', 'doctors', 'dentists'].includes(
       tags.amenity ?? '',
@@ -561,6 +587,10 @@ export function createRealCity(
     osmId: number;
   }
   const shapes: FootprintShape[] = [];
+  // Volumes that start above ground (building + min_height, e.g. the copper
+  // figure of the Statue of Liberty at 46.9-93 m) are not ground buildings:
+  // they attach to their pedestal building as 3D parts below.
+  const floatingVolumes: FootprintShape[] = [];
   for (const element of elements) {
     const tags = element.tags ?? {};
     const isPark =
@@ -571,8 +601,10 @@ export function createRealCity(
       );
     const isBuilding = tags.building !== undefined && tags.building !== 'no';
     // building:part elements are 3D detail of a parent building, never
-    // standalone buildings; they are collected separately below.
-    if (tags['building:part'] !== undefined) continue;
+    // standalone buildings; they are collected separately below. Elements
+    // tagged BOTH building and building:part (e.g. the Statue of Liberty
+    // outline) are real buildings too and must not be dropped.
+    if (tags['building:part'] !== undefined && !isBuilding) continue;
     const isLandmarkShape = landmarkKindFor(tags) !== undefined;
     if (!isBuilding && !isPark && !isLandmarkShape) continue;
     if (element.type === 'way') {
@@ -584,10 +616,32 @@ export function createRealCity(
           Math.abs(ring[0]!.y - ring.at(-1)!.y) > 1e-6)
       )
         ring.push({ ...ring[0]! });
-      if (ring.length >= 4)
-        shapes.push({ ring, holes: [], tags, osmId: element.id });
+      if (ring.length >= 4) {
+        const minHeight = Number.parseFloat(tags.min_height ?? '');
+        if (isBuilding && Number.isFinite(minHeight) && minHeight > 0)
+          floatingVolumes.push({ ring, holes: [], tags, osmId: element.id });
+        else
+          shapes.push({
+            ring,
+            holes: (element.holes ?? [])
+              .map((hole) => {
+                const projected = hole.map(project);
+                if (
+                  projected.length > 1 &&
+                  (Math.abs(projected[0]!.x - projected.at(-1)!.x) > 1e-6 ||
+                    Math.abs(projected[0]!.y - projected.at(-1)!.y) > 1e-6)
+                )
+                  projected.push({ ...projected[0]! });
+                return projected;
+              })
+              .filter((hole) => hole.length >= 4),
+            tags,
+            osmId: element.id,
+          });
+      }
       continue;
     }
+    if (element.type === 'node') continue;
     const memberSegments = (role: 'outer' | 'inner') =>
       (element.members ?? [])
         .filter(
@@ -683,7 +737,7 @@ export function createRealCity(
       heightInMeters = floors * 3;
     }
     const landmark = landmarkKindFor(tags);
-    const religious = landmark === 'religious';
+    const religious = landmark === 'religious' || landmark === 'cathedral';
     if (landmark === 'stadium' && !heightMeasured) {
       // No surveyed height in OSM for most stadiums: representative bowl
       // height scaled by footprint, counted as estimated.
@@ -694,12 +748,14 @@ export function createRealCity(
         ),
       );
     }
-    if (religious && heightInMeters < 18) {
+    const naveFloorInMeters = landmark === 'cathedral' ? 24 : 18;
+    if (religious && heightInMeters < naveFloorInMeters) {
       // A nave is not two storeys: OSM often tags churches with the base
       // building's levels (the Sagrada Familia reads 6 m). Give landmarks a
-      // representative, explicitly-estimated height scaled by footprint.
+      // representative, explicitly-estimated height scaled by footprint;
+      // cathedral towers rise above this in the renderer.
       heightInMeters = Math.round(
-        18 + Math.min(22, Math.abs(polygonArea(polygon)) / 350),
+        naveFloorInMeters + Math.min(22, Math.abs(polygonArea(polygon)) / 350),
       );
       heightMeasured = false;
     }
@@ -719,6 +775,14 @@ export function createRealCity(
       },
       use: commercial ? 'commercial' : 'residential',
       ...(landmark ? { landmark } : {}),
+      ...(landmark === 'monument'
+        ? {
+            monumentShape:
+              tags.man_made === 'obelisk' || tags.building === 'obelisk'
+                ? ('obelisk' as const)
+                : ('figure' as const),
+          }
+        : {}),
       footprint: polygon.map((point) => ({ ...point })),
       ...(shape.holes.length
         ? {
@@ -746,9 +810,37 @@ export function createRealCity(
     ring: Point[];
     heightInMeters: number;
     minHeightInMeters: number;
+    /** Set for building+min_height volumes: if no pedestal building
+     * contains them, they still become a standalone monument building. */
+    floatingTags?: Record<string, string>;
   }[] = [];
+  for (const floating of floatingVolumes) {
+    const tags = floating.tags;
+    const taggedHeight = Number.parseFloat(tags.height ?? '');
+    const taggedLevels = Number.parseFloat(tags['building:levels'] ?? '');
+    const heightInMeters = Number.isFinite(taggedHeight)
+      ? taggedHeight
+      : Number.isFinite(taggedLevels)
+        ? taggedLevels * 3
+        : Number.NaN;
+    const minHeightInMeters = Number.parseFloat(tags.min_height ?? '');
+    if (
+      !Number.isFinite(heightInMeters) ||
+      heightInMeters <= minHeightInMeters ||
+      heightInMeters > 260
+    )
+      continue;
+    const polygon = floating.ring.slice(0, -1);
+    if (Math.abs(polygonArea(polygon)) < 1) continue;
+    partCandidates.push({
+      ring: polygon,
+      heightInMeters,
+      minHeightInMeters,
+      floatingTags: tags,
+    });
+  }
   for (const element of elements) {
-    if (element.type !== 'way' || !element.geometry) continue;
+    if (element.type === 'node') continue;
     const tags = element.tags ?? {};
     if (tags['building:part'] === undefined) continue;
     const taggedHeight = Number.parseFloat(tags.height ?? '');
@@ -768,6 +860,28 @@ export function createRealCity(
     const minHeightInMeters = Number.isFinite(taggedMin)
       ? Math.max(0, Math.min(taggedMin, heightInMeters))
       : 0;
+    if (element.type === 'relation') {
+      // Multipolygon 3D parts (stitched outer rings), same as buildings.
+      const segments = (element.members ?? [])
+        .filter(
+          (member) =>
+            member.type === 'way' &&
+            (member.role === 'outer' || !member.role) &&
+            member.geometry,
+        )
+        .map((member) => member.geometry!.map(project));
+      for (const ring of joinSegments(segments)) {
+        const polygon = ring.slice(0, -1);
+        if (Math.abs(polygonArea(polygon)) < 1) continue;
+        partCandidates.push({
+          ring: polygon,
+          heightInMeters,
+          minHeightInMeters,
+        });
+      }
+      continue;
+    }
+    if (!element.geometry) continue;
     const ring = element.geometry.map(project);
     if (
       ring.length > 1 &&
@@ -780,21 +894,39 @@ export function createRealCity(
     if (Math.abs(polygonArea(polygon)) < 1) continue;
     partCandidates.push({ ring: polygon, heightInMeters, minHeightInMeters });
   }
+  const attachedParts = new Set<(typeof partCandidates)[number]>();
   for (const part of partCandidates) {
     const centroid = {
       x: part.ring.reduce((sum, p) => sum + p.x, 0) / part.ring.length,
       y: part.ring.reduce((sum, p) => sum + p.y, 0) / part.ring.length,
     };
-    const parent = buildings.find(
-      (building) =>
-        building.footprint &&
-        centroid.x >= building.minCorner.x - 2 &&
-        centroid.x <= building.maxCorner.x + 2 &&
-        centroid.y >= building.minCorner.y - 2 &&
-        centroid.y <= building.maxCorner.y + 2 &&
-        pointInPolygon(centroid, building.footprint),
-    );
+    const parent =
+      buildings.find(
+        (building) =>
+          building.footprint &&
+          centroid.x >= building.minCorner.x - 2 &&
+          centroid.x <= building.maxCorner.x + 2 &&
+          centroid.y >= building.minCorner.y - 2 &&
+          centroid.y <= building.maxCorner.y + 2 &&
+          pointInPolygon(centroid, building.footprint),
+      ) ??
+      // Towers modelled slightly outside the base outline still belong to
+      // the building whose (expanded) bounds contain them: smallest first.
+      buildings
+        .filter(
+          (building) =>
+            centroid.x >= building.minCorner.x - 3 &&
+            centroid.x <= building.maxCorner.x + 3 &&
+            centroid.y >= building.minCorner.y - 3 &&
+            centroid.y <= building.maxCorner.y + 3,
+        )
+        .sort(
+          (a, b) =>
+            (a.maxCorner.x - a.minCorner.x) * (a.maxCorner.y - a.minCorner.y) -
+            (b.maxCorner.x - b.minCorner.x) * (b.maxCorner.y - b.minCorner.y),
+        )[0];
     if (!parent) continue;
+    attachedParts.add(part);
     const buildingPart: BuildingPart = {
       footprint: part.ring,
       heightInMeters: part.heightInMeters,
@@ -802,11 +934,119 @@ export function createRealCity(
     };
     (parent.parts ??= []).push(buildingPart);
   }
+  // Floating volumes with no pedestal underneath still appear, as a
+  // monument whose plinth rises to min_height and whose figure is the part.
+  for (const part of partCandidates) {
+    if (!part.floatingTags || attachedParts.has(part)) continue;
+    const rect = orientedBoundingRect(part.ring);
+    if (!rect) continue;
+    const cos = Math.cos(rect.angleInRadians);
+    const sin = Math.sin(rect.angleInRadians);
+    const hx =
+      (Math.abs(cos) * rect.widthInMeters +
+        Math.abs(sin) * rect.depthInMeters) /
+      2;
+    const hz =
+      (Math.abs(sin) * rect.widthInMeters +
+        Math.abs(cos) * rect.depthInMeters) /
+      2;
+    measuredBuildingHeights++;
+    buildings.push({
+      id: `real-building-${buildings.length}`,
+      minCorner: { x: rect.center.x - hx, y: rect.center.y - hz },
+      maxCorner: { x: rect.center.x + hx, y: rect.center.y + hz },
+      heightInMeters: part.heightInMeters,
+      presentation: {
+        widthInMeters: rect.widthInMeters,
+        depthInMeters: rect.depthInMeters,
+        yawInRadians: -rect.angleInRadians,
+      },
+      landmark: landmarkKindFor(part.floatingTags) ?? 'monument',
+      ...(part.floatingTags.man_made === 'obelisk' ||
+      part.floatingTags.building === 'obelisk'
+        ? { monumentShape: 'obelisk' as const }
+        : {}),
+      footprint: part.ring.map((point) => ({ ...point })),
+      parts: [
+        {
+          footprint: part.ring,
+          heightInMeters: part.heightInMeters,
+          minHeightInMeters: part.minHeightInMeters,
+        },
+      ],
+      architecture: {
+        style: 'house',
+        floors: Math.max(1, Math.round(part.heightInMeters / 3)),
+        roof: 'flat',
+        roofRiseInMeters: 0,
+        facade: 'stone',
+        entranceSide: 'south',
+        balconyDepthInMeters: 0,
+      },
+    });
+  }
+  // Monuments mapped only as a point (statues, obelisks, memorials are
+  // often OSM nodes) get a declared-estimate plinth + figure building,
+  // unless a footprint building already covers the point.
+  for (const element of elements) {
+    if (element.type !== 'node') continue;
+    const tags = element.tags ?? {};
+    if (landmarkKindFor(tags) !== 'monument') continue;
+    const point = project(element);
+    if (point.x < 0 || point.y < 0 || point.x > extentX || point.y > extentY)
+      continue;
+    if (
+      buildings.some(
+        (building) =>
+          building.footprint && pointInPolygon(point, building.footprint),
+      )
+    )
+      continue;
+    const taggedHeight = Number.parseFloat(tags.height ?? '');
+    const heightMeasured =
+      Number.isFinite(taggedHeight) && taggedHeight >= 2 && taggedHeight <= 260;
+    const columnar = ['obelisk', 'column'].includes(tags.man_made ?? '');
+    const heightInMeters = heightMeasured ? taggedHeight : columnar ? 18 : 12;
+    if (heightMeasured) measuredBuildingHeights++;
+    else estimatedBuildingHeights++;
+    const half = (columnar ? 5 : 7) / 2;
+    const footprint = [
+      { x: point.x - half, y: point.y - half },
+      { x: point.x + half, y: point.y - half },
+      { x: point.x + half, y: point.y + half },
+      { x: point.x - half, y: point.y + half },
+    ];
+    buildings.push({
+      id: `real-building-${buildings.length}`,
+      minCorner: { x: point.x - half, y: point.y - half },
+      maxCorner: { x: point.x + half, y: point.y + half },
+      heightInMeters,
+      presentation: {
+        widthInMeters: half * 2,
+        depthInMeters: half * 2,
+        yawInRadians: 0,
+      },
+      landmark: 'monument',
+      ...(tags.man_made === 'obelisk'
+        ? { monumentShape: 'obelisk' as const }
+        : {}),
+      footprint,
+      architecture: {
+        style: 'house',
+        floors: Math.max(1, Math.round(heightInMeters / 3)),
+        roof: 'flat',
+        roofRiseInMeters: 0,
+        facade: 'stone',
+        entranceSide: 'south',
+        balconyDepthInMeters: 0,
+      },
+    });
+  }
   for (const building of buildings)
-    if (building.parts && building.parts.length > 120)
+    if (building.parts && building.parts.length > 400)
       building.parts = building.parts
         .sort((a, b) => b.heightInMeters - a.heightInMeters)
-        .slice(0, 120);
+        .slice(0, 400);
   const landmarkBuildings = buildings.filter(
     (building) => building.landmark,
   ).length;
