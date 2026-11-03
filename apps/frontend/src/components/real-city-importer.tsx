@@ -22,6 +22,7 @@ import {
   ZonePicker,
   type ZoneSelection,
 } from './zone-picker';
+import { LoadingScreen } from './loading-screen';
 
 const primaryButtonStyle: CSSProperties = {
   width: '100%',
@@ -251,6 +252,7 @@ export function RealCityImporter(props: {
 
   return (
     <section aria-label="Importar zona real" style={{ margin: '4px 0' }}>
+      {busy && <LoadingScreen message={stage ?? 'Importando la zona…'} />}
       <p style={{ fontSize: 12, marginTop: 0 }}>
         Buscá una ciudad o barrio, o subí tu plano GeoJSON. Arrastrá el cuadrado
         sobre el mapa para elegir dónde va la zona fija (1000 m por lado) y

@@ -586,11 +586,13 @@ export function createRealCity(
       const edgeKey = [from.id, to.id].sort().join('|');
       if (edgeKeys.has(edgeKey)) continue;
       edgeKeys.add(edgeKey);
+      const streetName = element.tags?.name?.trim();
       const road: Road = {
         id: `real-road-${roads.length}`,
         start: { x: from.x, y: from.y },
         end: { x: to.x, y: to.y },
         profile: { ...profile },
+        ...(streetName ? { name: streetName } : {}),
       };
       roads.push(road);
       edges.push({
@@ -1224,7 +1226,87 @@ export function createRealCity(
         radiusInMeters: 2.2 + parkRandom() * 1.2,
       });
     }
+    // Benches and lamps so parks read as furnished public space, not lawns.
+    const furniture: ('bench' | 'lamp')[] = [
+      ...Array.from(
+        { length: Math.min(6, Math.floor((width * depth) / 2200)) },
+        () => 'bench' as const,
+      ),
+      ...Array.from(
+        { length: Math.min(4, Math.floor((width * depth) / 3200)) },
+        () => 'lamp' as const,
+      ),
+    ];
+    for (const kind of furniture) {
+      parkAmenities.push({
+        id: `real-park-${kind}-${parkAmenities.length}`,
+        parkId: park.id,
+        kind,
+        position: {
+          x: park.minCorner.x + 2 + parkRandom() * (width - 4),
+          y: park.minCorner.y + 2 + parkRandom() * (depth - 4),
+        },
+        rotation: parkRandom() * Math.PI,
+        radiusInMeters: kind === 'bench' ? 0.9 : 0.35,
+      });
+    }
   }
+
+  // Street trees along avenues and local streets: deterministic spacing,
+  // offset onto the sidewalk, never inside a building or another tree.
+  // Rendering-only amenities (same channel as park trees).
+  const streetRandom = createCityRandom((seed ^ 0x27d4eb2f) >>> 0);
+  const MAX_STREET_TREES = 350;
+  const streetTrees: typeof parkAmenities = [];
+  for (const road of roads) {
+    if (streetTrees.length >= MAX_STREET_TREES) break;
+    if (!road.profile?.motorVehiclesAllowed) continue;
+    const dx = road.end.x - road.start.x;
+    const dy = road.end.y - road.start.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 30) continue;
+    const ux = dx / length;
+    const uy = dy / length;
+    const offset =
+      road.profile.widthInMeters / 2 + road.profile.sidewalkWidthInMeters + 0.8;
+    const steps = Math.floor(length / 28);
+    for (let step = 1; step < steps; step++) {
+      if (streetTrees.length >= MAX_STREET_TREES) break;
+      const side = step % 2 === 0 ? 1 : -1;
+      const along = step * 28 + (streetRandom() - 0.5) * 6;
+      const x = road.start.x + ux * along - uy * offset * side;
+      const y = road.start.y + uy * along + ux * offset * side;
+      if (x < 2 || y < 2 || x > extentX - 2 || y > extentY - 2) continue;
+      if (
+        buildings.some(
+          (building) =>
+            x > building.minCorner.x - 1.5 &&
+            x < building.maxCorner.x + 1.5 &&
+            y > building.minCorner.y - 1.5 &&
+            y < building.maxCorner.y + 1.5,
+        )
+      )
+        continue;
+      if (
+        streetTrees.some(
+          (tree) => Math.hypot(x - tree.position.x, y - tree.position.y) < 9,
+        ) ||
+        parkAmenities.some(
+          (tree) => Math.hypot(x - tree.position.x, y - tree.position.y) < 9,
+        )
+      )
+        continue;
+      streetTrees.push({
+        id: `real-street-tree-${streetTrees.length}`,
+        parkId: 'street',
+        kind: 'tree',
+        position: { x, y },
+        rotation: streetRandom() * Math.PI,
+        radiusInMeters: 1.9 + streetRandom() * 1.1,
+      });
+    }
+  }
+  parkAmenities.push(...streetTrees);
 
   const city: CityResponse = {
     config: {
