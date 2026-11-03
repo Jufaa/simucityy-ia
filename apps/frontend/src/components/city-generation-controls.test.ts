@@ -28,3 +28,21 @@ it('shows independent random generation and replay with the active generation mo
   expect(html).toContain('value="123"');
   expect(html).toContain('Perfil aleatorio');
 });
+
+it('offers district and large-city modes and reports the selected size without claiming AI', () => {
+  const html = renderToStaticMarkup(
+    createElement(CityGenerationControls, {
+      seed: 123,
+      randomized: false,
+      mode: 'city',
+      onModeChange: () => {},
+      onGenerate: () => {},
+      onRandom: () => {},
+    }),
+  );
+  expect(html).toContain('Escala urbana');
+  expect(html).toContain('Ciudad grande');
+  expect(html).toContain('Distrito');
+  expect(html).toContain('value="city" selected=""');
+  expect(html).toContain('Sin IA');
+});

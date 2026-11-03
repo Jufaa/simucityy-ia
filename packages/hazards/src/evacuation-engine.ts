@@ -20,6 +20,8 @@ type Agent = {
   edge: Arc | null;
   progress: number;
   arrival: number | null;
+  lastPlanEpoch: number;
+  lastPlanGeneration: number;
 };
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const finitePoint = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -31,6 +33,10 @@ export class EvacuationEngine {
   private readonly shelters: Shelter[];
   private readonly agents: Agent[];
   private elapsed = 0;
+  /** Bumps when shelter capacity frees; gates stranded replanning. */
+  private capacityGeneration = 0;
+  /** Bumps per advance call; a new call may bring new road closures. */
+  private planEpoch = 0;
 
   constructor(scenario: EvacuationScenario) {
     for (const node of scenario.roadGraph.nodes) {
@@ -112,6 +118,8 @@ export class EvacuationEngine {
           phase: 'home' as const,
           status: 'waiting' as const,
           route: [],
+          lastPlanEpoch: -1,
+          lastPlanGeneration: -1,
           shelter: null,
           edge: null,
           progress: 0,
@@ -167,7 +175,10 @@ export class EvacuationEngine {
   }
 
   private release(agent: Agent) {
-    if (agent.shelter) agent.shelter.reserved--;
+    if (agent.shelter) {
+      agent.shelter.reserved--;
+      this.capacityGeneration++;
+    }
     agent.shelter = null;
     agent.route = [];
   }
@@ -182,38 +193,112 @@ export class EvacuationEngine {
       )
     )
       return false;
-    const paths = new Map<
-      string,
-      { distance: number; key: string; route: Arc[] }
-    >();
-    paths.set(agent.nodeId, { distance: 0, key: '', route: [] });
+    // Dijkstra over parent pointers instead of materialized routes/keys:
+    // copying the full path and its tie-break key on every relaxation made
+    // planning quadratic on large graphs. The chosen route is unchanged:
+    // extraction settles smaller distances first (with positive lengths every
+    // candidate predecessor settles before its node), and equal distances
+    // still resolve by the lexicographically smallest arc/node key sequence,
+    // rebuilt from the parent chain only when a comparison is needed.
+    type PathInfo = {
+      distance: number;
+      parent: string | null;
+      arc: Arc | null;
+    };
+    const paths = new Map<string, PathInfo>();
+    paths.set(agent.nodeId, { distance: 0, parent: null, arc: null });
     const visited = new Set<string>();
-    while (true) {
-      let selected: string | null = null;
-      for (const [id, path] of paths) {
-        if (visited.has(id)) continue;
-        const best = selected === null ? null : paths.get(selected)!;
-        if (
-          !best ||
-          path.distance < best.distance ||
-          (path.distance === best.distance && compare(path.key, best.key) < 0)
-        )
-          selected = id;
+    const keyOf = (nodeId: string): string => {
+      const segments: string[] = [];
+      let current: string | null = nodeId;
+      while (current !== null) {
+        const info: PathInfo = paths.get(current)!;
+        if (info.arc === null || info.parent === null) break;
+        segments.push(`\0${info.arc.id}\0${current}`);
+        current = info.parent;
       }
-      if (selected === null) break;
-      visited.add(selected);
+      return segments.reverse().join('');
+    };
+    // Binary heap ordered by distance: same minimum extraction as a full
+    // scan, without the quadratic scan per node.
+    const heap: { id: string; distance: number }[] = [];
+    const heapPush = (entry: { id: string; distance: number }) => {
+      heap.push(entry);
+      let i = heap.length - 1;
+      while (i > 0) {
+        const parent = (i - 1) >> 1;
+        if (!(heap[i]!.distance < heap[parent]!.distance)) break;
+        [heap[i], heap[parent]] = [heap[parent]!, heap[i]!];
+        i = parent;
+      }
+    };
+    const heapPop = () => {
+      const top = heap[0]!;
+      const last = heap.pop()!;
+      if (heap.length) {
+        heap[0] = last;
+        let i = 0;
+        for (;;) {
+          const left = 2 * i + 1;
+          const right = left + 1;
+          let smallest = i;
+          if (
+            left < heap.length &&
+            heap[left]!.distance < heap[smallest]!.distance
+          )
+            smallest = left;
+          if (
+            right < heap.length &&
+            heap[right]!.distance < heap[smallest]!.distance
+          )
+            smallest = right;
+          if (smallest === i) break;
+          [heap[i], heap[smallest]] = [heap[smallest]!, heap[i]!];
+          i = smallest;
+        }
+      }
+      return top;
+    };
+    // Shelters with capacity right now; the nearest one wins, so the
+    // search can stop once every unsettled node is farther than the
+    // best shelter already settled (its route is final by then: any
+    // equal-distance predecessor settles earlier). Same chosen route.
+    const availableShelterNodes = new Set(
+      this.shelters
+        .filter(
+          (shelter) =>
+            shelter.active &&
+            shelter.occupancy + shelter.reserved < shelter.capacity,
+        )
+        .map((shelter) => shelter.nodeId),
+    );
+    let bestShelterDistance = Number.POSITIVE_INFINITY;
+    heapPush({ id: agent.nodeId, distance: 0 });
+    while (heap.length) {
+      if (heap[0]!.distance > bestShelterDistance) break;
+      const { id: selected } = heapPop();
+      if (visited.has(selected)) continue;
       const current = paths.get(selected)!;
+      visited.add(selected);
+      if (
+        availableShelterNodes.has(selected) &&
+        current.distance < bestShelterDistance
+      )
+        bestShelterDistance = current.distance;
       for (const arc of this.adjacency.get(selected)!) {
         if (blocked.has(arc.id) || visited.has(arc.to)) continue;
         const distance = current.distance + arc.length;
-        const key = `${current.key}\0${arc.id}\0${arc.to}`;
         const previous = paths.get(arc.to);
-        if (
-          !previous ||
-          distance < previous.distance ||
-          (distance === previous.distance && compare(key, previous.key) < 0)
-        )
-          paths.set(arc.to, { distance, key, route: [...current.route, arc] });
+        if (!previous || distance < previous.distance) {
+          paths.set(arc.to, { distance, parent: selected, arc });
+          heapPush({ id: arc.to, distance });
+        } else if (distance === previous.distance) {
+          const candidateKey = `${keyOf(selected)}\0${arc.id}\0${arc.to}`;
+          if (compare(candidateKey, keyOf(arc.to)) < 0) {
+            paths.set(arc.to, { distance, parent: selected, arc });
+            heapPush({ id: arc.to, distance });
+          }
+        }
       }
     }
     let selected: Shelter | null = null;
@@ -234,7 +319,15 @@ export class EvacuationEngine {
     if (!selected) return false;
     agent.shelter = selected;
     selected.reserved++;
-    agent.route = [...paths.get(selected.nodeId)!.route];
+    const route: Arc[] = [];
+    let cursor: string | null = selected.nodeId;
+    while (cursor !== null) {
+      const info: PathInfo = paths.get(cursor)!;
+      if (info.arc === null || info.parent === null) break;
+      route.push(info.arc);
+      cursor = info.parent;
+    }
+    agent.route = route.reverse();
     return true;
   }
 
@@ -251,19 +344,28 @@ export class EvacuationEngine {
         'Evacuation time increment must be finite and nonnegative.',
       );
     const blocked = new Set(blockedRoadEdgeIds);
+    this.planEpoch++;
     const end = this.elapsed + seconds;
     let time = this.elapsed;
     // Process common reaction/arrival events, not one citizen's whole interval first.
     // This keeps capacity allocation independent of the caller's time-step size.
+    // The blocked set is fixed for the whole call and routes planned
+    // during the call already avoid it, so a route only needs checking
+    // when its owner reaches a node: initially everyone, afterwards
+    // only agents who just finished crossing an edge.
+    const routeCheck = new Set(this.agents);
     while (true) {
-      for (const agent of this.agents) {
-        if (
-          agent.phase !== 'done' &&
-          agent.phase !== 'edge' &&
-          agent.shelter &&
-          agent.route.some((arc) => blocked.has(arc.id))
-        )
-          this.release(agent);
+      if (blocked.size > 0 && routeCheck.size > 0) {
+        for (const agent of routeCheck) {
+          if (agent.phase === 'edge') continue;
+          routeCheck.delete(agent);
+          if (
+            agent.phase !== 'done' &&
+            agent.shelter &&
+            agent.route.some((arc) => blocked.has(arc.id))
+          )
+            this.release(agent);
+        }
       }
       for (const agent of this.agents) {
         if (
@@ -280,9 +382,24 @@ export class EvacuationEngine {
           agent.status = 'evacuating';
           continue;
         }
-        if (!agent.shelter && !this.plan(agent, blocked)) {
-          agent.status = 'stranded';
-          continue;
+        if (!agent.shelter) {
+          // A failed plan can only succeed later if capacity freed or a
+          // new advance call brought different closures; retrying it on
+          // every micro-event made stranded citizens replan forever.
+          const stale =
+            agent.lastPlanEpoch !== this.planEpoch ||
+            agent.lastPlanGeneration !== this.capacityGeneration;
+          if (stale) {
+            agent.lastPlanEpoch = this.planEpoch;
+            agent.lastPlanGeneration = this.capacityGeneration;
+            if (!this.plan(agent, blocked)) {
+              agent.status = 'stranded';
+              continue;
+            }
+          } else {
+            agent.status = 'stranded';
+            continue;
+          }
         }
         agent.status = 'evacuating';
         if (agent.phase === 'home') agent.phase = 'connector';
@@ -361,7 +478,10 @@ export class EvacuationEngine {
         };
         if (length - agent.progress > 1e-9) continue;
         agent.position = { ...to };
-        if (agent.phase === 'edge') agent.nodeId = agent.edge!.to;
+        if (agent.phase === 'edge') {
+          agent.nodeId = agent.edge!.to;
+          routeCheck.add(agent);
+        }
         agent.edge = null;
         agent.progress = 0;
         agent.phase = 'node';

@@ -26,5 +26,6 @@ it('collects only small-detail objects by name prefix', () => {
 
 it('shows details only when the camera is near', () => {
   expect(detailsVisible(100, 200)).toBe(true);
+  expect(detailsVisible(150, 200)).toBe(false);
   expect(detailsVisible(300, 200)).toBe(false);
 });

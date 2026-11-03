@@ -1,4 +1,5 @@
-import type { Block, CityResponse } from './city-types';
+import type { Block, CityResponse, Road } from './city-types';
+import { getRoadProfile } from './road-profile';
 import { sampleTerrainHeight } from './terrain-view';
 import { bridgeAtPoint } from './road-surface';
 import { waterSurfaceAt } from './organic-city-model';
@@ -59,7 +60,8 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
       (p) => p.kind === 'crosswalk' || p.kind === 'building-access',
     ) ?? []),
   ];
-  const roadHalf = district.roadWidthInMeters / 2;
+  const profiledRoads = city.roads.filter((road) => road.profile);
+  let activeRoad: Road | undefined;
   const nodes = city.roadGraph?.nodes ?? [];
   const add = (
     kind: CityLifeKind,
@@ -98,6 +100,30 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
     )
       return;
     if (
+      profiledRoads.some((road) => {
+        if (road === activeRoad) return false;
+        const dx = road.end.x - road.start.x,
+          dz = road.end.y - road.start.y;
+        const lengthSquared = dx * dx + dz * dz;
+        const t =
+          lengthSquared === 0
+            ? 0
+            : Math.max(
+                0,
+                Math.min(
+                  1,
+                  ((x - road.start.x) * dx + (z - road.start.y) * dz) /
+                    lengthSquared,
+                ),
+              );
+        return (
+          Math.hypot(x - road.start.x - t * dx, z - road.start.y - t * dz) <
+          getRoadProfile(road).widthInMeters / 2 + Math.hypot(length, width) / 2
+        );
+      })
+    )
+      return;
+    if (
       district.urban?.amenities.some(
         (p) =>
           Math.hypot(x - p.position.x, z - p.position.y) <
@@ -119,6 +145,13 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
   };
   for (const road of roads) {
     if (items.length >= 600) break;
+    activeRoad = road;
+    const profile = getRoadProfile(
+      road,
+      district.roadWidthInMeters,
+      district.sidewalkWidthInMeters,
+    );
+    const roadHalf = profile.widthInMeters / 2;
     const dx = road.end.x - road.start.x,
       dz = road.end.y - road.start.y;
     const distance = Math.hypot(dx, dz);
@@ -159,7 +192,14 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
         t += 15 + random() * 6
       ) {
         const p = position(t, side * (roadHalf - 1.05));
-        if (roadHalf < 2.75 || nearJunction(p.x, p.z, 12)) continue;
+        if (
+          !profile.motorVehiclesAllowed ||
+          // Profiled roads reserve room for both parked bodies and moving lanes.
+          (road.profile !== undefined && profile.widthInMeters < 8) ||
+          roadHalf < 2.75 ||
+          nearJunction(p.x, p.z, 12)
+        )
+          continue;
         const choice = random();
         const kind =
           choice < 0.05
@@ -189,7 +229,7 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
                   ]!,
         );
       }
-      if (district.sidewalkWidthInMeters < 2) continue;
+      if (profile.sidewalkWidthInMeters < 2) continue;
       let slot = 0;
       for (let t = 14; t < distance - 12 && items.length < 600; t += 17) {
         const p = position(t, side * (roadHalf + 0.35));
@@ -203,12 +243,22 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
           'bollard',
           'utility-cabinet',
         ] as const;
-        const kind = kinds[slot++ % kinds.length]!;
+        const selectedKind = kinds[slot++ % kinds.length]!;
+        const kind =
+          selectedKind === 'bus-stop' && !profile.motorVehiclesAllowed
+            ? 'bollard'
+            : selectedKind;
         add(kind, p.x, p.z, rotation, kind === 'bus-stop' ? 0.5 : 0.55, 0.6);
       }
     }
   }
-  if (district.sidewalkWidthInMeters >= 2)
+  activeRoad = undefined;
+  if (
+    district.sidewalkWidthInMeters >= 2 ||
+    profiledRoads.some(
+      (road) => getRoadProfile(road).sidewalkWidthInMeters >= 2,
+    )
+  )
     for (const node of nodes) {
       if (
         node.x < 10 ||
@@ -218,7 +268,14 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
       )
         continue;
       const directions = new Set<string>();
+      let roadHalf = 0;
       for (const road of roads) {
+        const profile = getRoadProfile(
+          road,
+          district.roadWidthInMeters,
+          district.sidewalkWidthInMeters,
+        );
+        if (!profile.motorVehiclesAllowed) continue;
         const dx = road.end.x - road.start.x,
           dz = road.end.y - road.start.y,
           l2 = dx * dx + dz * dz;
@@ -234,6 +291,7 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
           ) > 0.1
         )
           continue;
+        roadHalf = Math.max(roadHalf, profile.widthInMeters / 2);
         if (t > 0.001)
           directions.add(`${Math.round(Math.atan2(-dz, -dx) * 100)}`);
         if (t < 0.999)
@@ -243,8 +301,8 @@ export function generateCityLife(city: CityResponse): CityLifeModel {
         for (const side of [-1, 1])
           add(
             'traffic-light',
-            node.x + side * (roadHalf + 0.35),
-            node.y + (roadHalf + 0.35),
+            node.x + side * (roadHalf + (profiledRoads.length ? 0.5 : 0.35)),
+            node.y + (roadHalf + (profiledRoads.length ? 0.5 : 0.35)),
             0,
             0.55,
             0.6,

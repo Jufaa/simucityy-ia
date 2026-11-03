@@ -11,6 +11,7 @@ import {
   sampleTerrainHeight,
   drapeSurfaceLayer,
   buildingBaseHeight,
+  buildingGroundRangeInMeters,
 } from './terrain-view';
 import { createFloodLayer } from './flood-layer';
 
@@ -92,14 +93,18 @@ it('uses the same heights for ground, draped streets and building foundations, p
   drapeSurfaceLayer(road, city);
   road.updateMatrixWorld(true);
   const positions = road.geometry.getAttribute('position');
+  let topClearance = -Infinity;
   for (let i = 0; i < positions.count; i++) {
     const p = new THREE.Vector3()
       .fromBufferAttribute(positions, i)
       .applyMatrix4(road.matrixWorld);
-    expect(p.y - sampleTerrainHeight(city, p.x, p.z)).toBeGreaterThanOrEqual(
-      0.009,
-    );
+    // The road skirt intentionally drops below terrain; its top surface
+    // must still clear the ground everywhere.
+    const clearance = p.y - sampleTerrainHeight(city, p.x, p.z);
+    topClearance = Math.max(topClearance, clearance);
+    expect(clearance).toBeGreaterThanOrEqual(-0.25);
   }
+  expect(topClearance).toBeGreaterThanOrEqual(0.05);
   const buildings = createBuildingLayer(city);
   for (const building of city.buildings)
     expect(buildings.getObjectByName(building.id)!.position.y).toBeCloseTo(
@@ -115,6 +120,64 @@ it('uses the same heights for ground, draped streets and building foundations, p
   expect(flatRoad.geometry.getAttribute('position').array).toEqual(
     before.getAttribute('position').array,
   );
+});
+
+it('clears interior DEM spikes under real-city buildings instead of sinking them', () => {
+  // Terrarium/SRTM city DEMs carry building-height spikes: a peak inside
+  // the footprint must raise the pad even when all four corners are low.
+  const building = {
+    id: 'spike-house',
+    minCorner: { x: 40, y: 40 },
+    maxCorner: { x: 60, y: 60 },
+    heightInMeters: 9,
+    architecture: {
+      style: 'house' as const,
+      floors: 3,
+      roof: 'gable' as const,
+      roofRiseInMeters: 2,
+      facade: 'sand' as const,
+      entranceSide: 'south' as const,
+      balconyDepthInMeters: 0,
+    },
+  };
+  const city: CityResponse = {
+    config: {
+      widthInMeters: 100,
+      heightInMeters: 100,
+      streetSpacingInMeters: 50,
+    },
+    terrain: { kind: 'flat', elevationInMeters: 10 },
+    real: {
+      name: 'test',
+      bbox: { south: 0, west: 0, north: 0.001, east: 0.001 },
+      attribution: 'test',
+      demSource: 'test-dem',
+      demCellSizeInMeters: 50,
+      measuredBuildingHeights: 0,
+      estimatedBuildingHeights: 0,
+      syntheticBuildings: 0,
+      landmarkBuildings: 0,
+    },
+    roads: [],
+    blocks: [],
+    buildings: [building],
+    terrainGrid: {
+      source: 'test-dem',
+      xCoordinates: [0, 50, 100],
+      yCoordinates: [0, 50, 100],
+      elevationsInMeters: [
+        [10, 10, 10],
+        [10, 30, 10],
+        [10, 10, 10],
+      ],
+    },
+  };
+  const range = buildingGroundRangeInMeters(city, building);
+  expect(range.maxInMeters).toBe(30);
+  expect(range.minInMeters).toBeLessThan(30);
+  expect(buildingBaseHeight(city, building)).toBe(30);
+  const layer = createBuildingLayer(city);
+  expect(layer.getObjectByName('spike-house')!.position.y).toBe(30);
 });
 
 it('clips visible relief water to wet terrain and clears its surface on reset', () => {

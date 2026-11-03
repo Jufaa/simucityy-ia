@@ -1,6 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import type { CityResponse } from './city-types';
 import { generateCityLife } from './city-life-model';
+import { createOrganicCity } from './organic-city-model';
+import { CityTraffic } from './city-traffic-model';
 
 function streetCity(): CityResponse {
   return {
@@ -33,6 +35,55 @@ function streetCity(): CityResponse {
 }
 
 describe('street-life placement', () => {
+  it('does not add parking beside moving lanes on scaled six-metre avenues', () => {
+    const source = streetCity();
+    source.config.widthInMeters = 250;
+    source.config.heightInMeters = 250;
+    const { city } = createOrganicCity(source, 42);
+    expect(
+      city.roads.some(
+        (road) =>
+          road.profile?.kind === 'avenue' && road.profile.widthInMeters === 6,
+      ),
+    ).toBe(true);
+    expect(new CityTraffic(city).advance(1 / 30).length).toBeGreaterThan(0);
+    const parked = generateCityLife(city).items.filter((item) =>
+      ['car', 'taxi', 'van', 'bus'].includes(item.kind),
+    );
+    expect(parked).toHaveLength(0);
+  });
+  it('respects avenue curbs and excludes parked cars and bus stops from pedestrian alleys', () => {
+    const city = streetCity();
+    city.roads[0]!.profile = {
+      kind: 'avenue',
+      widthInMeters: 12,
+      sidewalkWidthInMeters: 3,
+      motorVehiclesAllowed: true,
+    };
+    city.roads[1]!.profile = {
+      kind: 'alley',
+      widthInMeters: 4,
+      sidewalkWidthInMeters: 1,
+      motorVehiclesAllowed: false,
+    };
+    const before = JSON.stringify(city);
+    const items = generateCityLife(city).items;
+    const parked = items.filter((item) =>
+      ['car', 'taxi', 'van', 'bus'].includes(item.kind),
+    );
+    expect(parked.length).toBeGreaterThan(0);
+    for (const item of parked) {
+      expect(Math.abs(item.z - 65)).toBeCloseTo(4.95);
+      expect(Math.abs(item.x - 80)).toBeGreaterThan(2);
+    }
+    for (const item of items.filter(
+      (candidate) => !parked.includes(candidate),
+    )) {
+      expect(Math.abs(item.z - 65)).toBeGreaterThanOrEqual(6);
+      expect(Math.abs(item.x - 80)).toBeGreaterThanOrEqual(2);
+    }
+    expect(JSON.stringify(city)).toBe(before);
+  });
   it('is seeded, bounded, immutable and uses actual road coordinates', () => {
     const city = streetCity();
     const before = structuredClone(city);

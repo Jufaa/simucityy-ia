@@ -50,6 +50,35 @@ const city: CityResponse = {
 };
 
 describe('bounded synthetic urban traffic', () => {
+  it('never spawns or routes motor vehicles through a pedestrian-only alley', () => {
+    const pedestrianCity: CityResponse = {
+      ...city,
+      roads: [
+        {
+          id: 'east',
+          start: { x: 100, y: 100 },
+          end: { x: 200, y: 100 },
+          profile: {
+            kind: 'alley',
+            widthInMeters: 4,
+            sidewalkWidthInMeters: 1,
+            motorVehiclesAllowed: false,
+          },
+        },
+      ],
+    };
+    const before = JSON.stringify(pedestrianCity);
+    const traffic = new CityTraffic(pedestrianCity);
+    expect(traffic.vehicles.length).toBeGreaterThan(0);
+    expect(traffic.vehicles.some((vehicle) => vehicle.roadId === 'east')).toBe(
+      false,
+    );
+    for (let i = 0; i < 1200; i++)
+      expect(
+        traffic.advance(1 / 30).some((vehicle) => vehicle.roadId === 'east'),
+      ).toBe(false);
+    expect(JSON.stringify(pedestrianCity)).toBe(before);
+  });
   it('lets vehicles already on a blocked road clear it instead of freezing mid-span', () => {
     const traffic = new CityTraffic(city);
     for (let i = 0; i < 90; i++) traffic.advance(1 / 30);

@@ -117,11 +117,14 @@ export function createReliefWater(
             const a = polygon[0]!,
               b = polygon[i]!,
               c = polygon[i + 1]!;
-            const normal = new THREE.Vector3()
+            const area = new THREE.Vector3()
               .subVectors(b, a)
               .cross(new THREE.Vector3().subVectors(c, a));
-            if (normal.lengthSq() < 1e-20) continue;
-            normal.normalize();
+            if (area.lengthSq() < 1e-20) continue;
+            // Flat up normals: per-triangle faceted normals made the sheet
+            // read as shards. The material's animated normal map supplies
+            // the surface detail instead; solver depths are untouched.
+            const normal = new THREE.Vector3(0, 1, 0);
             if (vertices + 3 > capacity)
               throw new RangeError(
                 'Flood surface geometry exceeds its clipping budget.',
@@ -134,8 +137,20 @@ export function createReliefWater(
                 0,
                 point.y - sampleTerrainHeight(city, point.x, point.z),
               );
+              // Depth-graded alpha: a shallow film stays a faint sheen
+              // and only deeper water reads as a solid sheet. The old
+              // curve saturated at 25 cm, carpeting streets opaque blue.
+              // Foam edge: the shallowest film brightens toward white so
+              // the waterline reads against dark asphalt.
+              const foam = displayDepth < 0.07 ? 1 - displayDepth / 0.07 : 0;
+              const brighten = 1 + foam * 0.9;
               colors.set(
-                [1, 1, 1, Math.max(0.04, Math.min(1, displayDepth / 0.25))],
+                [
+                  brighten,
+                  brighten,
+                  brighten * 1.05,
+                  Math.min(0.58, 0.08 + 0.5 * Math.min(1, displayDepth / 0.6)),
+                ],
                 vertices * 4,
               );
               vertices++;

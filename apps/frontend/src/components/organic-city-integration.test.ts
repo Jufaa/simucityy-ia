@@ -12,6 +12,45 @@ import { generateCityLife } from './city-life-model';
 import type { CityResponse } from './city-types';
 import { EvacuationEngine } from '@simulicity/hazards';
 
+it('matches rendered sidewalk edges to each local road profile', () => {
+  const { city, geography } = createOrganicCity(source, 123);
+  const layer = createOrganicCityLayer(city);
+  layer.group.updateMatrixWorld(true);
+  for (const kind of ['avenue', 'local', 'alley'] as const) {
+    const road = city.roads.find(
+      (candidate) =>
+        candidate.profile?.kind === kind &&
+        !geography.bridges.some((bridge) =>
+          bridge.roadIds.includes(candidate.id),
+        ),
+    )!;
+    const mesh = layer.group.getObjectByName(
+      `organic-sidewalk:${road.id}`,
+    ) as THREE.Mesh;
+    const positions = mesh.geometry.getAttribute('position');
+    const dx = road.end.x - road.start.x,
+      dz = road.end.y - road.start.y;
+    const length = Math.hypot(dx, dz);
+    const vertex = new THREE.Vector3();
+    let extent = 0;
+    for (let i = 0; i < positions.count; i++) {
+      vertex.fromBufferAttribute(positions, i).applyMatrix4(mesh.matrixWorld);
+      extent = Math.max(
+        extent,
+        Math.abs(
+          (-(vertex.x - road.start.x) * dz + (vertex.z - road.start.y) * dx) /
+            length,
+        ),
+      );
+    }
+    expect(extent).toBeCloseTo(
+      road.profile!.widthInMeters / 2 + road.profile!.sidewalkWidthInMeters,
+      3,
+    );
+  }
+  layer.dispose();
+});
+
 const source: CityResponse = {
   config: {
     widthInMeters: 500,
@@ -23,6 +62,31 @@ const source: CityResponse = {
   blocks: [],
   buildings: [],
 };
+
+it('runs and resets the larger-city flood experiments within the declared grid budget', () => {
+  const { city, geography } = createOrganicCity(source, 123, { mode: 'city' });
+  const before = JSON.stringify(city);
+  const simulation = new DistrictSimulation({
+    ...city,
+    citizens: createStaticPopulation(city),
+  });
+  expect(city.terrainGrid!.elevationsInMeters.length).toBe(61);
+  const initial = JSON.stringify(simulation.snapshot);
+  simulation.setSpeed(300);
+  simulation.start();
+  simulation.advance(0.4);
+  expect(simulation.comparison.before.tick).toBeGreaterThan(0);
+  simulation.pause();
+  const paused = JSON.stringify(simulation.snapshot);
+  expect(simulation.advance(1)).toBe(false);
+  expect(JSON.stringify(simulation.snapshot)).toBe(paused);
+  simulation.reset();
+  expect(JSON.stringify(simulation.snapshot)).toBe(initial);
+  expect(simulation.snapshot.blockedRoadEdgeIds).not.toContain(
+    geography.bridges[0]!.edgeIds[0],
+  );
+  expect(JSON.stringify(city)).toBe(before);
+});
 
 it('keeps the bridge road surface and rendered walkers above the water without raising the bed', () => {
   const { city, geography } = createOrganicCity(source, 123);

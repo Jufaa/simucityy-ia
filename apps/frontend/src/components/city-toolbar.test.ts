@@ -92,6 +92,35 @@ it('does not pretend failed assets loaded and keeps pause/reset available', () =
   expect(html).toContain('aria-expanded="true"');
 });
 
+it('shows a primary real-zone import action next to the example-city actions', () => {
+  const noop = () => {};
+  const html = renderToStaticMarkup(
+    CityToolbar({
+      buildings: 120,
+      people: 200,
+      seed: 55,
+      organic: true,
+      running: false,
+      ready: true,
+      panelOpen: false,
+      view: 'city',
+      elapsedSeconds: 0,
+      assetStatus: 'ready',
+      onPanelToggle: noop,
+      onRegenerate: noop,
+      onRandom: noop,
+      onImportZone: noop,
+      onView: noop,
+      onToggle: noop,
+      onReset: noop,
+    }),
+  );
+  expect(html).toContain('Zona real o plano');
+  expect(html).toContain('Ciudad aleatoria');
+  expect(html).toContain('Otra ciudad');
+  expect(html).toContain('Ajustes');
+});
+
 it('offers random generation separately without replacing the existing seed-step action', () => {
   const noop = () => {};
   const html = renderToStaticMarkup(

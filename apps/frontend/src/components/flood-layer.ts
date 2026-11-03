@@ -22,12 +22,15 @@ export function createFloodLayer(
     new THREE.MeshStandardMaterial({
       color: 0x087dad,
       transparent: true,
-      opacity: 0.72,
+      opacity: 0.55,
       roughness: 0.18,
       metalness: 0.12,
       normalMap: normals,
       normalScale: new THREE.Vector2(0.12, 0.12),
       depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -4,
+      polygonOffsetUnits: -4,
     }),
     cells.length,
   );
@@ -46,10 +49,20 @@ export function createFloodLayer(
   if (relief) group.add(relief.mesh);
   if (relief) water.material.vertexColors = true;
   const nodes = new Map(city.roadGraph.nodes.map((node) => [node.id, node]));
-  const roadMaterial = new THREE.MeshBasicMaterial({ color: 0xe53935 });
+  // Blocked-road overlay: simulation info, kept subtle (narrow, semi-
+  // transparent) so it reads as a marker, not a painted road segment.
+  const roadMaterial = new THREE.MeshBasicMaterial({
+    color: 0xe53935,
+    transparent: true,
+    opacity: 0.45,
+  });
+  // Exposed-building highlight: a faint translucent volume hugging the
+  // building. A wireframe box read as orange scaffolding over the city.
   const buildingMaterial = new THREE.MeshBasicMaterial({
     color: 0xff8c00,
-    wireframe: true,
+    transparent: true,
+    opacity: 0.15,
+    depthWrite: false,
   });
   const roads = new Map<string, THREE.Mesh>();
   const buildings = new Map<string, THREE.Mesh>();
@@ -61,7 +74,7 @@ export function createFloodLayer(
       new THREE.BoxGeometry(
         Math.hypot(to.x - from.x, to.y - from.y),
         0.08,
-        1.5,
+        0.6,
       ),
       roadMaterial,
     );

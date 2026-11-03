@@ -49,6 +49,258 @@ function samples(a: Point, b: Point) {
 }
 
 describe('geography-first organic city', () => {
+  it.each(
+    (['district', 'city'] as const).flatMap((mode) =>
+      [0, 42, 2026].flatMap((seed) =>
+        [false, true].map((relief) => ({ mode, seed, relief })),
+      ),
+    ),
+  )(
+    'reserves a dry civic site before buildings ($mode/$seed/relief=$relief)',
+    ({ mode, seed, relief }) => {
+      const before = structuredClone(source);
+      const { city, geography } = createOrganicCity(source, seed, {
+        mode,
+        relief,
+      });
+      const park = city.district!.parks[0]!;
+      expect(park.maxCorner.x - park.minCorner.x).toBeCloseTo(
+        mode === 'city' ? 48 : 32,
+      );
+      expect(park.maxCorner.y - park.minCorner.y).toBeCloseTo(
+        mode === 'city' ? 40 : 28,
+      );
+      expect(
+        city.district!.urban!.parkPaths.filter(
+          (path) => path.parkId === park.id,
+        ).length,
+      ).toBeGreaterThanOrEqual(4);
+      expect(city.district!.parks).toHaveLength(mode === 'city' ? 12 : 4);
+      expect(city.buildings.length).toBeGreaterThanOrEqual(
+        mode === 'city' ? 600 : 180,
+      );
+      for (let x = park.minCorner.x; x <= park.maxCorner.x; x += 2)
+        for (let y = park.minCorner.y; y <= park.maxCorner.y; y += 2)
+          expect(waterSurfaceAt(geography, { x, y })).toBeUndefined();
+      expect(source).toEqual(before);
+      for (const park of city.district!.parks) {
+        for (const building of city.buildings) {
+          const gap = Math.max(3, building.layout!.buildingGapInMeters);
+          expect(
+            building.maxCorner.x <= park.minCorner.x - gap ||
+              building.minCorner.x >= park.maxCorner.x + gap ||
+              building.maxCorner.y <= park.minCorner.y - gap ||
+              building.minCorner.y >= park.maxCorner.y + gap,
+          ).toBe(true);
+        }
+      }
+    },
+  );
+  it.each([0, 42, 123])(
+    'grows a bounded multi-neighborhood city without scaling up buildings for seed %s',
+    (seed) => {
+      const before = JSON.stringify(source);
+      const result = createOrganicCity(source, seed, { mode: 'city' });
+      const { city, geography } = result;
+      expect(city.config.widthInMeters).toBe(1200);
+      expect(city.config.heightInMeters).toBe(1200);
+      expect(geography.neighborhoods).toHaveLength(8);
+      expect(city.roads.length).toBeGreaterThan(27);
+      expect(city.buildings.length).toBeGreaterThanOrEqual(600);
+      expect(city.buildings.length).toBeLessThanOrEqual(800);
+      expect(city.district!.parks.length).toBeGreaterThanOrEqual(8);
+      expect(city.terrainGrid!.xCoordinates).toHaveLength(61);
+      expect(city.terrainGrid!.yCoordinates).toHaveLength(61);
+      expect(city.citizens?.map((person) => person.id)).toEqual(
+        source.citizens?.map((person) => person.id),
+      );
+      const bands = new Set<string>();
+      for (const building of city.buildings) {
+        expect(building.presentation!.widthInMeters).toBeLessThanOrEqual(19);
+        expect(building.presentation!.depthInMeters).toBeLessThanOrEqual(17);
+        const x = (building.minCorner.x + building.maxCorner.x) / 2;
+        const y = (building.minCorner.y + building.maxCorner.y) / 2;
+        bands.add(
+          `${x < 600 ? 'west' : 'east'}:${Math.min(3, Math.floor(y / 300))}`,
+        );
+      }
+      expect(bands.size).toBe(8);
+      for (const road of city.roads) {
+        const bridge = geography.bridges.find((item) =>
+          item.roadIds.includes(road.id),
+        );
+        expect(road.profile!.widthInMeters).toBe(
+          bridge
+            ? 10
+            : road.profile!.kind === 'avenue'
+              ? 12
+              : road.profile!.kind === 'local'
+                ? 8
+                : 4,
+        );
+      }
+      expect(reachable(city, city.roadGraph!.nodes[0]!.id).size).toBe(
+        city.roadGraph!.nodes.length,
+      );
+      expect(createOrganicCity(source, seed, { mode: 'city' })).toEqual(result);
+      expect(JSON.stringify(source)).toBe(before);
+    },
+  );
+  it.each([0, 42, 123])(
+    'builds six inspectable neighborhood archetypes with mutual setbacks for seed %s',
+    (seed) => {
+      const { city, geography } = createOrganicCity(source, seed);
+      expect(
+        new Set(city.buildings.map((building) => building.layout?.archetype))
+          .size,
+      ).toBe(6);
+      for (const building of city.buildings) {
+        expect(building.layout).toBeDefined();
+        const layout = building.layout!;
+        expect(
+          geography.neighborhoods.some(
+            (district) => district.id === layout.neighborhoodId,
+          ),
+        ).toBe(true);
+        expect(layout.roadSetbackInMeters).toBeGreaterThan(0);
+        const center = {
+          x: (building.minCorner.x + building.maxCorner.x) / 2,
+          y: (building.minCorner.y + building.maxCorner.y) / 2,
+        };
+        const radius =
+          Math.hypot(
+            building.presentation!.widthInMeters,
+            building.presentation!.depthInMeters,
+          ) / 2;
+        for (const road of city.roads) {
+          const dx = road.end.x - road.start.x,
+            dy = road.end.y - road.start.y;
+          const t = Math.max(
+            0,
+            Math.min(
+              1,
+              ((center.x - road.start.x) * dx +
+                (center.y - road.start.y) * dy) /
+                (dx * dx + dy * dy),
+            ),
+          );
+          const distance = Math.hypot(
+            center.x - road.start.x - t * dx,
+            center.y - road.start.y - t * dy,
+          );
+          expect(distance + 1e-8).toBeGreaterThanOrEqual(
+            radius +
+              road.profile!.widthInMeters / 2 +
+              road.profile!.sidewalkWidthInMeters +
+              layout.roadSetbackInMeters,
+          );
+        }
+        for (const other of city.buildings) {
+          if (other.id === building.id) continue;
+          const gap = Math.max(
+            layout.buildingGapInMeters,
+            other.layout!.buildingGapInMeters,
+          );
+          const separated =
+            building.maxCorner.x + gap <= other.minCorner.x ||
+            other.maxCorner.x + gap <= building.minCorner.x ||
+            building.maxCorner.y + gap <= other.minCorner.y ||
+            other.maxCorner.y + gap <= building.minCorner.y;
+          expect(separated).toBe(true);
+        }
+      }
+    },
+  );
+  it('generates wider avenues, secondary streets and pedestrian circuits without widening the bridge', () => {
+    const { city, geography } = createOrganicCity(source, 42);
+    expect(new Set(city.roads.map((road) => road.profile?.kind))).toEqual(
+      new Set(['avenue', 'local', 'alley']),
+    );
+    for (const road of city.roads) {
+      const bridge = geography.bridges.find((item) =>
+        item.roadIds.includes(road.id),
+      );
+      expect(road.profile?.widthInMeters).toBe(
+        bridge
+          ? bridge.widthInMeters
+          : road.profile?.kind === 'avenue'
+            ? 12
+            : road.profile?.kind === 'local'
+              ? 8
+              : 4,
+      );
+      expect(road.profile?.motorVehiclesAllowed).toBe(
+        road.profile?.kind !== 'alley',
+      );
+    }
+  });
+  it('varies neighborhood centers and dimensions reproducibly within each riverbank', () => {
+    const first = createOrganicCity(source, 42).geography.neighborhoods;
+    expect(createOrganicCity(source, 42).geography.neighborhoods).toEqual(
+      first,
+    );
+    const second = createOrganicCity(source, 123).geography.neighborhoods;
+    first.forEach((district, i) => {
+      expect(second[i]!.center).not.toEqual(district.center);
+      expect(second[i]!.radiusX).not.toBe(district.radiusX);
+      expect(second[i]!.radiusZ).not.toBe(district.radiusZ);
+      for (const candidate of [district, second[i]!]) {
+        expect(candidate.center.x).toBeGreaterThan(0);
+        expect(candidate.center.x).toBeLessThan(source.config.widthInMeters);
+        expect(candidate.center.y).toBeGreaterThan(0);
+        expect(candidate.center.y).toBeLessThan(source.config.heightInMeters);
+        expect(candidate.center.x < source.config.widthInMeters / 2).toBe(
+          candidate.kind !== 'commercial',
+        );
+        expect(candidate.radiusX).toBeGreaterThan(0);
+        expect(candidate.radiusZ).toBeGreaterThan(0);
+      }
+    });
+  });
+
+  it.each([0, 1, 42, 123, 2026, 0xffffffff])(
+    'provides local detours on both riverbanks without another river crossing for seed %s',
+    (seed) => {
+      const { city, geography } = createOrganicCity(source, seed);
+      const bridgeIds = new Set(geography.bridges.flatMap((b) => b.edgeIds));
+      const graph = city.roadGraph!;
+      const localEdges = graph.edges!.filter((edge) => !bridgeIds.has(edge.id));
+      const components = city.shelters!.map((shelter) =>
+        reachable(city, shelter.nodeId, false),
+      );
+      expect(components[0]!.size + components[1]!.size).toBe(
+        graph.nodes.length,
+      );
+      expect([...components[0]!].some((id) => components[1]!.has(id))).toBe(
+        false,
+      );
+      for (const component of components) {
+        const edges = localEdges.filter((edge) => component.has(edge.from));
+        expect(edges.length).toBeGreaterThanOrEqual(component.size);
+        const hasDetour = edges.some((closed) => {
+          const visited = new Set([closed.from]);
+          const queue = [closed.from];
+          for (const id of queue)
+            for (const edge of edges) {
+              if (edge.id === closed.id) continue;
+              const next =
+                edge.from === id
+                  ? edge.to
+                  : edge.to === id
+                    ? edge.from
+                    : undefined;
+              if (next && !visited.has(next)) {
+                visited.add(next);
+                queue.push(next);
+              }
+            }
+          return visited.has(closed.to);
+        });
+        expect(hasDetour).toBe(true);
+      }
+    },
+  );
+
   it.each([0, 1, 42, 123, 2026, 0xffffffff])(
     'keeps random profile seed %s dry, connected and reproducible',
     (seed) => {
@@ -205,7 +457,11 @@ describe('geography-first organic city', () => {
           const dx = road.end.x - road.start.x,
             dy = road.end.y - road.start.y;
           const length = Math.hypot(dx, dy);
-          for (const offset of [-4, 0, 4])
+          const extent = road.profile
+            ? road.profile.widthInMeters / 2 +
+              road.profile.sidewalkWidthInMeters
+            : 4;
+          for (const offset of [-extent, 0, extent])
             expect(
               waterSurfaceAt(geography, {
                 x: p.x - (dy / length) * offset,

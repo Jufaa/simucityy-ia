@@ -42,6 +42,8 @@ export function CityToolbar(props: {
   onPanelToggle(): void;
   onRegenerate(): void;
   onRandom?(): void;
+  /** Opens the real-zone / plan import card. */
+  onImportZone?(): void;
   onView(view: 'world' | 'city'): void;
   onToggle(): void;
   onReset(): void;
@@ -93,6 +95,15 @@ export function CityToolbar(props: {
           {props.organic && (
             <button type="button" style={button} onClick={props.onRegenerate}>
               Otra ciudad
+            </button>
+          )}
+          {props.onImportZone && (
+            <button
+              type="button"
+              style={{ ...button, background: '#24655e', color: '#fff' }}
+              onClick={props.onImportZone}
+            >
+              Zona real o plano
             </button>
           )}
           <button

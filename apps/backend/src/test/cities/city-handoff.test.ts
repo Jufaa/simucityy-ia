@@ -74,7 +74,7 @@ describe('complete synthetic city handoff', () => {
 
   it('rejects unsupported workload before generating entities', () => {
     expect(() =>
-      generateCityScenario({ ...options, populationCount: 301 }),
+      generateCityScenario({ ...options, populationCount: 1201 }),
     ).toThrow();
     expect(() =>
       generateCityScenario({ ...options, terrainCellSizeInMeters: 0.001 }),

@@ -325,11 +325,16 @@ export function createHazardEffects(
       uneven
     );
   };
+  let foamGeometry: THREE.BufferGeometry | null = null;
+  let foamMaterial: THREE.MeshBasicMaterial | null = null;
   const writeWaveGeometry = () => {
     if (!waveGeometry || !waveCurrent.length) return;
     const positions = waveGeometry.getAttribute(
       'position',
     ) as THREE.BufferAttribute;
+    const foamPositions = foamGeometry
+      ? (foamGeometry.getAttribute('position') as THREE.BufferAttribute)
+      : null;
     for (let iz = 0; iz <= WAVE_SEGMENTS_Z; iz++) {
       const current = waveCurrent[iz]!;
       const z = -height * 0.55 + (iz / WAVE_SEGMENTS_Z) * height * 1.1;
@@ -340,16 +345,46 @@ export function createHazardEffects(
         const churn =
           Math.sin(elapsed * 2.6 + iz * 0.7) * 0.28 * level.y +
           Math.sin(z * 0.045) * 0.8 * level.y;
+        const worldX = current.front + level.x + churn;
+        // The wave rides the real terrain surface: on DEM districts the
+        // nominal base elevation sits metres below the actual ground,
+        // which used to bury the whole wave under the city slab.
+        const terrainLift =
+          sampleTerrainHeight(city, worldX, height / 2 + z) - ground;
         positions.setXYZ(
           vertex,
-          current.front + level.x + churn,
-          level.y * WAVE_MAX_HEIGHT * energy,
+          worldX,
+          terrainLift + level.y * WAVE_MAX_HEIGHT * energy,
+          z,
+        );
+      }
+      if (foamPositions) {
+        // Foam strip along the crest (between profile levels 3 and 4).
+        const crest = WAVE_PROFILE[4]!;
+        const face = WAVE_PROFILE[3]!;
+        const crestX = current.front + crest.x;
+        const faceX = current.front + face.x;
+        const crestLift =
+          sampleTerrainHeight(city, crestX, height / 2 + z) - ground;
+        const faceLift =
+          sampleTerrainHeight(city, faceX, height / 2 + z) - ground;
+        foamPositions.setXYZ(
+          iz * 2,
+          faceX,
+          faceLift + face.y * WAVE_MAX_HEIGHT * energy + 0.12,
+          z,
+        );
+        foamPositions.setXYZ(
+          iz * 2 + 1,
+          crestX,
+          crestLift + crest.y * WAVE_MAX_HEIGHT * energy + 0.12,
           z,
         );
       }
     }
     positions.needsUpdate = true;
     waveGeometry.computeVertexNormals();
+    if (foamPositions) foamPositions.needsUpdate = true;
   };
   if (hazard === 'tsunami') {
     wave = new THREE.Group();
@@ -391,6 +426,35 @@ export function createHazardEffects(
     surface.name = 'tsunami-wave-surface';
     surface.frustumCulled = false;
     wave.add(surface);
+    // White foam ribbon on the crest: one extra draw call, updated from
+    // the same per-row profile as the wave surface itself.
+    foamGeometry = own(new THREE.BufferGeometry());
+    foamGeometry.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(
+        new Float32Array((WAVE_SEGMENTS_Z + 1) * 2 * 3),
+        3,
+      ),
+    );
+    const foamIndices: number[] = [];
+    for (let iz = 0; iz < WAVE_SEGMENTS_Z; iz++) {
+      const a = iz * 2;
+      foamIndices.push(a, a + 2, a + 1, a + 1, a + 2, a + 3);
+    }
+    foamGeometry.setIndex(foamIndices);
+    foamMaterial = own(
+      new THREE.MeshBasicMaterial({
+        color: 0xf4fbff,
+        transparent: true,
+        opacity: 0.85,
+        side: THREE.DoubleSide,
+        depthWrite: false,
+      }),
+    );
+    const foam = new THREE.Mesh(foamGeometry, foamMaterial);
+    foam.name = 'tsunami-wave-foam';
+    foam.frustumCulled = false;
+    wave.add(foam);
     wave.position.set(0, ground + 0.2, height / 2);
     wave.visible = false;
     group.add(wave);
@@ -530,6 +594,8 @@ export function createHazardEffects(
             current.speed += (target.speed - current.speed) * blend;
           }
           writeWaveGeometry();
+          if (foamMaterial)
+            foamMaterial.opacity = 0.65 + 0.3 * Math.sin(elapsed * 3.2);
           wave.position.y = ground + 0.2 + Math.sin(elapsed * 2.1) * 0.18;
         }
       }

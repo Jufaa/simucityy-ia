@@ -222,3 +222,22 @@ it('shows shallow film more transparently than deeper reconstructed water', () =
   shallow.layer.mesh.geometry.dispose();
   deep.layer.mesh.geometry.dispose();
 });
+
+it('shades the relief sheet with flat up normals, not faceted triangles', () => {
+  const { layer, snapshot } = fixture(
+    [
+      [0, 1, 2],
+      [0, 1, 2],
+    ],
+    [0.5, 0.5],
+  );
+  layer.update(snapshot);
+  const geometry = layer.mesh.geometry;
+  const normals = geometry.getAttribute('normal');
+  expect(geometry.drawRange.count).toBeGreaterThan(0);
+  for (let i = 0; i < geometry.drawRange.count; i++) {
+    expect(normals.getX(i)).toBe(0);
+    expect(normals.getY(i)).toBe(1);
+    expect(normals.getZ(i)).toBe(0);
+  }
+});

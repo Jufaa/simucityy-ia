@@ -16,6 +16,17 @@ export interface Road {
   id: string;
   start: Point;
   end: Point;
+  /** Street name when the source data carries one (real imports). */
+  name?: string;
+  /** Local view/simulation metadata, not part of the saved or HTTP generation contract. */
+  profile?: RoadProfile;
+}
+
+export interface RoadProfile {
+  kind: 'avenue' | 'local' | 'alley';
+  widthInMeters: number;
+  sidewalkWidthInMeters: number;
+  motorVehiclesAllowed: boolean;
 }
 
 export interface Block {
@@ -29,6 +40,8 @@ export interface Building {
   minCorner: Point;
   maxCorner: Point;
   heightInMeters: number;
+  /** Inspectable local placement rules; not part of backend or saved scenarios. */
+  layout?: BuildingLayout;
   /** Optional local rendering pose; min/max corners conservatively contain the rotated shape. */
   presentation?: {
     widthInMeters: number;
@@ -36,6 +49,21 @@ export interface Building {
     yawInRadians: number;
   };
   use?: 'residential' | 'commercial';
+  /** Landmark hint from source tags: standout buildings render exact/1:1. */
+  landmark?:
+    'religious' | 'cathedral' | 'health' | 'stadium' | 'civic' | 'monument';
+  /** Silhouette hint for landmark monuments: human figure vs obelisk. */
+  monumentShape?: 'figure' | 'obelisk';
+  /** Occupancy that evacuates slower and alerts first, from source tags. */
+  vulnerable?: 'school' | 'hospital' | 'care-home';
+  /** Real 3D parts (OSM building:part) with measured heights, rendering only. */
+  parts?: BuildingPart[];
+  /** True only for clearly-labelled synthetic infill, never source data. */
+  synthetic?: boolean;
+  /** Exact local footprint (x/y metres) when known, e.g. imported real buildings. Rendering metadata; hazard bounds stay min/max. */
+  footprint?: Point[];
+  /** Courtyard holes inside the footprint, same coordinate space. */
+  footprintHoles?: Point[][];
   architecture?: {
     style: 'house' | 'apartment' | 'shop';
     floors: number;
@@ -45,6 +73,25 @@ export interface Building {
     entranceSide: 'north' | 'south' | 'east' | 'west';
     balconyDepthInMeters: number;
   };
+}
+
+export interface BuildingPart {
+  footprint: Point[];
+  heightInMeters: number;
+  minHeightInMeters: number;
+}
+
+export interface BuildingLayout {
+  neighborhoodId: string;
+  archetype:
+    | 'compact-house'
+    | 'elongated-house'
+    | 'slim-apartment'
+    | 'wide-apartment'
+    | 'wide-shop'
+    | 'compact-shop';
+  roadSetbackInMeters: number;
+  buildingGapInMeters: number;
 }
 
 export interface TerrainConfig {
@@ -83,8 +130,26 @@ export interface OrganicGeography {
   }[];
 }
 
+/** Provenance for a city converted from real geographic data; local view metadata only. */
+export interface RealCityMetadata {
+  name: string;
+  bbox: { south: number; west: number; north: number; east: number };
+  attribution: string;
+  osmTimestamp?: string;
+  demSource: string;
+  demCellSizeInMeters: number;
+  measuredBuildingHeights: number;
+  estimatedBuildingHeights: number;
+  /** Houses invented by the opt-in infill (never presented as real data). */
+  syntheticBuildings: number;
+  /** Buildings classified as landmarks (churches, hospitals, stadiums...). */
+  landmarkBuildings: number;
+}
+
 export interface CityResponse {
   organic?: OrganicGeography;
+  /** Set only for cities converted from real OSM + DEM data by real-city-model. */
+  real?: RealCityMetadata;
   /** Local view-only relief; not part of the HTTP or saved scenario contract. */
   terrainProfile?: 'basin';
   config: CityConfig;

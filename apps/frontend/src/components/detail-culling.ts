@@ -8,6 +8,7 @@ export const DETAIL_NAME_PREFIXES = [
   'balcony-rails',
   'balcony-slabs',
   'street-',
+  'road-crosswalks',
   'bench-',
   'lamp-heads',
 ] as const;
@@ -26,5 +27,5 @@ export function detailsVisible(
   cameraDistanceInMeters: number,
   viewExtentInMeters: number,
 ): boolean {
-  return cameraDistanceInMeters < viewExtentInMeters * 1.1;
+  return cameraDistanceInMeters < viewExtentInMeters * 0.6;
 }

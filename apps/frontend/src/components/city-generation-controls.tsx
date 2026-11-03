@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import type { CityGenerationMode } from './city-generation-preset';
 
 export function parseCitySeed(value: string): number | null {
   if (!/^\d+$/.test(value)) return null;
@@ -11,6 +12,8 @@ export function parseCitySeed(value: string): number | null {
 export function CityGenerationControls(props: {
   seed: number;
   randomized: boolean;
+  mode?: CityGenerationMode;
+  onModeChange?(mode: CityGenerationMode): void;
   onGenerate(seed: number): void;
   onRandom(): void;
 }) {
@@ -23,6 +26,23 @@ export function CityGenerationControls(props: {
         {props.randomized ? 'Perfil aleatorio' : 'Perfil original'} · Sin IA. La
         semilla reproduce el trazado y sus características en este perfil.
       </p>
+      {props.onModeChange && (
+        <label style={{ display: 'block', marginBottom: 8 }}>
+          Escala urbana{' '}
+          <select
+            aria-label="Escala urbana"
+            value={props.mode ?? 'district'}
+            onChange={(event) => {
+              const mode = event.currentTarget.value;
+              if (mode === 'district' || mode === 'city')
+                props.onModeChange?.(mode);
+            }}
+          >
+            <option value="district">Distrito</option>
+            <option value="city">Ciudad grande · 1,2 km</option>
+          </select>
+        </label>
+      )}
       <button type="button" onClick={props.onRandom}>
         Ciudad aleatoria
       </button>

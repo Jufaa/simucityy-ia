@@ -7,6 +7,7 @@ type TerrainView = {
   terrain: { elevationInMeters: number };
   terrainGrid?: TerrainGrid;
   organic?: CityResponse['organic'];
+  real?: CityResponse['real'];
 };
 
 /** Local view model only: never serialize this derived grid as the original scenario. */
@@ -63,43 +64,68 @@ export function sampleTerrainHeight(
     : e + (1 - v) * (b - e) + (1 - u) * (d - e);
 }
 
+/**
+ * Terrain range under a building: the four corners plus every DEM node of
+ * the cells the footprint overlaps. City DEMs (Terrarium/SRTM) carry
+ * building-height noise, so corner-only sampling lets interior spikes
+ * pierce the ground floor and buildings read as sunken; a level pad must
+ * clear the highest interior point and its foundation reach the lowest.
+ * View-only sampling: the solver keeps the original grid untouched.
+ */
+export function buildingGroundRangeInMeters(
+  city: TerrainView,
+  building: Pick<Building, 'minCorner' | 'maxCorner'>,
+): { minInMeters: number; maxInMeters: number } {
+  const cornerHeights = [building.minCorner.x, building.maxCorner.x].flatMap(
+    (x) =>
+      [building.minCorner.y, building.maxCorner.y].map((z) =>
+        sampleTerrainHeight(city, x, z),
+      ),
+  );
+  let minInMeters = Math.min(...cornerHeights);
+  let maxInMeters = Math.max(...cornerHeights);
+  const grid = city.terrainGrid;
+  // Interior scan only where the grid is a real DEM (organic relief or
+  // imported OSM terrain); synthetic flat/basin contracts keep corners.
+  if (!grid || (!city.organic && !city.real))
+    return { minInMeters, maxInMeters };
+  // Node index ranges of the cells overlapping the footprint (bounded
+  // scan, not a full-grid pass per building).
+  const axisRange = (
+    axis: readonly number[],
+    min: number,
+    max: number,
+  ): [number, number] => {
+    let start = 0;
+    while (start < axis.length - 1 && axis[start + 1]! <= min) start++;
+    let end = axis.length - 1;
+    while (end > 0 && axis[end - 1]! >= max) end--;
+    return [start, end];
+  };
+  const [c0, c1] = axisRange(
+    grid.xCoordinates,
+    building.minCorner.x,
+    building.maxCorner.x,
+  );
+  const [r0, r1] = axisRange(
+    grid.yCoordinates,
+    building.minCorner.y,
+    building.maxCorner.y,
+  );
+  for (let r = r0; r <= r1; r++)
+    for (let c = c0; c <= c1; c++) {
+      const elevation = grid.elevationsInMeters[r]![c]!;
+      if (elevation < minInMeters) minInMeters = elevation;
+      if (elevation > maxInMeters) maxInMeters = elevation;
+    }
+  return { minInMeters, maxInMeters };
+}
+
 export function buildingBaseHeight(
   city: TerrainView,
   building: Pick<Building, 'minCorner' | 'maxCorner'>,
 ) {
-  const corners = Math.max(
-    ...[building.minCorner.x, building.maxCorner.x].flatMap((x) =>
-      [building.minCorner.y, building.maxCorner.y].map((z) =>
-        sampleTerrainHeight(city, x, z),
-      ),
-    ),
-  );
-  if (!city.organic || !city.terrainGrid) return corners;
-  // A level organic pad must also clear interior terrain peaks, not only four corners.
-  const grid = city.terrainGrid;
-  let top = corners;
-  for (let r = 0; r < grid.yCoordinates.length - 1; r++) {
-    if (
-      grid.yCoordinates[r + 1]! < building.minCorner.y ||
-      grid.yCoordinates[r]! > building.maxCorner.y
-    )
-      continue;
-    for (let c = 0; c < grid.xCoordinates.length - 1; c++) {
-      if (
-        grid.xCoordinates[c + 1]! < building.minCorner.x ||
-        grid.xCoordinates[c]! > building.maxCorner.x
-      )
-        continue;
-      top = Math.max(
-        top,
-        grid.elevationsInMeters[r]![c]!,
-        grid.elevationsInMeters[r]![c + 1]!,
-        grid.elevationsInMeters[r + 1]![c]!,
-        grid.elevationsInMeters[r + 1]![c + 1]!,
-      );
-    }
-  }
-  return top;
+  return buildingGroundRangeInMeters(city, building).maxInMeters;
 }
 
 export function createTerrainGeometry(city: CityResponse) {
@@ -135,7 +161,8 @@ export function createTerrainGeometry(city: CityResponse) {
 /** Shared Scene seam: local basins need sampled ground even when land relief is disabled. */
 export function createCityGround(city: CityResponse, material: THREE.Material) {
   const sampled =
-    city.terrainGrid && (city.organic || city.terrainProfile === 'basin');
+    city.terrainGrid &&
+    (city.organic || city.real || city.terrainProfile === 'basin');
   const geometry = sampled
     ? createTerrainGeometry(city)
     : new THREE.PlaneGeometry(
@@ -152,6 +179,60 @@ export function createCityGround(city: CityResponse, material: THREE.Material) {
       city.config.heightInMeters / 2,
     );
   }
+  return mesh;
+}
+
+/**
+ * Side walls that close the terrain sheet down to a flat base elevation,
+ * so a relief district reads as a solid maqueta block from street level
+ * instead of a floating sheet with air underneath its edges.
+ */
+export function createTerrainSkirt(
+  city: TerrainView,
+  bottomElevationInMeters: number,
+  material: THREE.Material,
+) {
+  const grid = city.terrainGrid;
+  if (!grid) return null;
+  const xs = grid.xCoordinates;
+  const zs = grid.yCoordinates;
+  const elevations = grid.elevationsInMeters;
+  const edge: { x: number; y: number; z: number }[] = [];
+  for (let c = 0; c < xs.length; c++)
+    edge.push({ x: xs[c]!, y: elevations[0]![c]!, z: zs[0]! });
+  for (let r = 1; r < zs.length; r++)
+    edge.push({
+      x: xs[xs.length - 1]!,
+      y: elevations[r]![xs.length - 1]!,
+      z: zs[r]!,
+    });
+  for (let c = xs.length - 2; c >= 0; c--)
+    edge.push({
+      x: xs[c]!,
+      y: elevations[zs.length - 1]![c]!,
+      z: zs[zs.length - 1]!,
+    });
+  for (let r = zs.length - 2; r >= 1; r--)
+    edge.push({ x: xs[0]!, y: elevations[r]![0]!, z: zs[r]! });
+  const positions: number[] = [];
+  const indices: number[] = [];
+  edge.forEach((point, index) => {
+    positions.push(point.x, point.y, point.z);
+    positions.push(point.x, bottomElevationInMeters, point.z);
+    const next = (index + 1) % edge.length;
+    const a = index * 2;
+    const b = next * 2;
+    indices.push(a, b, a + 1, b, b + 1, a + 1);
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(positions, 3),
+  );
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'terrain-skirt';
   return mesh;
 }
 

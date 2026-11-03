@@ -116,7 +116,7 @@ describe('POST /api/v1/cities/generate', () => {
     { ...payload, config: { ...payload.config, widthInMeters: 0 } },
     { ...payload, config: { ...payload.config, seed: -1 } },
     { ...payload, config: { ...payload.config, streetSpacingInMeters: 0 } },
-    { ...payload, populationCount: 301 },
+    { ...payload, populationCount: 1201 },
     { ...payload, terrain: { kind: 'unknown', elevationInMeters: 0 } },
   ])(
     'rejects invalid request shape or values with the shared error contract',

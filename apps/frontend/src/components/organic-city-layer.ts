@@ -1,4 +1,5 @@
 import * as THREE from 'three';
+import { getRoadProfile } from './road-profile';
 import type { CityResponse } from './city-types';
 import {
   createTerrainGeometry,
@@ -77,17 +78,37 @@ export function createOrganicCityLayer(city: CityResponse) {
     const grass = own(
       new THREE.MeshStandardMaterial({ color: 0x74925c, roughness: 1 }),
     );
+    const bridgeSteel = own(
+      new THREE.MeshStandardMaterial({
+        color: 0x385c69,
+        metalness: 0.65,
+        roughness: 0.4,
+      }),
+    );
+    // Emissive surfaces, not dynamic lights or additional shadow maps.
+    const bridgeLight = own(
+      new THREE.MeshStandardMaterial({
+        color: 0xffe0a6,
+        emissive: 0xffc16b,
+        emissiveIntensity: 1.8,
+        roughness: 0.5,
+      }),
+    );
     const bridgeRoads = new Set(geography.bridges.flatMap((b) => b.roadIds));
     // Wide thin shoulders sit below the separately rendered asphalt, never across the water.
     for (const road of city.roads) {
       if (bridgeRoads.has(road.id)) continue;
       const dx = road.end.x - road.start.x,
         dz = road.end.y - road.start.y;
+      const profile = getRoadProfile(
+        road,
+        city.district?.roadWidthInMeters ?? 6,
+        city.district?.sidewalkWidthInMeters ?? 2,
+      );
       const geometry = new THREE.BoxGeometry(
         Math.hypot(dx, dz),
         0.025,
-        (city.district?.roadWidthInMeters ?? 6) +
-          2 * (city.district?.sidewalkWidthInMeters ?? 2),
+        profile.widthInMeters + 2 * profile.sidewalkWidthInMeters,
       );
       const mesh = new THREE.Mesh(geometry, concrete);
       mesh.name = `organic-sidewalk:${road.id}`;
@@ -144,6 +165,72 @@ export function createOrganicCityLayer(city: CityResponse) {
         0.44,
         length,
       );
+      // Above-deck side arches keep the existing transport corridor and water
+      // bed untouched. Their geometry is decorative, not a structural model.
+      const tubeRadius = Math.min(0.18, bridge.widthInMeters * 0.025);
+      const archX = bridge.widthInMeters / 2 - tubeRadius - 0.08;
+      const archRise = Math.min(
+        14,
+        Math.max(3, Math.min(length * 0.06, bridge.widthInMeters * 0.9)),
+      );
+      const archCurve = new THREE.QuadraticBezierCurve3(
+        new THREE.Vector3(0, 0.3, -length * 0.48),
+        new THREE.Vector3(0, 0.3 + 2 * archRise, 0),
+        new THREE.Vector3(0, 0.3, length * 0.48),
+      );
+      const archGeometry = own(
+        new THREE.TubeGeometry(archCurve, 48, tubeRadius, 6, false),
+      );
+      const hangersPerSide = Math.max(6, Math.min(24, Math.floor(length / 16)));
+      const lightsPerSide = Math.max(3, Math.min(12, Math.floor(length / 30)));
+      const hangers = own(
+        new THREE.InstancedMesh(box, bridgeSteel, 2 * hangersPerSide),
+      );
+      hangers.name = 'bridge-arch-hangers';
+      const lights = own(
+        new THREE.InstancedMesh(box, bridgeLight, 2 * lightsPerSide),
+      );
+      lights.name = 'bridge-landmark-lights';
+      const transform = new THREE.Object3D();
+      for (const [sideIndex, side] of [-1, 1].entries()) {
+        const arch = new THREE.Mesh(archGeometry, bridgeSteel);
+        arch.name = 'bridge-side-arch';
+        arch.position.x = side * archX;
+        arch.castShadow = arch.receiveShadow = true;
+        root.add(arch);
+        for (let i = 0; i < hangersPerSide; i++) {
+          const t = (i + 1) / (hangersPerSide + 1);
+          const point = archCurve.getPoint(t);
+          const height = point.y - 0.25;
+          transform.position.set(side * archX, 0.25 + height / 2, point.z);
+          transform.scale.set(0.07, height, 0.07);
+          transform.updateMatrix();
+          hangers.setMatrixAt(sideIndex * hangersPerSide + i, transform.matrix);
+        }
+        for (let i = 0; i < lightsPerSide; i++) {
+          const t = (i + 1) / (lightsPerSide + 1);
+          transform.position.set(side * archX, 0.85, (t - 0.5) * length * 0.96);
+          transform.scale.set(0.16, 0.1, 0.4);
+          transform.updateMatrix();
+          lights.setMatrixAt(sideIndex * lightsPerSide + i, transform.matrix);
+        }
+        for (const end of [-1, 1])
+          part(
+            'bridge-landmark-anchor',
+            bridgeSteel,
+            side * archX,
+            0.14,
+            end * length * 0.48,
+            Math.min(0.28, bridge.widthInMeters * 0.035),
+            0.16,
+            0.6,
+          );
+      }
+      hangers.instanceMatrix.needsUpdate =
+        lights.instanceMatrix.needsUpdate = true;
+      hangers.computeBoundingSphere();
+      lights.computeBoundingSphere();
+      root.add(hangers, lights);
       for (const side of [-1, 1]) {
         const x = side * (bridge.widthInMeters / 2 - 0.18);
         part('bridge-curb', concrete, x, 0.1, 0, 0.35, 0.2, length);
