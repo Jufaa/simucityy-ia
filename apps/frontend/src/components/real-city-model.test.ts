@@ -258,6 +258,101 @@ describe('createRealCity', () => {
     expect(city.roads).toHaveLength(5);
   });
 
+  it('keeps street names and plants street trees inside the square', () => {
+    const source = fixture();
+    source.elements = [
+      ...source.elements,
+      {
+        type: 'way',
+        id: 95,
+        tags: { highway: 'tertiary', name: 'Calle de Prueba' },
+        geometry: [at(15, 190), at(200, 190)],
+      },
+    ];
+    const { city } = createRealCity(source);
+    expect(city.roads.some((road) => road.name === 'Calle de Prueba')).toBe(
+      true,
+    );
+    const streetTrees = city.district!.urban!.amenities.filter(
+      (item) => item.parkId === 'street' && item.kind === 'tree',
+    );
+    expect(streetTrees.length).toBeGreaterThan(0);
+    for (const tree of streetTrees) {
+      expect(tree.position.x).toBeGreaterThanOrEqual(0);
+      expect(tree.position.y).toBeGreaterThanOrEqual(0);
+      expect(tree.position.x).toBeLessThanOrEqual(width);
+      expect(tree.position.y).toBeLessThanOrEqual(height);
+      expect(
+        city.buildings.some(
+          (building) =>
+            tree.position.x > building.minCorner.x - 1.4 &&
+            tree.position.x < building.maxCorner.x + 1.4 &&
+            tree.position.y > building.minCorner.y - 1.4 &&
+            tree.position.y < building.maxCorner.y + 1.4,
+        ),
+      ).toBe(false);
+    }
+  });
+
+  it('clips footprints and parks that cross the square border', () => {
+    const source = fixture();
+    source.elements = [
+      ...source.elements,
+      {
+        type: 'way',
+        id: 90,
+        tags: { building: 'apartments', height: '12' },
+        geometry: [
+          at(width - 10, 40),
+          at(width + 40, 40),
+          at(width + 40, 65),
+          at(width - 10, 65),
+          at(width - 10, 40),
+        ],
+      },
+      {
+        type: 'way',
+        id: 91,
+        tags: { leisure: 'park' },
+        geometry: [
+          at(-30, 150),
+          at(30, 150),
+          at(30, 175),
+          at(-30, 175),
+          at(-30, 150),
+        ],
+      },
+    ];
+    const { city } = createRealCity(source);
+    for (const building of city.buildings) {
+      expect(building.minCorner.x).toBeGreaterThanOrEqual(-0.01);
+      expect(building.minCorner.y).toBeGreaterThanOrEqual(-0.01);
+      expect(building.maxCorner.x).toBeLessThanOrEqual(width + 0.01);
+      expect(building.maxCorner.y).toBeLessThanOrEqual(height + 0.01);
+      for (const point of building.footprint ?? []) {
+        expect(point.x).toBeGreaterThanOrEqual(-0.01);
+        expect(point.x).toBeLessThanOrEqual(width + 0.01);
+        expect(point.y).toBeGreaterThanOrEqual(-0.01);
+        expect(point.y).toBeLessThanOrEqual(height + 0.01);
+      }
+    }
+    // The crossing building survives, cut exactly at the border.
+    expect(
+      city.buildings.some(
+        (building) => Math.abs(building.maxCorner.x - width) < 0.5,
+      ),
+    ).toBe(true);
+    expect(
+      city.district!.parks.every(
+        (item) =>
+          item.minCorner.x >= -0.01 &&
+          item.minCorner.y >= -0.01 &&
+          item.maxCorner.x <= width + 0.01 &&
+          item.maxCorner.y <= height + 0.01,
+      ),
+    ).toBe(true);
+  });
+
   it('converts building footprints to contained rotated rectangles with height provenance', () => {
     const { city, metadata } = createRealCity(fixture());
     expect(city.buildings).toHaveLength(8);
@@ -280,7 +375,10 @@ describe('createRealCity', () => {
       (item) => item.kind === 'tree',
     );
     expect(trees.length).toBeGreaterThan(0);
-    expect(trees.every((tree) => tree.parkId === 'real-park-0')).toBe(true);
+    // Park trees belong to the park; street trees are a separate channel.
+    const parkTrees = trees.filter((tree) => tree.parkId !== 'street');
+    expect(parkTrees.length).toBeGreaterThan(0);
+    expect(parkTrees.every((tree) => tree.parkId === 'real-park-0')).toBe(true);
     // Deterministic: converting again yields identical placement.
     const again = createRealCity(fixture());
     expect(again.city.district!.urban!.amenities).toEqual(

@@ -16,6 +16,8 @@ export interface Road {
   id: string;
   start: Point;
   end: Point;
+  /** Street name when the source data carries one (real imports). */
+  name?: string;
   /** Local view/simulation metadata, not part of the saved or HTTP generation contract. */
   profile?: RoadProfile;
 }

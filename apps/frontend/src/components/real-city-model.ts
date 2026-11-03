@@ -432,6 +432,65 @@ function clipSegment(
   ];
 }
 
+/** Sutherland-Hodgman clip of a polygon to the city rectangle. */
+function clipPolygonToExtent(
+  polygon: Point[],
+  extentX: number,
+  extentY: number,
+): Point[] {
+  const edges: {
+    inside: (p: Point) => boolean;
+    intersect: (a: Point, b: Point) => Point;
+  }[] = [
+    {
+      inside: (p) => p.x >= 0,
+      intersect: (a, b) => ({
+        x: 0,
+        y: a.y + ((b.y - a.y) * (0 - a.x)) / (b.x - a.x),
+      }),
+    },
+    {
+      inside: (p) => p.x <= extentX,
+      intersect: (a, b) => ({
+        x: extentX,
+        y: a.y + ((b.y - a.y) * (extentX - a.x)) / (b.x - a.x),
+      }),
+    },
+    {
+      inside: (p) => p.y >= 0,
+      intersect: (a, b) => ({
+        x: a.x + ((b.x - a.x) * (0 - a.y)) / (b.y - a.y),
+        y: 0,
+      }),
+    },
+    {
+      inside: (p) => p.y <= extentY,
+      intersect: (a, b) => ({
+        x: a.x + ((b.x - a.x) * (extentY - a.y)) / (b.y - a.y),
+        y: extentY,
+      }),
+    },
+  ];
+  let output = polygon;
+  for (const edge of edges) {
+    const input = output;
+    output = [];
+    for (let k = 0; k < input.length; k++) {
+      const current = input[k]!;
+      const previous = input[(k + input.length - 1) % input.length]!;
+      if (edge.inside(current)) {
+        if (!edge.inside(previous))
+          output.push(edge.intersect(previous, current));
+        output.push(current);
+      } else if (edge.inside(previous)) {
+        output.push(edge.intersect(previous, current));
+      }
+    }
+    if (output.length === 0) break;
+  }
+  return output;
+}
+
 export function createRealCity(
   source: RealCitySource,
   options: RealCityOptions = {},
@@ -553,11 +612,13 @@ export function createRealCity(
       const edgeKey = [from.id, to.id].sort().join('|');
       if (edgeKeys.has(edgeKey)) continue;
       edgeKeys.add(edgeKey);
+      const streetName = element.tags?.name?.trim();
       const road: Road = {
         id: `real-road-${roads.length}`,
         start: { x: from.x, y: from.y },
         end: { x: to.x, y: to.y },
         profile: { ...profile },
+        ...(streetName ? { name: streetName } : {}),
       };
       roads.push(road);
       edges.push({
@@ -677,8 +738,15 @@ export function createRealCity(
       ['grass', 'meadow', 'recreation_ground', 'village_green'].includes(
         tags.landuse ?? '',
       );
-    const polygon = shape.ring.slice(0, -1);
+    // Nothing may render outside the selected square: footprints that
+    // cross its border are clipped to it instead of sticking out.
+    const polygon = clipPolygonToExtent(
+      shape.ring.slice(0, -1),
+      extentX,
+      extentY,
+    );
     if (isPark) {
+      if (polygon.length < 3) continue;
       const parkXs = polygon.map((p) => p.x);
       const parkYs = polygon.map((p) => p.y);
       parks.push({
@@ -688,9 +756,44 @@ export function createRealCity(
       });
       continue;
     }
-    if (Math.abs(polygonArea(polygon)) < 10) continue;
-    const rect = orientedBoundingRect(polygon);
+    if (polygon.length < 3 || Math.abs(polygonArea(polygon)) < 10) continue;
+    let rect = orientedBoundingRect(polygon);
     if (!rect || rect.widthInMeters < 2 || rect.depthInMeters < 1) continue;
+    // A rotated containing rectangle can still poke past the square near
+    // its edges; fall back to the axis-aligned bounds of the clipped
+    // footprint so the rendered box stays inside too.
+    {
+      const cos0 = Math.cos(rect.angleInRadians);
+      const sin0 = Math.sin(rect.angleInRadians);
+      const hx0 =
+        (Math.abs(cos0) * rect.widthInMeters +
+          Math.abs(sin0) * rect.depthInMeters) /
+        2;
+      const hz0 =
+        (Math.abs(sin0) * rect.widthInMeters +
+          Math.abs(cos0) * rect.depthInMeters) /
+        2;
+      if (
+        rect.center.x - hx0 < -0.01 ||
+        rect.center.y - hz0 < -0.01 ||
+        rect.center.x + hx0 > extentX + 0.01 ||
+        rect.center.y + hz0 > extentY + 0.01
+      ) {
+        const xs = polygon.map((point) => point.x);
+        const ys = polygon.map((point) => point.y);
+        const minX = Math.min(...xs);
+        const maxX = Math.max(...xs);
+        const minY = Math.min(...ys);
+        const maxY = Math.max(...ys);
+        rect = {
+          center: { x: (minX + maxX) / 2, y: (minY + maxY) / 2 },
+          widthInMeters: maxX - minX,
+          depthInMeters: maxY - minY,
+          angleInRadians: 0,
+        };
+        if (rect.widthInMeters < 2 || rect.depthInMeters < 1) continue;
+      }
+    }
     const cos = Math.cos(rect.angleInRadians);
     const sin = Math.sin(rect.angleInRadians);
     const hx =
@@ -787,7 +890,11 @@ export function createRealCity(
       ...(shape.holes.length
         ? {
             footprintHoles: shape.holes
-              .map((hole) => hole.slice(0, -1).map((point) => ({ ...point })))
+              .map((hole) =>
+                clipPolygonToExtent(hole.slice(0, -1), extentX, extentY).map(
+                  (point) => ({ ...point }),
+                ),
+              )
               .filter((hole) => hole.length >= 3),
           }
         : {}),
@@ -890,8 +997,8 @@ export function createRealCity(
     )
       ring.push({ ...ring[0]! });
     if (ring.length < 4) continue;
-    const polygon = ring.slice(0, -1);
-    if (Math.abs(polygonArea(polygon)) < 1) continue;
+    const polygon = clipPolygonToExtent(ring.slice(0, -1), extentX, extentY);
+    if (polygon.length < 3 || Math.abs(polygonArea(polygon)) < 1) continue;
     partCandidates.push({ ring: polygon, heightInMeters, minHeightInMeters });
   }
   const attachedParts = new Set<(typeof partCandidates)[number]>();
@@ -1359,7 +1466,87 @@ export function createRealCity(
         radiusInMeters: 2.2 + parkRandom() * 1.2,
       });
     }
+    // Benches and lamps so parks read as furnished public space, not lawns.
+    const furniture: ('bench' | 'lamp')[] = [
+      ...Array.from(
+        { length: Math.min(6, Math.floor((width * depth) / 2200)) },
+        () => 'bench' as const,
+      ),
+      ...Array.from(
+        { length: Math.min(4, Math.floor((width * depth) / 3200)) },
+        () => 'lamp' as const,
+      ),
+    ];
+    for (const kind of furniture) {
+      parkAmenities.push({
+        id: `real-park-${kind}-${parkAmenities.length}`,
+        parkId: park.id,
+        kind,
+        position: {
+          x: park.minCorner.x + 2 + parkRandom() * (width - 4),
+          y: park.minCorner.y + 2 + parkRandom() * (depth - 4),
+        },
+        rotation: parkRandom() * Math.PI,
+        radiusInMeters: kind === 'bench' ? 0.9 : 0.35,
+      });
+    }
   }
+
+  // Street trees along avenues and local streets: deterministic spacing,
+  // offset onto the sidewalk, never inside a building or another tree.
+  // Rendering-only amenities (same channel as park trees).
+  const streetRandom = createCityRandom((seed ^ 0x27d4eb2f) >>> 0);
+  const MAX_STREET_TREES = 350;
+  const streetTrees: typeof parkAmenities = [];
+  for (const road of roads) {
+    if (streetTrees.length >= MAX_STREET_TREES) break;
+    if (!road.profile?.motorVehiclesAllowed) continue;
+    const dx = road.end.x - road.start.x;
+    const dy = road.end.y - road.start.y;
+    const length = Math.hypot(dx, dy);
+    if (length < 30) continue;
+    const ux = dx / length;
+    const uy = dy / length;
+    const offset =
+      road.profile.widthInMeters / 2 + road.profile.sidewalkWidthInMeters + 0.8;
+    const steps = Math.floor(length / 28);
+    for (let step = 1; step < steps; step++) {
+      if (streetTrees.length >= MAX_STREET_TREES) break;
+      const side = step % 2 === 0 ? 1 : -1;
+      const along = step * 28 + (streetRandom() - 0.5) * 6;
+      const x = road.start.x + ux * along - uy * offset * side;
+      const y = road.start.y + uy * along + ux * offset * side;
+      if (x < 2 || y < 2 || x > extentX - 2 || y > extentY - 2) continue;
+      if (
+        buildings.some(
+          (building) =>
+            x > building.minCorner.x - 1.5 &&
+            x < building.maxCorner.x + 1.5 &&
+            y > building.minCorner.y - 1.5 &&
+            y < building.maxCorner.y + 1.5,
+        )
+      )
+        continue;
+      if (
+        streetTrees.some(
+          (tree) => Math.hypot(x - tree.position.x, y - tree.position.y) < 9,
+        ) ||
+        parkAmenities.some(
+          (tree) => Math.hypot(x - tree.position.x, y - tree.position.y) < 9,
+        )
+      )
+        continue;
+      streetTrees.push({
+        id: `real-street-tree-${streetTrees.length}`,
+        parkId: 'street',
+        kind: 'tree',
+        position: { x, y },
+        rotation: streetRandom() * Math.PI,
+        radiusInMeters: 1.9 + streetRandom() * 1.1,
+      });
+    }
+  }
+  parkAmenities.push(...streetTrees);
 
   const city: CityResponse = {
     config: {

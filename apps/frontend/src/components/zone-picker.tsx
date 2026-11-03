@@ -12,8 +12,8 @@ export interface ZoneSelection {
   sideInMeters: number;
 }
 
-export const MIN_ZONE_SIDE_IN_METERS = 250;
-export const MAX_ZONE_SIDE_IN_METERS = 1500;
+/** Fixed plane size: every imported zone is exactly this square. */
+export const ZONE_SIDE_IN_METERS = 1000;
 
 function zoomForSide(
   lat: number,
@@ -28,9 +28,9 @@ function zoomForSide(
 }
 
 /**
- * OSM tile map with a draggable, resizable square selection. The square is
- * geographic (centre + side in metres), not screen-fixed: panning or zooming
- * the map moves it on screen, dragging it moves the zone itself.
+ * OSM tile map with a draggable fixed-size square selection. The square is
+ * always ZONE_SIDE_IN_METERS per side: the user only chooses where it sits,
+ * never its size, so every generated city uses the full plane exactly.
  */
 export function ZonePicker(props: {
   viewCenter: LatLon;
@@ -42,10 +42,10 @@ export function ZonePicker(props: {
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 320 });
   const [zoom, setZoom] = useState(() =>
-    zoomForSide(props.selection.center.lat, props.selection.sideInMeters, 220),
+    zoomForSide(props.selection.center.lat, ZONE_SIDE_IN_METERS, 220),
   );
   const dragRef = useRef<{
-    mode: 'pan' | 'move' | 'resize';
+    mode: 'pan' | 'move';
     startX: number;
     startY: number;
     startView: { x: number; y: number };
@@ -73,7 +73,7 @@ export function ZonePicker(props: {
   };
   const selectionScreen = toScreen(props.selection.center);
   const scale = metersPerPixel(props.selection.center.lat, zoom);
-  const sidePixels = props.selection.sideInMeters / scale;
+  const sidePixels = ZONE_SIDE_IN_METERS / scale;
 
   const tiles: { key: string; left: number; top: number; src: string }[] = [];
   if (size.width > 0) {
@@ -112,10 +112,7 @@ export function ZonePicker(props: {
     }
   }
 
-  const beginDrag = (
-    event: React.PointerEvent,
-    mode: 'pan' | 'move' | 'resize',
-  ) => {
+  const beginDrag = (event: React.PointerEvent, mode: 'pan' | 'move') => {
     event.stopPropagation();
     (event.target as HTMLElement).setPointerCapture(event.pointerId);
     dragRef.current = {
@@ -140,31 +137,12 @@ export function ZonePicker(props: {
       );
     } else if (drag.mode === 'move') {
       props.onSelectionChange({
-        ...props.selection,
         center: worldPixelsToLatLon(
           { x: drag.startSelection.x + dx, y: drag.startSelection.y + dy },
           zoom,
         ),
+        sideInMeters: ZONE_SIDE_IN_METERS,
       });
-    } else {
-      const centreScreen = {
-        x: drag.startSelection.x - viewWorld.x + size.width / 2,
-        y: drag.startSelection.y - viewWorld.y + size.height / 2,
-      };
-      const rect = containerRef.current!.getBoundingClientRect();
-      const pointer = {
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top,
-      };
-      const halfPixels = Math.max(
-        Math.abs(pointer.x - centreScreen.x),
-        Math.abs(pointer.y - centreScreen.y),
-      );
-      const side = Math.max(
-        MIN_ZONE_SIDE_IN_METERS,
-        Math.min(MAX_ZONE_SIDE_IN_METERS, halfPixels * 2 * scale),
-      );
-      props.onSelectionChange({ ...props.selection, sideInMeters: side });
     }
   };
   const endDrag = () => {
@@ -228,7 +206,7 @@ export function ZonePicker(props: {
         </svg>
       )}
       <div
-        aria-label="Zona seleccionada: arrastrar para mover, esquina para redimensionar"
+        aria-label="Zona seleccionada: arrastrar para mover"
         style={{
           position: 'absolute',
           left: selectionScreen.x - sidePixels / 2,
@@ -241,22 +219,7 @@ export function ZonePicker(props: {
           boxSizing: 'border-box',
         }}
         onPointerDown={(event) => beginDrag(event, 'move')}
-      >
-        <div
-          aria-hidden
-          style={{
-            position: 'absolute',
-            right: -8,
-            bottom: -8,
-            width: 16,
-            height: 16,
-            borderRadius: 4,
-            background: '#0b6e63',
-            cursor: 'nwse-resize',
-          }}
-          onPointerDown={(event) => beginDrag(event, 'resize')}
-        />
-      </div>
+      ></div>
       <div
         style={{
           position: 'absolute',

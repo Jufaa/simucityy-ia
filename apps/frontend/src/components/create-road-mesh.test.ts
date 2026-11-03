@@ -115,7 +115,7 @@ it('supports explicit widths for the organic road and shoulder geometry', () => 
   material.dispose();
 });
 
-it('adds sidewalks, junction plates and crosswalks when a sidewalk material is given', () => {
+it('adds sidewalks and crosswalks without junction plates when a sidewalk material is given', () => {
   const material = new THREE.MeshStandardMaterial();
   const concrete = new THREE.MeshStandardMaterial({ color: 0xc1c5c7 });
   // Graph segments meet at the junction node, as in converted OSM data.
@@ -125,11 +125,10 @@ it('adds sidewalks, junction plates and crosswalks when a sidewalk material is g
     { id: 's', start: { x: 50, y: 0 }, end: { x: 50, y: 50 } },
     { id: 'n', start: { x: 50, y: 50 }, end: { x: 50, y: 100 } },
   ];
-  const layer = createRoadLayer(roads, 25, material, 6, concrete);
+  const layer = createRoadLayer(roads, 25, material, 8, concrete);
   expect(layer.getObjectByName('road-sidewalks')).toBeInstanceOf(THREE.Group);
-  expect(layer.getObjectByName('road-junction-asphalt')).toBeInstanceOf(
-    THREE.Group,
-  );
+  expect(layer.getObjectByName('road-junction-asphalt')).toBeUndefined();
+  expect(layer.getObjectByName('road-junction-sidewalks')).toBeUndefined();
   const crosswalks = layer.getObjectByName('road-crosswalks')!;
   let stripes = 0;
   crosswalks.traverse((object) => {
@@ -140,7 +139,7 @@ it('adds sidewalks, junction plates and crosswalks when a sidewalk material is g
   expect(plain.getObjectByName('road-sidewalks')).toBeUndefined();
 });
 
-it('keeps plates and crosswalks off straight intermediate nodes', () => {
+it('keeps crosswalks off straight intermediate nodes', () => {
   const material = new THREE.MeshStandardMaterial();
   const concrete = new THREE.MeshStandardMaterial();
   const roads = [
@@ -152,7 +151,7 @@ it('keeps plates and crosswalks off straight intermediate nodes', () => {
   expect(layer.getObjectByName('road-crosswalks')).toBeUndefined();
 });
 
-it('clusters crosswalks from intersections closer than 30 m', () => {
+it('clusters crosswalks from intersections closer than 40 m', () => {
   const material = new THREE.MeshStandardMaterial();
   const concrete = new THREE.MeshStandardMaterial();
   const arms = (cx: number, prefix: string) => [
@@ -165,7 +164,7 @@ it('clusters crosswalks from intersections closer than 30 m', () => {
     [...arms(0, 'a'), ...arms(10, 'b')],
     25,
     material,
-    6,
+    8,
     concrete,
   );
   let stripes = 0;
@@ -173,4 +172,86 @@ it('clusters crosswalks from intersections closer than 30 m', () => {
     if (object instanceof THREE.InstancedMesh) stripes += object.count;
   });
   expect(stripes).toBe(16);
+});
+
+it('skips crosswalks on arms narrower than 7.5 m', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const concrete = new THREE.MeshStandardMaterial();
+  const roads = [
+    { id: 'w', start: { x: 0, y: 50 }, end: { x: 50, y: 50 } },
+    { id: 'e', start: { x: 50, y: 50 }, end: { x: 100, y: 50 } },
+    { id: 's', start: { x: 50, y: 0 }, end: { x: 50, y: 50 } },
+    { id: 'n', start: { x: 50, y: 50 }, end: { x: 50, y: 100 } },
+  ];
+  const layer = createRoadLayer(roads, 25, material, 6, concrete);
+  expect(layer.getObjectByName('road-crosswalks')).toBeUndefined();
+  expect(layer.getObjectByName('road-junction-asphalt')).toBeUndefined();
+});
+
+it('seals shared nodes with an asphalt infill bounded by the carriageway', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const concrete = new THREE.MeshStandardMaterial();
+  const roads = [
+    { id: 'w', start: { x: 0, y: 50 }, end: { x: 50, y: 50 } },
+    { id: 'e', start: { x: 50, y: 50 }, end: { x: 100, y: 50 } },
+    { id: 's', start: { x: 50, y: 0 }, end: { x: 50, y: 50 } },
+    { id: 'n', start: { x: 50, y: 50 }, end: { x: 50, y: 100 } },
+  ];
+  const layer = createRoadLayer(roads, 25, material, 8, concrete);
+  const infill = layer.getObjectByName('road-junction-infill') as THREE.Mesh;
+  expect(infill).toBeInstanceOf(THREE.Mesh);
+  const positions = infill.geometry.getAttribute('position');
+  expect(positions.count).toBeGreaterThanOrEqual(3);
+  for (let i = 0; i < positions.count; i++) {
+    // Hull corners never leave the 8 m carriageway cross at the node.
+    expect(Math.abs(positions.getX(i) - 50)).toBeLessThanOrEqual(4.01);
+    expect(Math.abs(positions.getZ(i) - 50)).toBeLessThanOrEqual(4.01);
+    expect(positions.getY(i)).toBeCloseTo(25.065);
+  }
+  infill.geometry.dispose();
+});
+
+it('shortens sidewalk slabs so they stop before junctions', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const concrete = new THREE.MeshStandardMaterial();
+  const roads = [
+    { id: 'w', start: { x: 0, y: 50 }, end: { x: 50, y: 50 } },
+    { id: 'e', start: { x: 50, y: 50 }, end: { x: 100, y: 50 } },
+    { id: 's', start: { x: 50, y: 0 }, end: { x: 50, y: 50 } },
+    { id: 'n', start: { x: 50, y: 50 }, end: { x: 50, y: 100 } },
+  ];
+  const layer = createRoadLayer(roads, 25, material, 8, concrete);
+  const lengths: number[] = [];
+  layer.getObjectByName('road-sidewalks')!.traverse((object) => {
+    if (!(object instanceof THREE.InstancedMesh)) return;
+    const matrix = new THREE.Matrix4();
+    for (let i = 0; i < object.count; i++) {
+      object.getMatrixAt(i, matrix);
+      lengths.push(new THREE.Vector3().setFromMatrixScale(matrix).x);
+    }
+  });
+  // 50 m segments lose half the 12 m corridor width at the junction end.
+  expect(lengths.length).toBe(4);
+  expect(lengths.every((length) => length <= 44.01)).toBe(true);
+});
+
+it('never paints a crosswalk inside a building footprint', () => {
+  const material = new THREE.MeshStandardMaterial();
+  const concrete = new THREE.MeshStandardMaterial();
+  const roads = [
+    { id: 'w', start: { x: 0, y: 50 }, end: { x: 50, y: 50 } },
+    { id: 'e', start: { x: 50, y: 50 }, end: { x: 100, y: 50 } },
+    { id: 's', start: { x: 50, y: 0 }, end: { x: 50, y: 50 } },
+    { id: 'n', start: { x: 50, y: 50 }, end: { x: 50, y: 100 } },
+  ];
+  // Building covering the east arm's crosswalk centre (57.4, 50).
+  const footprints = [
+    { minCorner: { x: 54, y: 46 }, maxCorner: { x: 62, y: 54 } },
+  ];
+  const layer = createRoadLayer(roads, 25, material, 8, concrete, footprints);
+  let stripes = 0;
+  layer.getObjectByName('road-crosswalks')!.traverse((object) => {
+    if (object instanceof THREE.InstancedMesh) stripes += object.count;
+  });
+  expect(stripes).toBe(12); // 3 clear arms x 4 bars; east arm skipped
 });

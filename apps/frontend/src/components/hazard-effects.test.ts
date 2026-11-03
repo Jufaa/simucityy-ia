@@ -186,6 +186,14 @@ it('animates wind streaks only while running and the tsunami wave follows the so
   // Un solo cuerpo: sin malla trasera separada, y la sección incluye la
   // cola trasera (vértices muy por detrás del frente) unida a la cresta.
   expect(tsunami.group.getObjectByName('tsunami-wave-trail')).toBeUndefined();
+  // La cresta lleva su franja de espuma y la ola se apoya sobre el
+  // terreno: ningún vértice queda bajo la superficie (y=0 en este fixture).
+  const foam = tsunami.group.getObjectByName('tsunami-wave-foam');
+  expect(foam).toBeDefined();
+  let minY = Infinity;
+  for (let i = 0; i < positions.count; i++)
+    minY = Math.min(minY, positions.getY(i));
+  expect(minY).toBeGreaterThanOrEqual(0);
   expect(minX).toBeLessThan(maxX - 8);
   tsunami.reset();
   expect(wave.visible).toBe(false);

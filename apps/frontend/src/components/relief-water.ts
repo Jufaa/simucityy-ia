@@ -137,8 +137,20 @@ export function createReliefWater(
                 0,
                 point.y - sampleTerrainHeight(city, point.x, point.z),
               );
+              // Depth-graded alpha: a shallow film stays a faint sheen
+              // and only deeper water reads as a solid sheet. The old
+              // curve saturated at 25 cm, carpeting streets opaque blue.
+              // Foam edge: the shallowest film brightens toward white so
+              // the waterline reads against dark asphalt.
+              const foam = displayDepth < 0.07 ? 1 - displayDepth / 0.07 : 0;
+              const brighten = 1 + foam * 0.9;
               colors.set(
-                [1, 1, 1, Math.max(0.04, Math.min(1, displayDepth / 0.25))],
+                [
+                  brighten,
+                  brighten,
+                  brighten * 1.05,
+                  Math.min(0.58, 0.08 + 0.5 * Math.min(1, displayDepth / 0.6)),
+                ],
                 vertices * 4,
               );
               vertices++;

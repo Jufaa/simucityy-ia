@@ -25,7 +25,7 @@ it('presents search, plan upload, the zone map and a clear primary action', () =
   expect(html).toContain('Ciudades ofrecidas:');
   expect(html).toContain('Eixample, Barcelona');
   expect(html).toContain('Mapa para elegir la zona a representar');
-  expect(html).toContain('Tamaño de la zona:');
+  expect(html).toContain('Zona fija: 1000 m por lado');
   // The main action must read as a button, with the primary styling inline.
   expect(html).toContain('Representar esta zona en la simulación');
   expect(html).toContain('background:#24655e');

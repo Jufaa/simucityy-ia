@@ -27,5 +27,5 @@ export function detailsVisible(
   cameraDistanceInMeters: number,
   viewExtentInMeters: number,
 ): boolean {
-  return cameraDistanceInMeters < viewExtentInMeters * 1.1;
+  return cameraDistanceInMeters < viewExtentInMeters * 0.6;
 }

@@ -182,6 +182,60 @@ export function createCityGround(city: CityResponse, material: THREE.Material) {
   return mesh;
 }
 
+/**
+ * Side walls that close the terrain sheet down to a flat base elevation,
+ * so a relief district reads as a solid maqueta block from street level
+ * instead of a floating sheet with air underneath its edges.
+ */
+export function createTerrainSkirt(
+  city: TerrainView,
+  bottomElevationInMeters: number,
+  material: THREE.Material,
+) {
+  const grid = city.terrainGrid;
+  if (!grid) return null;
+  const xs = grid.xCoordinates;
+  const zs = grid.yCoordinates;
+  const elevations = grid.elevationsInMeters;
+  const edge: { x: number; y: number; z: number }[] = [];
+  for (let c = 0; c < xs.length; c++)
+    edge.push({ x: xs[c]!, y: elevations[0]![c]!, z: zs[0]! });
+  for (let r = 1; r < zs.length; r++)
+    edge.push({
+      x: xs[xs.length - 1]!,
+      y: elevations[r]![xs.length - 1]!,
+      z: zs[r]!,
+    });
+  for (let c = xs.length - 2; c >= 0; c--)
+    edge.push({
+      x: xs[c]!,
+      y: elevations[zs.length - 1]![c]!,
+      z: zs[zs.length - 1]!,
+    });
+  for (let r = zs.length - 2; r >= 1; r--)
+    edge.push({ x: xs[0]!, y: elevations[r]![0]!, z: zs[r]! });
+  const positions: number[] = [];
+  const indices: number[] = [];
+  edge.forEach((point, index) => {
+    positions.push(point.x, point.y, point.z);
+    positions.push(point.x, bottomElevationInMeters, point.z);
+    const next = (index + 1) % edge.length;
+    const a = index * 2;
+    const b = next * 2;
+    indices.push(a, b, a + 1, b, b + 1, a + 1);
+  });
+  const geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(positions, 3),
+  );
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(geometry, material);
+  mesh.name = 'terrain-skirt';
+  return mesh;
+}
+
 /** Drape newly-created surface layers; retain the flat path and shared materials unchanged. */
 export function drapeSurfaceLayer<T extends THREE.Object3D>(
   root: T,
