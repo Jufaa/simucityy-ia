@@ -159,10 +159,12 @@ the browser, no keys). The same card accepts an uploaded GeoJSON plan —
 drawn over the map and cropped with the same square, with real DEM or flat
 terrain. Imported zones live as **Trazado → Zona importada** and are kept
 in the browser's IndexedDB (**Zonas guardadas**, newest 8) for one-click
-reload; nothing is stored server-side. Churches get a representative estimated
-height and spire (OSM often tags only base storeys), and an opt-in,
-clearly labelled synthetic-house infill can fill street frontage where
-OSM has almost nothing mapped.
+reload; nothing is stored server-side. Landmarks (churches, hospitals,
+stadiums, civic icons) render exact and 1:1 with their OSM `building:part`
+volumes — the Sagrada Familia reaches its real ~179 m — with a red-cross
+marker on hospitals and floodlights on stadiums; ordinary buildings stay
+instanced. An opt-in, clearly labelled synthetic-house infill can fill
+street frontage where OSM has almost nothing mapped.
 
 ## Free local model preview
 

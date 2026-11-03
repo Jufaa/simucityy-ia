@@ -78,6 +78,9 @@ const query = `[out:json][timeout:120];
 (
   way["highway"](${south},${west},${north},${east});
   way["building"](${south},${west},${north},${east});
+  way["building:part"](${south},${west},${north},${east});
+  way["leisure"="stadium"](${south},${west},${north},${east});
+  way["amenity"~"^(hospital|clinic)$"](${south},${west},${north},${east});
   way["leisure"~"^(park|garden)$"](${south},${west},${north},${east});
   way["landuse"~"^(grass|meadow|recreation_ground|village_green)$"](${south},${west},${north},${east});
   relation["building"](${south},${west},${north},${east});
@@ -249,10 +252,14 @@ const TAG_WHITELIST = [
   'highway',
   'building',
   'building:levels',
+  'building:part',
+  'min_height',
   'height',
   'leisure',
   'landuse',
   'amenity',
+  'tourism',
+  'historic',
 ];
 const roundPoint = (point) => ({
   lat: Math.round(point.lat * 1e7) / 1e7,

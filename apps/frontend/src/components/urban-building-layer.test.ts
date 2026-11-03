@@ -250,6 +250,80 @@ it('adds a representative spire to religious buildings in both render paths', ()
   expect(bounds.max.y).toBeGreaterThan(25 + 29 + 6);
 });
 
+it('renders landmarks exact with 3D parts, hospital cross and stadium floodlights', () => {
+  const basilica = {
+    id: 'basilica',
+    minCorner: { x: 20, y: 20 },
+    maxCorner: { x: 50, y: 50 },
+    heightInMeters: 24,
+    landmark: 'religious' as const,
+    presentation: { widthInMeters: 30, depthInMeters: 30, yawInRadians: 0 },
+    footprint: [
+      { x: 20, y: 20 },
+      { x: 50, y: 20 },
+      { x: 50, y: 50 },
+      { x: 20, y: 50 },
+    ],
+    parts: [
+      {
+        footprint: [
+          { x: 32, y: 32 },
+          { x: 38, y: 32 },
+          { x: 38, y: 38 },
+          { x: 32, y: 38 },
+        ],
+        heightInMeters: 60,
+        minHeightInMeters: 24,
+      },
+    ],
+    architecture,
+  };
+  const hospital = {
+    id: 'hospital-central',
+    minCorner: { x: 80, y: 20 },
+    maxCorner: { x: 100, y: 38 },
+    heightInMeters: 18,
+    landmark: 'health' as const,
+    architecture,
+  };
+  const stadium = {
+    id: 'stadium',
+    minCorner: { x: 120, y: 20 },
+    maxCorner: { x: 170, y: 60 },
+    heightInMeters: 16,
+    landmark: 'stadium' as const,
+    presentation: { widthInMeters: 50, depthInMeters: 40, yawInRadians: 0 },
+    footprint: [
+      { x: 120, y: 20 },
+      { x: 170, y: 20 },
+      { x: 170, y: 60 },
+      { x: 120, y: 60 },
+    ],
+    architecture,
+  };
+  const city = flatCity([basilica, hospital, stadium]);
+  const layer = createBuildingLayer(city);
+  // Even a plain rectangular stadium footprint renders exact (landmark).
+  const stadiumGroup = layer.getObjectByName('footprint:stadium')!;
+  expect(stadiumGroup).toBeInstanceOf(THREE.Group);
+  // Walls + caps + 4 floodlight poles + 4 heads.
+  expect(stadiumGroup.children.length).toBeGreaterThanOrEqual(10);
+  const basilicaGroup = layer.getObjectByName('footprint:basilica')!;
+  const basilicaBounds = new THREE.Box3().setFromObject(basilicaGroup);
+  // The tower part reaches its real 60 m, far above the 24 m base.
+  expect(basilicaBounds.max.y).toBeCloseTo(25 + 60);
+  // Box-rendered hospital still gets its red-cross roof marker, and the
+  // marker participates in collapse transforms.
+  const marker = layer.getObjectByName('marker:hospital-central')!;
+  expect(marker).toBeInstanceOf(THREE.Group);
+  expect(marker.children).toHaveLength(3);
+  const collapse = attachBuildingCollapse(layer, city);
+  collapse('hospital-central', 1);
+  expect(marker.scale.y).toBeLessThan(0.5);
+  collapse('hospital-central', 0);
+  expect(marker.scale.y).toBe(1);
+});
+
 it('chunks instances spatially instead of creating meshes per building', () => {
   const makeCity = (count: number): CityResponse => ({
     config: {

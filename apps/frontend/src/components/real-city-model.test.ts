@@ -100,6 +100,50 @@ function fixture(): RealCitySource {
     },
     {
       type: 'way',
+      id: 26,
+      tags: { leisure: 'stadium' },
+      geometry: [
+        at(120, 175),
+        at(160, 175),
+        at(160, 195),
+        at(120, 195),
+        at(120, 175),
+      ],
+    },
+    {
+      type: 'way',
+      id: 27,
+      tags: { building: 'yes', amenity: 'hospital', 'building:levels': '3' },
+      geometry: [
+        at(140, 60),
+        at(155, 60),
+        at(155, 72),
+        at(140, 72),
+        at(140, 60),
+      ],
+    },
+    {
+      // 3D parts of the relation church: a tower rising from 12 m to 40 m,
+      // plus one stray part outside every building (must be dropped).
+      type: 'way',
+      id: 28,
+      tags: { 'building:part': 'tower', height: '40', min_height: '12' },
+      geometry: [
+        at(110, 150),
+        at(116, 150),
+        at(116, 156),
+        at(110, 156),
+        at(110, 150),
+      ],
+    },
+    {
+      type: 'way',
+      id: 29,
+      tags: { 'building:part': 'yes', height: '30' },
+      geometry: [at(5, 205), at(10, 205), at(10, 210), at(5, 210), at(5, 205)],
+    },
+    {
+      type: 'way',
       id: 30,
       tags: { leisure: 'park' },
       geometry: [at(20, 20), at(50, 20), at(50, 45), at(20, 45), at(20, 20)],
@@ -185,7 +229,7 @@ describe('createRealCity', () => {
 
   it('converts building footprints to contained rotated rectangles with height provenance', () => {
     const { city, metadata } = createRealCity(fixture());
-    expect(city.buildings).toHaveLength(5);
+    expect(city.buildings).toHaveLength(7);
     const measured = city.buildings[0]!;
     expect(measured.heightInMeters).toBe(21);
     const shop = city.buildings[1]!;
@@ -197,8 +241,8 @@ describe('createRealCity', () => {
     expect(shop.maxCorner.y - shop.minCorner.y).toBeGreaterThan(28);
     expect(shop.presentation!.widthInMeters).toBeCloseTo(21.2, 0);
     expect(Math.abs(shop.presentation!.yawInRadians)).toBeGreaterThan(0.5);
-    expect(metadata.measuredBuildingHeights).toBe(3);
-    expect(metadata.estimatedBuildingHeights).toBe(2);
+    expect(metadata.measuredBuildingHeights).toBe(4);
+    expect(metadata.estimatedBuildingHeights).toBe(3);
     expect(city.buildings[2]!.heightInMeters).toBeGreaterThanOrEqual(6);
     expect(city.district!.parks).toHaveLength(1);
     const trees = city.district!.urban!.amenities.filter(
@@ -231,6 +275,33 @@ describe('createRealCity', () => {
     }
     // Every real building carries its exact footprint for rendering.
     expect(city.buildings.every((building) => building.footprint)).toBe(true);
+  });
+
+  it('classifies stadiums and hospitals as landmarks with usable heights', () => {
+    const { city, metadata } = createRealCity(fixture());
+    const stadium = city.buildings.find((b) => b.landmark === 'stadium')!;
+    expect(stadium).toBeDefined();
+    expect(stadium.heightInMeters).toBeGreaterThanOrEqual(12);
+    expect(stadium.heightInMeters).toBeLessThanOrEqual(40);
+    const hospital = city.buildings.find((b) => b.landmark === 'health')!;
+    expect(hospital).toBeDefined();
+    expect(hospital.heightInMeters).toBe(9);
+    expect(metadata.landmarkBuildings).toBe(4);
+  });
+
+  it('attaches 3D parts to their parent building and drops strays', () => {
+    const { city } = createRealCity(fixture());
+    const church = city.buildings.find(
+      (b) => b.landmark === 'religious' && b.heightInMeters === 24,
+    )!;
+    expect(church.parts).toHaveLength(1);
+    expect(church.parts![0]).toMatchObject({
+      heightInMeters: 40,
+      minHeightInMeters: 12,
+    });
+    // Parts are never standalone buildings.
+    expect(city.buildings.every((b) => !b.id.includes('part'))).toBe(true);
+    expect(city.buildings).toHaveLength(7);
   });
 
   it('gives churches a representative estimated height and landmark flag', () => {

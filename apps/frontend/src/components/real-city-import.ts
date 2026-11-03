@@ -31,10 +31,14 @@ const TAG_WHITELIST = [
   'highway',
   'building',
   'building:levels',
+  'building:part',
+  'min_height',
   'height',
   'leisure',
   'landuse',
   'amenity',
+  'tourism',
+  'historic',
 ];
 
 export async function searchPlaces(query: string): Promise<PlaceResult[]> {
@@ -187,6 +191,9 @@ export async function fetchOsmSource(
 (
   way["highway"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["building:part"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["leisure"="stadium"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  way["amenity"~"^(hospital|clinic)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["leisure"~"^(park|garden)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["landuse"~"^(grass|meadow|recreation_ground|village_green)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   relation["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
@@ -331,6 +338,9 @@ function tagsFromProperties(
     tags.building = 'yes';
   if (!tags.building && ['church', 'iglesia', 'temple'].includes(kind))
     tags.building = 'church';
+  if (!tags.leisure && ['stadium', 'estadio'].includes(kind))
+    tags.leisure = 'stadium';
+  if (!tags.amenity && kind === 'hospital') tags.amenity = 'hospital';
   if (!tags.highway && ['road', 'street', 'calle'].includes(kind))
     tags.highway = 'residential';
   if (!tags.leisure && ['park', 'parque'].includes(kind)) tags.leisure = 'park';

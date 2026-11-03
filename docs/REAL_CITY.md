@@ -117,14 +117,18 @@ Then point the import in `Scene.tsx` at the new file (and adjust the label).
   OSM: central Barcelona has thousands of footprints per km², while e.g.
   Río Cuarto has only a few dozen mapped — the importer warns when a zone
   brings fewer than 150 buildings instead of inventing the missing ones.
-- **Heights:** 1,131 of 1,483 buildings carry OSM
-  `height`/`building:levels`; the other 352 heights are deterministic
-  estimates by OSM id and are counted as _estimated_ in the metadata and
-  panel, never presented as measured data. Places of worship are the one
-  deliberate override: OSM often tags only the base storeys (the Sagrada
-  Familia reads 6 m), so churches/temples below 18 m get a representative
-  estimated height scaled by footprint (the basilica becomes 35 m) plus a
-  simple spire — recognizable, explicitly not a 1:1 reconstruction.
+- **Heights:** most buildings carry OSM `height`/`building:levels`; the
+  rest are deterministic estimates by OSM id, counted as _estimated_ in
+  the metadata and panel, never presented as measured data.
+- **Landmarks render 1:1 where OSM allows.** Churches, hospitals,
+  stadiums and civic icons (`landmarkKindFor`) always get their exact
+  footprint, and OSM `building:part` volumes are attached to their parent
+  building at surveyed heights — the Sagrada Familia rises to ~179 m with
+  its towers instead of the 6 m its base storeys suggest. Hospitals get a
+  red-cross roof marker, stadiums floodlight poles, churches a spire when
+  no parts exist. Where no surveyed height exists (e.g. Camp Nou), the
+  height is a declared estimate scaled by footprint. Ordinary buildings
+  and houses stay on the fast instanced rectangles.
 - **Sparse cities:** where OSM has almost no buildings mapped (Río Cuarto
   has ~157 footprints in 1.5 km²), the import card offers an opt-in
   _synthetic infill_: deterministic houses along streets, flagged per

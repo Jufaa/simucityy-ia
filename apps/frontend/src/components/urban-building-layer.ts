@@ -158,21 +158,32 @@ export function footprintIsComplex(building: Building): boolean {
 export const MAX_EXACT_FOOTPRINTS = 200;
 
 /**
- * Chooses which complex footprints get exact meshes: the largest by area,
- * so landmarks and perimeter blocks win over small annexes. Deterministic
- * (area, then id); the rest keep the instanced rectangle.
+ * Chooses which footprints get exact meshes. Landmarks (churches,
+ * hospitals, stadiums, civic icons) always do — they are the orientation
+ * cues of a real district and render 1:1 with their OSM parts. Other
+ * complex footprints fill the remaining budget by area, largest first.
+ * Deterministic (area, then id); the rest keep the instanced rectangle.
  */
 export function selectExactFootprints(buildings: Building[]): Set<string> {
+  const selected = new Set(
+    buildings
+      .filter((building) => building.landmark && building.footprint)
+      .map((building) => building.id),
+  );
   const candidates = buildings
-    .filter((building) => footprintIsComplex(building))
+    .filter(
+      (building) =>
+        !selected.has(building.id) &&
+        (footprintIsComplex(building) || (building.parts?.length ?? 0) > 0),
+    )
     .map((building) => ({
       id: building.id,
       area: Math.abs(polygonAreaOf(building.footprint!)),
     }))
     .sort((a, b) => b.area - a.area || (a.id < b.id ? -1 : 1));
-  return new Set(
-    candidates.slice(0, MAX_EXACT_FOOTPRINTS).map((candidate) => candidate.id),
-  );
+  for (const candidate of candidates.slice(0, MAX_EXACT_FOOTPRINTS))
+    selected.add(candidate.id);
+  return selected;
 }
 
 /** Splits a non-indexed extruded geometry into cap and wall parts by normal. */
@@ -274,6 +285,52 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     color: 0x737974,
     roughness: 1,
   });
+  // Plain-colour materials for exact footprints and landmark details.
+  const footprintFacadeMaterials = {
+    sand: new THREE.MeshStandardMaterial({ color: 0xdbc9a5, roughness: 0.88 }),
+    brick: new THREE.MeshStandardMaterial({ color: 0xbd876c, roughness: 0.88 }),
+    stone: new THREE.MeshStandardMaterial({ color: 0xbdc8cc, roughness: 0.88 }),
+  } as Record<FacadeName, THREE.MeshStandardMaterial>;
+  const healthWhiteMaterial = new THREE.MeshStandardMaterial({
+    color: 0xf5f7f7,
+    roughness: 0.6,
+  });
+  const healthRedMaterial = new THREE.MeshStandardMaterial({
+    color: 0xd43a2f,
+    roughness: 0.6,
+  });
+  const floodlightPoleMaterial = new THREE.MeshStandardMaterial({
+    color: 0x9aa4a8,
+    roughness: 0.5,
+    metalness: 0.4,
+  });
+  const floodlightHeadMaterial = new THREE.MeshStandardMaterial({
+    color: 0x555c60,
+    emissive: 0xfff0b8,
+    emissiveIntensity: 1.4,
+    roughness: 0.4,
+  });
+  /** Roof-top red-cross marker so hospitals read as hospitals at a glance. */
+  const createHealthMarker = (topY: number): THREE.Group => {
+    const marker = new THREE.Group();
+    const slab = new THREE.Mesh(
+      new THREE.BoxGeometry(3.6, 0.35, 3.6),
+      healthWhiteMaterial,
+    );
+    slab.position.y = topY + 0.18;
+    const armA = new THREE.Mesh(
+      new THREE.BoxGeometry(2.4, 0.4, 0.7),
+      healthRedMaterial,
+    );
+    armA.position.y = topY + 0.42;
+    const armB = new THREE.Mesh(
+      new THREE.BoxGeometry(0.7, 0.4, 2.4),
+      healthRedMaterial,
+    );
+    armB.position.y = topY + 0.42;
+    marker.add(slab, armA, armB);
+    return marker;
+  };
   const door = new THREE.MeshStandardMaterial({
     color: 0x62442e,
     roughness: 0.8,
@@ -410,6 +467,75 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     wallsMesh.castShadow = wallsMesh.receiveShadow = true;
     capsMesh.castShadow = capsMesh.receiveShadow = true;
     group.add(wallsMesh, capsMesh);
+    const footprintCentroid = footprint.reduce(
+      (acc, point) => ({
+        x: acc.x + point.x / footprint.length,
+        y: acc.y + point.y / footprint.length,
+      }),
+      { x: 0, y: 0 },
+    );
+    // Real 3D parts at 1:1 (OSM building:part heights): towers and vaults
+    // rise from their surveyed min-height to their surveyed height.
+    for (const part of building.parts ?? []) {
+      if (part.heightInMeters <= part.minHeightInMeters) continue;
+      const partShape = new THREE.Shape();
+      part.footprint.forEach((point, index) => {
+        const [x, y] = toShapePoint(point);
+        if (index === 0) partShape.moveTo(x, y);
+        else partShape.lineTo(x, y);
+      });
+      partShape.closePath();
+      const partGeometry = new THREE.ExtrudeGeometry(partShape, {
+        depth: part.heightInMeters - part.minHeightInMeters,
+        bevelEnabled: false,
+      });
+      partGeometry.rotateX(-Math.PI / 2);
+      partGeometry.translate(0, part.minHeightInMeters, 0);
+      const partSplit = splitExtrudeByNormal(partGeometry);
+      partGeometry.dispose();
+      const partWalls = new THREE.Mesh(partSplit.walls, wallMaterial);
+      const partCaps = new THREE.Mesh(
+        partSplit.caps,
+        roofMaterialFor(building.id),
+      );
+      partWalls.castShadow = partWalls.receiveShadow = true;
+      partCaps.castShadow = partCaps.receiveShadow = true;
+      group.add(partWalls, partCaps);
+    }
+    if (building.landmark === 'health') {
+      const marker = createHealthMarker(building.heightInMeters);
+      marker.position.set(
+        footprintCentroid.x - root.position.x,
+        0,
+        footprintCentroid.y - root.position.z,
+      );
+      group.add(marker);
+    }
+    if (building.landmark === 'stadium') {
+      // Floodlight poles at the footprint corners: a stadium reads from
+      // the air before any facade detail does.
+      const xs = footprint.map((p) => p.x - root.position.x);
+      const zs = footprint.map((p) => p.y - root.position.z);
+      const corners: [number, number][] = [
+        [Math.min(...xs) + 3, Math.min(...zs) + 3],
+        [Math.min(...xs) + 3, Math.max(...zs) - 3],
+        [Math.max(...xs) - 3, Math.min(...zs) + 3],
+        [Math.max(...xs) - 3, Math.max(...zs) - 3],
+      ];
+      for (const [cornerX, cornerZ] of corners) {
+        const pole = new THREE.Mesh(
+          new THREE.CylinderGeometry(0.18, 0.24, 10, 6),
+          floodlightPoleMaterial,
+        );
+        pole.position.set(cornerX, building.heightInMeters + 5, cornerZ);
+        const head = new THREE.Mesh(
+          new THREE.BoxGeometry(1.8, 0.9, 0.5),
+          floodlightHeadMaterial,
+        );
+        head.position.set(cornerX, building.heightInMeters + 10.2, cornerZ);
+        group.add(pole, head);
+      }
+    }
     if (building.landmark === 'religious') {
       // Representative spire (not a 1:1 reconstruction): a tapered stone
       // prism over the footprint centroid so churches read as churches.
@@ -497,6 +623,12 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       capBucket.placements.push(body);
       capBucket.ids.push(building.id);
       capsByRoof.set(roofColorForBuilding(building.id), capBucket);
+    }
+    if (!complex && building.landmark === 'health') {
+      const marker = createHealthMarker(building.heightInMeters);
+      marker.name = `marker:${building.id}`;
+      marker.position.copy(root.position);
+      group.add(marker);
     }
     if (!complex && building.landmark === 'religious') {
       const spireHeight = Math.max(
@@ -839,8 +971,11 @@ export function attachBuildingCollapse(
         entriesByBuilding.set(id, entries);
       });
     }
-    if (object.name.startsWith('footprint:')) {
-      const id = object.name.slice('footprint:'.length);
+    if (
+      object.name.startsWith('footprint:') ||
+      object.name.startsWith('marker:')
+    ) {
+      const id = object.name.slice(object.name.indexOf(':') + 1);
       footprintByBuilding.set(id, {
         object,
         position: object.position.clone(),

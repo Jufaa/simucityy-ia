@@ -47,8 +47,10 @@ export interface Building {
     yawInRadians: number;
   };
   use?: 'residential' | 'commercial';
-  /** Landmark hint from source tags (e.g. places of worship get a spire). */
-  landmark?: 'religious';
+  /** Landmark hint from source tags: standout buildings render exact/1:1. */
+  landmark?: 'religious' | 'health' | 'stadium' | 'civic';
+  /** Real 3D parts (OSM building:part) with measured heights, rendering only. */
+  parts?: BuildingPart[];
   /** True only for clearly-labelled synthetic infill, never source data. */
   synthetic?: boolean;
   /** Exact local footprint (x/y metres) when known, e.g. imported real buildings. Rendering metadata; hazard bounds stay min/max. */
@@ -64,6 +66,12 @@ export interface Building {
     entranceSide: 'north' | 'south' | 'east' | 'west';
     balconyDepthInMeters: number;
   };
+}
+
+export interface BuildingPart {
+  footprint: Point[];
+  heightInMeters: number;
+  minHeightInMeters: number;
 }
 
 export interface BuildingLayout {
@@ -127,6 +135,8 @@ export interface RealCityMetadata {
   estimatedBuildingHeights: number;
   /** Houses invented by the opt-in infill (never presented as real data). */
   syntheticBuildings: number;
+  /** Buildings classified as landmarks (churches, hospitals, stadiums...). */
+  landmarkBuildings: number;
 }
 
 export interface CityResponse {

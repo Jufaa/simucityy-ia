@@ -3,6 +3,7 @@ import { getRoadProfile } from './road-profile';
 import type {
   Block,
   Building,
+  BuildingPart,
   CityResponse,
   Point,
   RealCityMetadata,
@@ -79,6 +80,54 @@ const RELIGIOUS_BUILDINGS = new Set([
   'synagogue',
   'monastery',
 ]);
+
+export type LandmarkKind = 'religious' | 'health' | 'stadium' | 'civic';
+
+/** Standout buildings (landmarks) render exact and 1:1 where data allows. */
+export function landmarkKindFor(
+  tags: Record<string, string>,
+): LandmarkKind | undefined {
+  if (
+    RELIGIOUS_BUILDINGS.has(tags.building ?? '') ||
+    tags.amenity === 'place_of_worship'
+  )
+    return 'religious';
+  if (
+    ['hospital', 'clinic', 'doctors', 'dentists'].includes(
+      tags.amenity ?? '',
+    ) ||
+    tags.building === 'hospital'
+  )
+    return 'health';
+  if (tags.leisure === 'stadium' || tags.building === 'stadium')
+    return 'stadium';
+  if (
+    ['townhall', 'theatre', 'arts_centre', 'courthouse', 'library'].includes(
+      tags.amenity ?? '',
+    ) ||
+    ['townhall', 'civic', 'theatre', 'museum', 'train_station'].includes(
+      tags.building ?? '',
+    ) ||
+    ['museum', 'gallery', 'attraction'].includes(tags.tourism ?? '') ||
+    ['castle', 'monument', 'ruins', 'fort'].includes(tags.historic ?? '')
+  )
+    return 'civic';
+  return undefined;
+}
+
+function pointInPolygon(point: Point, ring: Point[]): boolean {
+  let inside = false;
+  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
+    const a = ring[i]!;
+    const b = ring[j]!;
+    if (
+      a.y > point.y !== b.y > point.y &&
+      point.x < ((b.x - a.x) * (point.y - a.y)) / (b.y - a.y) + a.x
+    )
+      inside = !inside;
+  }
+  return inside;
+}
 
 const EARTH_METERS_PER_DEGREE_LAT = (phi: number) =>
   111132.92 - 559.82 * Math.cos(2 * phi) + 1.175 * Math.cos(4 * phi);
@@ -521,7 +570,11 @@ export function createRealCity(
         tags.landuse ?? '',
       );
     const isBuilding = tags.building !== undefined && tags.building !== 'no';
-    if (!isBuilding && !isPark) continue;
+    // building:part elements are 3D detail of a parent building, never
+    // standalone buildings; they are collected separately below.
+    if (tags['building:part'] !== undefined) continue;
+    const isLandmarkShape = landmarkKindFor(tags) !== undefined;
+    if (!isBuilding && !isPark && !isLandmarkShape) continue;
     if (element.type === 'way') {
       if (!element.geometry) continue;
       const ring = element.geometry.map(project);
@@ -629,9 +682,18 @@ export function createRealCity(
           : 2 + (hashId(shape.osmId) % 5);
       heightInMeters = floors * 3;
     }
-    const religious =
-      RELIGIOUS_BUILDINGS.has(tags.building ?? '') ||
-      tags.amenity === 'place_of_worship';
+    const landmark = landmarkKindFor(tags);
+    const religious = landmark === 'religious';
+    if (landmark === 'stadium' && !heightMeasured) {
+      // No surveyed height in OSM for most stadiums: representative bowl
+      // height scaled by footprint, counted as estimated.
+      heightInMeters = Math.round(
+        Math.max(
+          12,
+          Math.min(40, Math.sqrt(Math.abs(polygonArea(polygon))) * 0.32),
+        ),
+      );
+    }
     if (religious && heightInMeters < 18) {
       // A nave is not two storeys: OSM often tags churches with the base
       // building's levels (the Sagrada Familia reads 6 m). Give landmarks a
@@ -656,7 +718,7 @@ export function createRealCity(
         yawInRadians: -rect.angleInRadians,
       },
       use: commercial ? 'commercial' : 'residential',
-      ...(religious ? { landmark: 'religious' as const } : {}),
+      ...(landmark ? { landmark } : {}),
       footprint: polygon.map((point) => ({ ...point })),
       ...(shape.holes.length
         ? {
@@ -677,6 +739,78 @@ export function createRealCity(
       },
     });
   }
+  // Attach OSM 3D parts (building:part with real heights, e.g. the Sagrada
+  // Familia towers at ~170 m) to the building whose footprint contains
+  // them. Rendering-only: hazards keep the parent building as before.
+  const partCandidates: {
+    ring: Point[];
+    heightInMeters: number;
+    minHeightInMeters: number;
+  }[] = [];
+  for (const element of elements) {
+    if (element.type !== 'way' || !element.geometry) continue;
+    const tags = element.tags ?? {};
+    if (tags['building:part'] === undefined) continue;
+    const taggedHeight = Number.parseFloat(tags.height ?? '');
+    const taggedLevels = Number.parseFloat(tags['building:levels'] ?? '');
+    const heightInMeters = Number.isFinite(taggedHeight)
+      ? taggedHeight
+      : Number.isFinite(taggedLevels)
+        ? taggedLevels * 3
+        : Number.NaN;
+    if (
+      !Number.isFinite(heightInMeters) ||
+      heightInMeters <= 0 ||
+      heightInMeters > 260
+    )
+      continue;
+    const taggedMin = Number.parseFloat(tags.min_height ?? '');
+    const minHeightInMeters = Number.isFinite(taggedMin)
+      ? Math.max(0, Math.min(taggedMin, heightInMeters))
+      : 0;
+    const ring = element.geometry.map(project);
+    if (
+      ring.length > 1 &&
+      (Math.abs(ring[0]!.x - ring.at(-1)!.x) > 1e-6 ||
+        Math.abs(ring[0]!.y - ring.at(-1)!.y) > 1e-6)
+    )
+      ring.push({ ...ring[0]! });
+    if (ring.length < 4) continue;
+    const polygon = ring.slice(0, -1);
+    if (Math.abs(polygonArea(polygon)) < 1) continue;
+    partCandidates.push({ ring: polygon, heightInMeters, minHeightInMeters });
+  }
+  for (const part of partCandidates) {
+    const centroid = {
+      x: part.ring.reduce((sum, p) => sum + p.x, 0) / part.ring.length,
+      y: part.ring.reduce((sum, p) => sum + p.y, 0) / part.ring.length,
+    };
+    const parent = buildings.find(
+      (building) =>
+        building.footprint &&
+        centroid.x >= building.minCorner.x - 2 &&
+        centroid.x <= building.maxCorner.x + 2 &&
+        centroid.y >= building.minCorner.y - 2 &&
+        centroid.y <= building.maxCorner.y + 2 &&
+        pointInPolygon(centroid, building.footprint),
+    );
+    if (!parent) continue;
+    const buildingPart: BuildingPart = {
+      footprint: part.ring,
+      heightInMeters: part.heightInMeters,
+      minHeightInMeters: part.minHeightInMeters,
+    };
+    (parent.parts ??= []).push(buildingPart);
+  }
+  for (const building of buildings)
+    if (building.parts && building.parts.length > 120)
+      building.parts = building.parts
+        .sort((a, b) => b.heightInMeters - a.heightInMeters)
+        .slice(0, 120);
+  const landmarkBuildings = buildings.filter(
+    (building) => building.landmark,
+  ).length;
+
   // Opt-in synthetic infill: deterministic houses along motor streets where
   // the source has no buildings. Clearly flagged per building and counted in
   // metadata; off by default and never mixed into measured data.
@@ -957,6 +1091,7 @@ export function createRealCity(
     measuredBuildingHeights,
     estimatedBuildingHeights,
     syntheticBuildings,
+    landmarkBuildings,
   };
 
   // Deterministic park trees: placement lives in the converted data (a
