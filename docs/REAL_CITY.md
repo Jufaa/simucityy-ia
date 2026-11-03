@@ -22,8 +22,9 @@ surroundings and simulation settings:
    results, plus offered presets (Eixample and Gràcia in Barcelona, Centro
    in Madrid, Ciutat Vella in València). The map (OSM raster tiles) pans by
    dragging.
-2. **Drag the square**: the teal square is the area to represent — drag it
-   to move, drag its corner or use the slider to resize (250–1500 m side).
+2. **Drag the square**: the teal square is the area to represent. It is
+   always 1000 m per side — drag it to choose where the zone sits; its
+   size never changes, so every generated city fills the same plane.
 3. **Representar esta zona en la simulación**: downloads OSM geometry
    (Overpass) and Terrarium DEM tiles in the browser (all CORS-enabled,
    free, keyless), converts with the same `createRealCity()` and switches

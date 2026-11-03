@@ -44,6 +44,11 @@ import {
 import { DistrictSimulation, type ComparisonArm } from './district-simulation';
 import { createCitizenLayer, createDrainLayer } from './citizen-layer';
 import { ComparisonPanel } from './comparison-panel';
+import { buildImpactNarrative, buildImpactSummary } from './impact-summary';
+import { ImpactPanel } from './impact-panel';
+import { buildDemoSteps, type DemoStep } from './demo-tour';
+import { DemoTourPanel } from './demo-tour-panel';
+import { buildReport, downloadReport } from './report';
 import { createStaticPopulation } from './static-population';
 import { generateWorld } from './world-model';
 import {
@@ -102,6 +107,7 @@ export default function Scene() {
   const [trafficCount, setTrafficCount] = useState(0);
   const [running, setRunning] = useState(false);
   const [panelOpen, setPanelOpen] = useState(false);
+  const [demoStep, setDemoStep] = useState<number | null>(null);
   const [importCardOpen, setImportCardOpen] = useState(false);
   const [assetStatus, setAssetStatus] = useState<
     'loading' | 'ready' | 'fallback' | 'procedural'
@@ -321,11 +327,15 @@ export default function Scene() {
       controls.target.set(...next.target);
       controls.update();
     };
-    const worldLayer = createWorldLayer(world);
-    for (const key of Object.keys(worldLayer.layers) as WorldLayerName[])
-      worldLayer.layers[key].visible = worldVisibleRef.current[key];
-    scene.add(worldLayer.group);
-    worldLayerRef.current = worldLayer;
+    // Real imported zones keep their own geography: the synthetic sea,
+    // lake and fields would float the district over an unrelated coast.
+    const worldLayer = city.real ? null : createWorldLayer(world);
+    if (worldLayer) {
+      for (const key of Object.keys(worldLayer.layers) as WorldLayerName[])
+        worldLayer.layers[key].visible = worldVisibleRef.current[key];
+      scene.add(worldLayer.group);
+      worldLayerRef.current = worldLayer;
+    }
 
     const dirLight = new THREE.DirectionalLight(0xfff1dc, 2.5);
     dirLight.position.set(
@@ -472,6 +482,29 @@ export default function Scene() {
     const ground = createCityGround(city, groundMaterial);
     scene.add(ground);
     ground.receiveShadow = true;
+    if (city.real) {
+      // Maqueta base exactly the size of the imported square: it gives the
+      // district a clean plinth edge without generating anything outside it.
+      const elevations = city.terrainGrid
+        ? city.terrainGrid.elevationsInMeters.flat()
+        : [city.terrain.elevationInMeters];
+      const minElevation = Math.min(...elevations);
+      const plinth = new THREE.Mesh(
+        new THREE.BoxGeometry(
+          city.config.widthInMeters,
+          3,
+          city.config.heightInMeters,
+        ),
+        new THREE.MeshStandardMaterial({ color: 0x8f979b, roughness: 1 }),
+      );
+      plinth.name = 'real-base-plinth';
+      plinth.position.set(
+        city.config.widthInMeters / 2,
+        minElevation - 1.55,
+        city.config.heightInMeters / 2,
+      );
+      scene.add(plinth);
+    }
     const resize = () => {
       camera.aspect = mount.clientWidth / mount.clientHeight;
       camera.updateProjectionMatrix();
@@ -735,7 +768,7 @@ export default function Scene() {
         syncCollapseTargets();
       }
       const collapsesMoved = animateCollapses(document.hidden ? 0 : delta);
-      worldLayer.animate(document.hidden ? 0 : delta);
+      worldLayer?.animate(document.hidden ? 0 : delta);
       organicLayer?.animate(document.hidden ? 0 : delta);
       atmosphere.animate(document.hidden ? 0 : delta);
       const active = simulation?.started ?? false;
@@ -853,8 +886,10 @@ export default function Scene() {
       focusViewRef.current = null;
       worldLayerRef.current = null;
       organicLayerRef.current = null;
-      scene.remove(worldLayer.group);
-      worldLayer.dispose();
+      if (worldLayer) {
+        scene.remove(worldLayer.group);
+        worldLayer.dispose();
+      }
       scene.remove(weather.group);
       weather.dispose();
       refreshHazardEffectsRef.current = null;
@@ -993,6 +1028,8 @@ export default function Scene() {
   }
 
   function applyImportedCity(next: CityResponse) {
+    cameraViewRef.current = 'city';
+    setWorldView('city');
     setRunning(false);
     setFlood(null);
     setComparison(null);
@@ -1017,6 +1054,73 @@ export default function Scene() {
     );
   }
   if (!city) return <div style={{ padding: 20 }}>Cargando ciudad...</div>;
+  const zoneLabel = city?.real
+    ? city.real.name
+    : city?.organic
+      ? 'Ciudad orgánica sintética'
+      : 'Ciudad sintética';
+  const impactSummary =
+    city && flood
+      ? buildImpactSummary({
+          elapsedSeconds: flood.elapsedTimeInSeconds,
+          maxWaterDepthInMeters: flood.maxWaterDepthInMeters,
+          blockedRoads: new Set([
+            ...flood.blockedRoadEdgeIds,
+            ...(simulationRef.current?.selectedCollapsedBlockedRoadEdgeIds ??
+              []),
+          ]).size,
+          exposedBuildings: flood.exposedBuildingIds.length,
+          totalBuildings: city.buildings.length,
+          evacuated: comparison?.[arm].evacuated ?? 0,
+          totalCitizens: city.citizens?.length ?? 0,
+          damagedBuildings: comparison?.[arm].damagedBuildings ?? 0,
+          collapsedBuildings: comparison?.[arm].collapsedBuildings ?? 0,
+          trapped: comparison?.[arm].trapped ?? 0,
+        })
+      : null;
+  const impactNarrative = impactSummary
+    ? buildImpactNarrative(
+        impactSummary,
+        hazardPreset(hazardKind).label.toLowerCase(),
+      )
+    : [];
+  const demoSteps = city
+    ? buildDemoSteps({
+        zoneLabel,
+        buildings: city.buildings.length,
+        citizens: city.citizens?.length ?? 0,
+        hazardLabel: hazardPreset(hazardKind).label.toLowerCase(),
+      })
+    : [];
+  const applyDemoStep = (index: number) => {
+    const step: DemoStep | undefined = demoSteps[index];
+    if (!step) return;
+    setDemoStep(index);
+    cameraViewRef.current = step.view;
+    setWorldView(step.view);
+    focusViewRef.current?.(step.view);
+    setSpeed(step.speed);
+    simulationRef.current?.setSpeed(step.speed);
+  };
+  const downloadCurrentReport = () => {
+    if (!impactSummary) return;
+    downloadReport(
+      buildReport({
+        zoneLabel,
+        hazardLabel: hazardPreset(hazardKind).label,
+        summary: impactSummary,
+        narrative: impactNarrative,
+        comparisonLines: comparison
+          ? [
+              `Evacuadas: ${comparison.before.evacuated} → ${comparison.after.evacuated}`,
+              `Edificios expuestos: ${comparison.before.exposedBuildings} → ${comparison.after.exposedBuildings}`,
+              `Tramos bloqueados (pico): ${comparison.before.peakBlocked} → ${comparison.after.peakBlocked}`,
+            ]
+          : [],
+      }),
+      'simulicity-reporte.txt',
+    );
+  };
 
   return (
     <main style={{ position: 'relative', width: '100vw', height: '100vh' }}>
@@ -1057,6 +1161,28 @@ export default function Scene() {
         onToggle={toggleFlood}
         onReset={resetFlood}
       />
+      <button
+        type="button"
+        onClick={() => {
+          setPanelOpen(true);
+          applyDemoStep(0);
+        }}
+        style={{
+          position: 'absolute',
+          top: 104,
+          left: 16,
+          padding: '10px 14px',
+          borderRadius: 10,
+          border: 0,
+          background: '#1d6f5c',
+          color: 'white',
+          font: '600 14px system-ui',
+          cursor: 'pointer',
+          boxShadow: '0 4px 16px #0003',
+        }}
+      >
+        ▶ Demo guiada
+      </button>
       <output
         aria-label="Rendimiento de la ciudad"
         style={{
@@ -1171,7 +1297,7 @@ export default function Scene() {
             onGenerate={(seed) => regenerateCity(seed)}
             onRandom={generateRandomCity}
           />
-          {world && (
+          {world && !city.real && (
             <WorldControls
               seed={worldSeed}
               width={world.bounds.maxX - world.bounds.minX}
@@ -1501,6 +1627,40 @@ export default function Scene() {
             reduce la velocidad a 3× para observar la caminata. Sin IA
             conectada. Sumideros: cian.
           </p>
+          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+            <button
+              type="button"
+              onClick={() => applyDemoStep(0)}
+              style={{
+                padding: '6px 10px',
+                background: '#1d6f5c',
+                color: 'white',
+                border: 0,
+                borderRadius: 5,
+              }}
+            >
+              Demo guiada
+            </button>
+            <button
+              type="button"
+              disabled={!impactSummary}
+              onClick={downloadCurrentReport}
+              style={{ padding: '6px 10px', borderRadius: 5 }}
+            >
+              Descargar reporte
+            </button>
+          </div>
+          {demoStep !== null && (
+            <DemoTourPanel
+              steps={demoSteps}
+              step={demoStep}
+              onStep={applyDemoStep}
+              onExit={() => setDemoStep(null)}
+            />
+          )}
+          {impactSummary && (
+            <ImpactPanel summary={impactSummary} narrative={impactNarrative} />
+          )}
           {comparison && (
             <ComparisonPanel
               comparison={comparison}

@@ -28,6 +28,7 @@ const OVERPASS_ENDPOINTS = [
   'https://overpass.kumi.systems/api/interpreter',
 ];
 const TAG_WHITELIST = [
+  'name',
   'highway',
   'building',
   'building:levels',

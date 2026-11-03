@@ -227,6 +227,65 @@ describe('createRealCity', () => {
     expect(city.roads).toHaveLength(5);
   });
 
+  it('clips footprints and parks that cross the square border', () => {
+    const source = fixture();
+    source.elements = [
+      ...source.elements,
+      {
+        type: 'way',
+        id: 90,
+        tags: { building: 'apartments', height: '12' },
+        geometry: [
+          at(width - 10, 40),
+          at(width + 40, 40),
+          at(width + 40, 65),
+          at(width - 10, 65),
+          at(width - 10, 40),
+        ],
+      },
+      {
+        type: 'way',
+        id: 91,
+        tags: { leisure: 'park' },
+        geometry: [
+          at(-30, 150),
+          at(30, 150),
+          at(30, 175),
+          at(-30, 175),
+          at(-30, 150),
+        ],
+      },
+    ];
+    const { city } = createRealCity(source);
+    for (const building of city.buildings) {
+      expect(building.minCorner.x).toBeGreaterThanOrEqual(-0.01);
+      expect(building.minCorner.y).toBeGreaterThanOrEqual(-0.01);
+      expect(building.maxCorner.x).toBeLessThanOrEqual(width + 0.01);
+      expect(building.maxCorner.y).toBeLessThanOrEqual(height + 0.01);
+      for (const point of building.footprint ?? []) {
+        expect(point.x).toBeGreaterThanOrEqual(-0.01);
+        expect(point.x).toBeLessThanOrEqual(width + 0.01);
+        expect(point.y).toBeGreaterThanOrEqual(-0.01);
+        expect(point.y).toBeLessThanOrEqual(height + 0.01);
+      }
+    }
+    // The crossing building survives, cut exactly at the border.
+    expect(
+      city.buildings.some(
+        (building) => Math.abs(building.maxCorner.x - width) < 0.5,
+      ),
+    ).toBe(true);
+    expect(
+      city.district!.parks.every(
+        (item) =>
+          item.minCorner.x >= -0.01 &&
+          item.minCorner.y >= -0.01 &&
+          item.maxCorner.x <= width + 0.01 &&
+          item.maxCorner.y <= height + 0.01,
+      ),
+    ).toBe(true);
+  });
+
   it('converts building footprints to contained rotated rectangles with height provenance', () => {
     const { city, metadata } = createRealCity(fixture());
     expect(city.buildings).toHaveLength(7);

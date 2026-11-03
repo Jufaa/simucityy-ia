@@ -154,8 +154,11 @@ export function footprintIsComplex(building: Building): boolean {
   return false;
 }
 
-/** Cap on individually-meshed exact footprints (two draw calls each). */
-export const MAX_EXACT_FOOTPRINTS = 200;
+/** Cap on individually-meshed exact footprints (two draw calls each).
+ * Kept low: every exact footprint costs a shadow pass too, and imported
+ * districts showed thousands of draw calls at district scale. Landmarks
+ * always render exact regardless of this budget. */
+export const MAX_EXACT_FOOTPRINTS = 80;
 
 /**
  * Chooses which footprints get exact meshes. Landmarks (churches,

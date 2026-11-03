@@ -18,8 +18,7 @@ import {
 } from './real-city-import';
 import { bboxAroundCenter, type LatLon } from './map-projection';
 import {
-  MAX_ZONE_SIDE_IN_METERS,
-  MIN_ZONE_SIDE_IN_METERS,
+  ZONE_SIDE_IN_METERS,
   ZonePicker,
   type ZoneSelection,
 } from './zone-picker';
@@ -81,7 +80,7 @@ export function RealCityImporter(props: {
   const [viewCenter, setViewCenter] = useState<LatLon>(PRESETS[0]!.center);
   const [selection, setSelection] = useState<ZoneSelection>({
     center: PRESETS[0]!.center,
-    sideInMeters: 1000,
+    sideInMeters: ZONE_SIDE_IN_METERS,
   });
   const [plan, setPlan] = useState<ParsedPlan | null>(null);
   const [planName, setPlanName] = useState('');
@@ -197,7 +196,7 @@ export function RealCityImporter(props: {
     setBusy(true);
     setImportError(null);
     try {
-      const bbox = bboxAroundCenter(selection.center, selection.sideInMeters);
+      const bbox = bboxAroundCenter(selection.center, ZONE_SIDE_IN_METERS);
       const source =
         tab === 'plan'
           ? await sourceFromPlan(
@@ -254,8 +253,9 @@ export function RealCityImporter(props: {
     <section aria-label="Importar zona real" style={{ margin: '4px 0' }}>
       <p style={{ fontSize: 12, marginTop: 0 }}>
         Buscá una ciudad o barrio, o subí tu plano GeoJSON. Arrastrá el cuadrado
-        sobre el mapa para elegir la zona (250–1500 m por lado) y cargala en la
-        simulación. Datos gratuitos: © OpenStreetMap (ODbL) y DEM Terrarium.
+        sobre el mapa para elegir dónde va la zona fija (1000 m por lado) y
+        cargala en la simulación. Datos gratuitos: © OpenStreetMap (ODbL) y DEM
+        Terrarium.
       </p>
       <div style={{ marginBottom: 10 }}>
         <strong style={{ fontSize: 12 }}>Zonas guardadas</strong>
@@ -480,23 +480,10 @@ export function RealCityImporter(props: {
           {...(tab === 'plan' && plan ? { planElements: plan.elements } : {})}
         />
       </div>
-      <label style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
-        Tamaño de la zona: {Math.round(selection.sideInMeters)} m por lado{' '}
-        <input
-          type="range"
-          min={MIN_ZONE_SIDE_IN_METERS}
-          max={MAX_ZONE_SIDE_IN_METERS}
-          step={50}
-          value={selection.sideInMeters}
-          onChange={(event) =>
-            setSelection((current) => ({
-              ...current,
-              sideInMeters: Number(event.target.value),
-            }))
-          }
-          style={{ width: '100%' }}
-        />
-      </label>
+      <p style={{ fontSize: 12, marginTop: 6 }}>
+        Zona fija: {ZONE_SIDE_IN_METERS} m por lado. Arrastrá el cuadrado para
+        elegir dónde ubicarla; el tamaño no cambia.
+      </p>
       <label style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
         <input
           type="checkbox"
