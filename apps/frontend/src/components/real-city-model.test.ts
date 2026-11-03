@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   createRealCity,
   projectedExtentInMeters,
-  type OsmWayInput,
+  type OsmElementInput,
   type RealCitySource,
 } from './real-city-model';
 import { DistrictSimulation } from './district-simulation';
@@ -30,7 +30,7 @@ function fixture(): RealCitySource {
   const xs = axis(width);
   const ys = axis(height);
   const cross = at(80, 100);
-  const elements: OsmWayInput[] = [
+  const elements: OsmElementInput[] = [
     {
       type: 'way',
       id: 10,
@@ -98,6 +98,36 @@ function fixture(): RealCitySource {
       tags: { highway: 'construction' },
       geometry: [at(0, 0), at(160, 210)],
     },
+    {
+      // Multipolygon building (church-like): outer ring split into two
+      // fragments, one reversed, plus an inner courtyard ring.
+      type: 'relation',
+      id: 900,
+      tags: { building: 'church', 'building:levels': '8' },
+      members: [
+        {
+          type: 'way',
+          role: 'outer',
+          geometry: [at(100, 140), at(130, 140), at(130, 170)],
+        },
+        {
+          type: 'way',
+          role: 'outer',
+          geometry: [at(130, 170), at(100, 170), at(100, 140)],
+        },
+        {
+          type: 'way',
+          role: 'inner',
+          geometry: [
+            at(112, 152),
+            at(118, 152),
+            at(118, 158),
+            at(112, 158),
+            at(112, 152),
+          ],
+        },
+      ],
+    },
   ];
   return {
     name: 'Fixture',
@@ -143,7 +173,7 @@ describe('createRealCity', () => {
 
   it('converts building footprints to contained rotated rectangles with height provenance', () => {
     const { city, metadata } = createRealCity(fixture());
-    expect(city.buildings).toHaveLength(3);
+    expect(city.buildings).toHaveLength(4);
     const measured = city.buildings[0]!;
     expect(measured.heightInMeters).toBe(21);
     const shop = city.buildings[1]!;
@@ -155,10 +185,30 @@ describe('createRealCity', () => {
     expect(shop.maxCorner.y - shop.minCorner.y).toBeGreaterThan(28);
     expect(shop.presentation!.widthInMeters).toBeCloseTo(21.2, 0);
     expect(Math.abs(shop.presentation!.yawInRadians)).toBeGreaterThan(0.5);
-    expect(metadata.measuredBuildingHeights).toBe(2);
+    expect(metadata.measuredBuildingHeights).toBe(3);
     expect(metadata.estimatedBuildingHeights).toBe(1);
     expect(city.buildings[2]!.heightInMeters).toBeGreaterThanOrEqual(6);
     expect(city.district!.parks).toHaveLength(1);
+  });
+
+  it('stitches relation fragments into a footprint with courtyard holes', () => {
+    const { city } = createRealCity(fixture());
+    const church = city.buildings.find(
+      (building) => building.heightInMeters === 24,
+    )!;
+    expect(church).toBeDefined();
+    expect(church.footprint).toHaveLength(4);
+    expect(church.footprintHoles).toHaveLength(1);
+    expect(church.footprintHoles![0]).toHaveLength(4);
+    // The conservative hazard envelope still contains the real footprint.
+    for (const point of church.footprint!) {
+      expect(point.x).toBeGreaterThanOrEqual(church.minCorner.x - 0.01);
+      expect(point.x).toBeLessThanOrEqual(church.maxCorner.x + 0.01);
+      expect(point.y).toBeGreaterThanOrEqual(church.minCorner.y - 0.01);
+      expect(point.y).toBeLessThanOrEqual(church.maxCorner.y + 0.01);
+    }
+    // Every real building carries its exact footprint for rendering.
+    expect(city.buildings.every((building) => building.footprint)).toBe(true);
   });
 
   it('keeps DEM grid, citizens, shelters and metadata consistent and deterministic', () => {
@@ -212,6 +262,45 @@ describe('createRealCity', () => {
     expect(() => createRealCity({ ...source, elements: [] })).toThrow(
       RangeError,
     );
+  });
+
+  it('clips border roads to the DEM grid extent so simulation drains stay inside', () => {
+    const source = fixture();
+    // Rounded DEM axes may end centimetres inside the projected extent;
+    // nodes clipped to the projection would fall outside the solver grid.
+    const xs = [...source.dem.xCoordinates];
+    xs[xs.length - 1] = xs[xs.length - 1]! - 0.04;
+    const borderRoad: OsmElementInput = {
+      type: 'way',
+      id: 5,
+      tags: { highway: 'residential' },
+      geometry: [at(width, 10), at(width, 100), at(80, 100)],
+    };
+    const { city } = createRealCity(
+      {
+        ...source,
+        elements: [borderRoad, ...source.elements],
+        dem: {
+          ...source.dem,
+          xCoordinates: xs,
+          elevationsInMeters: source.dem.yCoordinates.map(() =>
+            source.dem.xCoordinates.map(() => 10),
+          ),
+        },
+      },
+      { citizenCount: 4 },
+    );
+    expect(
+      Math.max(...city.roadGraph!.nodes.map((node) => node.x)),
+    ).toBeLessThanOrEqual(xs[xs.length - 1]!);
+    expect(
+      () =>
+        new DistrictSimulation(city, {
+          evacuationEnabled: true,
+          autoStart: true,
+          hazard: 'rain',
+        }),
+    ).not.toThrow();
   });
 
   it('produces a city the flood and evacuation simulation can advance', () => {

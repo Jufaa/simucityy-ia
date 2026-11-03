@@ -137,7 +137,7 @@ checks: [public spaces](../../docs/public-spaces.md) and
 ## Real district pilot (Eixample, Barcelona)
 
 **Ajustes → Trazado → Barrio real · Eixample (OSM)** loads a preloaded real
-district (~1.0 × 1.0 km, 1,140 buildings, 4,561 street segments) converted
+district (~1.0 × 1.0 km, 1,483 buildings, 4,561 street segments) converted
 offline from OpenStreetMap geometry plus a Terrarium DEM into the same
 simulation contract as the synthetic cities: flood, blocked streets and graph
 evacuation run on the real street network and terrain. It is selected, not

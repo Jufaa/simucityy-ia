@@ -102,14 +102,19 @@ Then point the import in `Scene.tsx` at the new file (and adjust the label).
 
 ## Honest limits
 
-- **Building footprints are approximated** by rotated rectangles (the
-  existing building contract). Chamfered Eixample corners and L-shaped
-  buildings are contained, not reproduced exactly. Multipolygon relations
-  are not imported yet; only OSM ways.
-- **Heights:** 789 of 1140 buildings carry OSM `height`/`building:levels`;
-  the other 351 heights are deterministic estimates by OSM id and are
-  counted as _estimated_ in the metadata and panel, never presented as
-  measured data.
+- **Building footprints:** ways and multipolygon relations are imported
+  (churches, stations, perimeter blocks included). Hazard/routing keep the
+  conservative rotated rectangle, but rendering draws the **exact extruded
+  footprint** — with courtyard holes — for the 200 largest complex
+  footprints (concave, holed, or filling much less than their rectangle);
+  the rest keep the instanced rectangle. Building coverage depends on
+  OSM: central Barcelona has thousands of footprints per km², while e.g.
+  Río Cuarto has only a few dozen mapped — the importer warns when a zone
+  brings fewer than 150 buildings instead of inventing the missing ones.
+- **Heights:** 1,131 of 1,483 buildings carry OSM
+  `height`/`building:levels`; the other 352 heights are deterministic
+  estimates by OSM id and are counted as _estimated_ in the metadata and
+  panel, never presented as measured data.
 - **Population and shelters are synthetic** (200 residents; three shelters
   on the highest road nodes). No real population or shelter capacity data
   is claimed.
@@ -126,6 +131,11 @@ Then point the import in `Scene.tsx` at the new file (and adjust the label).
   the scene, storm water and exposed-building highlights working at 2 FPS
   under SwiftShader — that figure says nothing about a real GPU, but modest
   GPUs may dip; GPU FPS acceptance is still pending.
+- Building collapse animates on imported zones through
+  `attachBuildingCollapse` in the procedural layer (instanced buckets and
+  footprint groups share the asset layer's collapse pose). Previously only
+  the empty marker groups moved, so buildings stayed standing over their
+  rubble; that affected every non-Kenney view, not just real districts.
 
 ## Verification
 

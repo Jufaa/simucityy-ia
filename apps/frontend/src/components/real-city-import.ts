@@ -1,5 +1,6 @@
 import {
   projectedExtentInMeters,
+  type OsmElementInput,
   type OsmWayInput,
   type RealCitySource,
 } from './real-city-model';
@@ -187,6 +188,9 @@ export async function fetchOsmSource(
   way["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["leisure"~"^(park|garden)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
   way["landuse"~"^(grass|meadow|recreation_ground|village_green)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  relation["building"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  relation["leisure"~"^(park|garden)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
+  relation["landuse"~"^(grass|meadow|recreation_ground|village_green)$"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});
 );
 out geom;`;
   type OverpassResponse = {
@@ -195,6 +199,11 @@ out geom;`;
       id: number;
       tags?: Record<string, string>;
       geometry?: { lat: number; lon: number }[];
+      members?: {
+        type: string;
+        role?: string;
+        geometry?: { lat: number; lon: number }[];
+      }[];
     }[];
     osm3s?: { timestamp_osm_base?: string };
   };
@@ -227,25 +236,43 @@ out geom;`;
     throw new Error(
       `No se pudo descargar la zona desde OpenStreetMap (${lastError instanceof Error ? lastError.message : 'sin respuesta'}). Probá de nuevo en unos segundos.`,
     );
-  const elements: OsmWayInput[] = (osm.elements ?? [])
-    .filter(
-      (element) => element.type === 'way' && Array.isArray(element.geometry),
-    )
-    .map((element) => ({
-      type: 'way' as const,
-      id: element.id,
-      tags: Object.fromEntries(
-        Object.entries(element.tags ?? {}).filter(([key]) =>
-          TAG_WHITELIST.includes(key),
-        ),
-      ),
-      geometry: element.geometry!.map(
-        (point: { lat: number; lon: number }) => ({
-          lat: Math.round(point.lat * 1e7) / 1e7,
-          lon: Math.round(point.lon * 1e7) / 1e7,
-        }),
-      ),
-    }));
+  const roundPoint = (point: { lat: number; lon: number }) => ({
+    lat: Math.round(point.lat * 1e7) / 1e7,
+    lon: Math.round(point.lon * 1e7) / 1e7,
+  });
+  const pickTags = (tags: Record<string, string> | undefined) =>
+    Object.fromEntries(
+      Object.entries(tags ?? {}).filter(([key]) => TAG_WHITELIST.includes(key)),
+    );
+  const elements: OsmElementInput[] = (osm.elements ?? []).flatMap(
+    (element): OsmElementInput[] => {
+      if (element.type === 'way' && Array.isArray(element.geometry))
+        return [
+          {
+            type: 'way',
+            id: element.id,
+            tags: pickTags(element.tags),
+            geometry: element.geometry.map(roundPoint),
+          },
+        ];
+      if (element.type === 'relation' && Array.isArray(element.members))
+        return [
+          {
+            type: 'relation',
+            id: element.id,
+            tags: pickTags(element.tags),
+            members: element.members
+              .filter((member) => member.type === 'way' && member.geometry)
+              .map((member) => ({
+                type: 'way',
+                role: member.role ?? '',
+                geometry: member.geometry!.map(roundPoint),
+              })),
+          },
+        ];
+      return [];
+    },
+  );
   if (!elements.some((element) => element.tags?.highway))
     throw new Error('La zona elegida no devolvió calles utilizables.');
   onStage?.('Descargando el relieve (DEM)…');

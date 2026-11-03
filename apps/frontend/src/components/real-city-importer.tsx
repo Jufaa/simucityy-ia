@@ -153,7 +153,10 @@ export function RealCityImporter(props: {
       if (request !== requestRef.current) return;
       props.onImported(city);
       setStage(
-        `Zona lista: ${city.buildings.length} edificios, ${city.roads.length} tramos, ${city.citizens?.length ?? 0} personas sintéticas. La simulación ya corre sobre esta zona.`,
+        `Zona lista: ${city.buildings.length} edificios, ${city.roads.length} tramos, ${city.citizens?.length ?? 0} personas sintéticas. La simulación ya corre sobre esta zona.` +
+          (city.buildings.length < 150
+            ? ' Ojo: la fuente trae pocos edificios cargados para esta zona (la cobertura de OpenStreetMap varía mucho por ciudad); se representa lo que existe en los datos.'
+            : ''),
       );
     } catch (error) {
       if (request !== requestRef.current) return;

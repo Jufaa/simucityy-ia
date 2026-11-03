@@ -30,11 +30,24 @@ export interface OsmWayInput {
   geometry?: OsmGeometryPoint[];
 }
 
+export interface OsmRelationInput {
+  type: 'relation';
+  id: number;
+  tags?: Record<string, string>;
+  members?: {
+    type: string;
+    role?: string;
+    geometry?: OsmGeometryPoint[];
+  }[];
+}
+
+export type OsmElementInput = OsmWayInput | OsmRelationInput;
+
 export interface RealCitySource {
   name: string;
   bbox: { south: number; west: number; north: number; east: number };
   osmTimestamp?: string;
-  elements: OsmWayInput[];
+  elements: OsmElementInput[];
   dem: {
     source: string;
     xCoordinates: number[];
@@ -235,6 +248,48 @@ function orientedBoundingRect(polygon: Point[]): OrientedRect | null {
   return best;
 }
 
+/**
+ * Stitches relation member fragments into closed rings by matching endpoints
+ * (members may arrive reversed or unordered). Open chains are dropped.
+ */
+export function joinSegments(segments: Point[][]): Point[][] {
+  const same = (a: Point, b: Point) =>
+    Math.abs(a.x - b.x) < 1e-4 && Math.abs(a.y - b.y) < 1e-4;
+  const pending = segments
+    .filter((segment) => segment.length >= 2)
+    .map((segment) => [...segment]);
+  const rings: Point[][] = [];
+  while (pending.length) {
+    const chain = pending.shift()!;
+    let extended = true;
+    while (!same(chain[0]!, chain[chain.length - 1]!) && extended) {
+      extended = false;
+      for (let i = 0; i < pending.length; i++) {
+        const segment = pending[i]!;
+        const head = chain[0]!;
+        const tail = chain[chain.length - 1]!;
+        if (same(tail, segment[0]!)) {
+          chain.push(...segment.slice(1));
+        } else if (same(tail, segment[segment.length - 1]!)) {
+          chain.push(...[...segment].reverse().slice(1));
+        } else if (same(head, segment[segment.length - 1]!)) {
+          chain.unshift(...segment.slice(0, -1));
+        } else if (same(head, segment[0]!)) {
+          chain.unshift(...[...segment].reverse().slice(0, -1));
+        } else {
+          continue;
+        }
+        pending.splice(i, 1);
+        extended = true;
+        break;
+      }
+    }
+    if (chain.length >= 4 && same(chain[0]!, chain[chain.length - 1]!))
+      rings.push(chain);
+  }
+  return rings;
+}
+
 /** Liang-Barsky clip of a segment to the city rectangle; null when outside. */
 function clipSegment(
   a: Point,
@@ -345,10 +400,13 @@ export function createRealCity(
   const minElevation = Math.min(...elevations.flat());
   // Nominal spacing: the first interval (the last one may be clipped short).
   const cellSizeInMeters = xs.length > 1 ? xs[1]! - xs[0]! : 0;
+  // The simulation domain is the DEM grid itself: rounded grid axes can end
+  // a few centimetres inside the projected bbox, and graph nodes clipped to
+  // the projection would fall outside the grid the solver validates against.
+  const extentX = xs[xs.length - 1]!;
+  const extentY = ys[ys.length - 1]!;
 
-  const elements = [...source.elements]
-    .filter((element) => element.type === 'way')
-    .sort((a, b) => a.id - b.id);
+  const elements = [...source.elements].sort((a, b) => a.id - b.id);
 
   // Roads and the routing graph share one segment per OSM way interval.
   const nodes: (Point & { id: string })[] = [];
@@ -366,6 +424,7 @@ export function createRealCity(
   const edges: RoadEdge[] = [];
   const edgeKeys = new Set<string>();
   for (const element of elements) {
+    if (element.type !== 'way') continue;
     const highway = element.tags?.highway;
     if (!highway || !element.geometry || element.geometry.length < 2) continue;
     const profile = roadProfileFor(highway);
@@ -375,8 +434,8 @@ export function createRealCity(
       const clipped = clipSegment(
         projected[i - 1]!,
         projected[i]!,
-        width,
-        height,
+        extentX,
+        extentY,
       );
       if (!clipped) continue;
       const [start, end] = clipped;
@@ -409,12 +468,18 @@ export function createRealCity(
   const usedNodeIds = new Set(edges.flatMap((edge) => [edge.from, edge.to]));
   const graphNodes = nodes.filter((node) => usedNodeIds.has(node.id));
 
-  // Buildings become conservative rotated rectangles (the existing render and
-  // hazard contract); exact polygon footprints stay a future extension.
-  const buildings: Building[] = [];
-  let measuredBuildingHeights = 0;
-  let estimatedBuildingHeights = 0;
-  const parks: Block[] = [];
+  // Footprint shapes come from building/park ways and from multipolygon
+  // relations (churches, stations, perimeter blocks): relation members are
+  // stitched into rings, inner members become courtyard holes. Hazard and
+  // routing keep the conservative rotated rectangle; the exact ring is kept
+  // as rendering metadata so complex buildings draw with their real shape.
+  interface FootprintShape {
+    ring: Point[];
+    holes: Point[][];
+    tags: Record<string, string>;
+    osmId: number;
+  }
+  const shapes: FootprintShape[] = [];
   for (const element of elements) {
     const tags = element.tags ?? {};
     const isPark =
@@ -424,16 +489,56 @@ export function createRealCity(
         tags.landuse ?? '',
       );
     const isBuilding = tags.building !== undefined && tags.building !== 'no';
-    if ((!isBuilding && !isPark) || !element.geometry) continue;
-    const ring = element.geometry.map(project);
-    if (
-      ring.length > 1 &&
-      (Math.abs(ring[0]!.x - ring.at(-1)!.x) > 1e-6 ||
-        Math.abs(ring[0]!.y - ring.at(-1)!.y) > 1e-6)
-    )
-      ring.push({ ...ring[0]! });
-    if (ring.length < 4) continue;
-    const polygon = ring.slice(0, -1);
+    if (!isBuilding && !isPark) continue;
+    if (element.type === 'way') {
+      if (!element.geometry) continue;
+      const ring = element.geometry.map(project);
+      if (
+        ring.length > 1 &&
+        (Math.abs(ring[0]!.x - ring.at(-1)!.x) > 1e-6 ||
+          Math.abs(ring[0]!.y - ring.at(-1)!.y) > 1e-6)
+      )
+        ring.push({ ...ring[0]! });
+      if (ring.length >= 4)
+        shapes.push({ ring, holes: [], tags, osmId: element.id });
+      continue;
+    }
+    const memberSegments = (role: 'outer' | 'inner') =>
+      (element.members ?? [])
+        .filter(
+          (member) =>
+            member.type === 'way' &&
+            (role === 'outer'
+              ? member.role === 'outer' || !member.role
+              : member.role === 'inner') &&
+            member.geometry,
+        )
+        .map((member) => member.geometry!.map(project));
+    const holes = joinSegments(memberSegments('inner'));
+    for (const ring of joinSegments(memberSegments('outer')))
+      shapes.push({
+        ring,
+        // Inner rings usually belong to the single outer ring; assigning them
+        // to every outer of a multi-outer relation is a documented approx.
+        holes,
+        tags,
+        osmId: element.id + 1_000_000_000,
+      });
+  }
+  shapes.sort((a, b) => a.osmId - b.osmId);
+  const buildings: Building[] = [];
+  let measuredBuildingHeights = 0;
+  let estimatedBuildingHeights = 0;
+  const parks: Block[] = [];
+  for (const shape of shapes) {
+    const tags = shape.tags;
+    const isPark =
+      tags.leisure === 'park' ||
+      tags.leisure === 'garden' ||
+      ['grass', 'meadow', 'recreation_ground', 'village_green'].includes(
+        tags.landuse ?? '',
+      );
+    const polygon = shape.ring.slice(0, -1);
     if (isPark) {
       const parkXs = polygon.map((p) => p.x);
       const parkYs = polygon.map((p) => p.y);
@@ -462,8 +567,8 @@ export function createRealCity(
     if (
       maxCorner.x < 0 ||
       maxCorner.y < 0 ||
-      minCorner.x > width ||
-      minCorner.y > height
+      minCorner.x > extentX ||
+      minCorner.y > extentY
     )
       continue;
     let heightInMeters: number;
@@ -488,7 +593,7 @@ export function createRealCity(
       const floors =
         tags.building === 'house' || tags.building === 'detached'
           ? 2
-          : 2 + (hashId(element.id) % 5);
+          : 2 + (hashId(shape.osmId) % 5);
       heightInMeters = floors * 3;
       estimatedBuildingHeights++;
     }
@@ -505,6 +610,14 @@ export function createRealCity(
         yawInRadians: -rect.angleInRadians,
       },
       use: commercial ? 'commercial' : 'residential',
+      footprint: polygon.map((point) => ({ ...point })),
+      ...(shape.holes.length
+        ? {
+            footprintHoles: shape.holes
+              .map((hole) => hole.slice(0, -1).map((point) => ({ ...point })))
+              .filter((hole) => hole.length >= 3),
+          }
+        : {}),
       architecture: {
         style: commercial ? 'shop' : floors >= 4 ? 'apartment' : 'house',
         floors,
@@ -592,8 +705,8 @@ export function createRealCity(
 
   const city: CityResponse = {
     config: {
-      widthInMeters: Math.round(width * 10) / 10,
-      heightInMeters: Math.round(height * 10) / 10,
+      widthInMeters: Math.round(extentX * 10) / 10,
+      heightInMeters: Math.round(extentY * 10) / 10,
       streetSpacingInMeters: 0,
       seed,
     },

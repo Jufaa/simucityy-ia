@@ -47,6 +47,10 @@ export interface Building {
     yawInRadians: number;
   };
   use?: 'residential' | 'commercial';
+  /** Exact local footprint (x/y metres) when known, e.g. imported real buildings. Rendering metadata; hazard bounds stay min/max. */
+  footprint?: Point[];
+  /** Courtyard holes inside the footprint, same coordinate space. */
+  footprintHoles?: Point[][];
   architecture?: {
     style: 'house' | 'apartment' | 'shop';
     floors: number;

@@ -80,6 +80,9 @@ const query = `[out:json][timeout:120];
   way["building"](${south},${west},${north},${east});
   way["leisure"~"^(park|garden)$"](${south},${west},${north},${east});
   way["landuse"~"^(grass|meadow|recreation_ground|village_green)$"](${south},${west},${north},${east});
+  relation["building"](${south},${west},${north},${east});
+  relation["leisure"~"^(park|garden)$"](${south},${west},${north},${east});
+  relation["landuse"~"^(grass|meadow|recreation_ground|village_green)$"](${south},${west},${north},${east});
 );
 out geom;`;
 
@@ -250,23 +253,41 @@ const TAG_WHITELIST = [
   'leisure',
   'landuse',
 ];
-const elements = (osm.elements ?? [])
-  .filter(
-    (element) => element.type === 'way' && Array.isArray(element.geometry),
-  )
-  .map((element) => ({
-    type: 'way',
-    id: element.id,
-    tags: Object.fromEntries(
-      Object.entries(element.tags ?? {}).filter(([key]) =>
-        TAG_WHITELIST.includes(key),
-      ),
-    ),
-    geometry: element.geometry.map((point) => ({
-      lat: Math.round(point.lat * 1e7) / 1e7,
-      lon: Math.round(point.lon * 1e7) / 1e7,
-    })),
-  }));
+const roundPoint = (point) => ({
+  lat: Math.round(point.lat * 1e7) / 1e7,
+  lon: Math.round(point.lon * 1e7) / 1e7,
+});
+const pickTags = (tags) =>
+  Object.fromEntries(
+    Object.entries(tags ?? {}).filter(([key]) => TAG_WHITELIST.includes(key)),
+  );
+const elements = (osm.elements ?? []).flatMap((element) => {
+  if (element.type === 'way' && Array.isArray(element.geometry))
+    return [
+      {
+        type: 'way',
+        id: element.id,
+        tags: pickTags(element.tags),
+        geometry: element.geometry.map(roundPoint),
+      },
+    ];
+  if (element.type === 'relation' && Array.isArray(element.members))
+    return [
+      {
+        type: 'relation',
+        id: element.id,
+        tags: pickTags(element.tags),
+        members: element.members
+          .filter((member) => member.type === 'way' && member.geometry)
+          .map((member) => ({
+            type: 'way',
+            role: member.role ?? '',
+            geometry: member.geometry.map(roundPoint),
+          })),
+      },
+    ];
+  return [];
+});
 if (!elements.length || !elements.some((element) => element.tags.highway))
   throw new Error('Overpass returned no usable ways (tags missing?).');
 console.log(`OSM ways kept: ${elements.length}`);

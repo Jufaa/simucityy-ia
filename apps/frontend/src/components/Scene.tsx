@@ -10,7 +10,10 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import type { CityResponse } from './city-types';
 import { createRoadLayer } from './create-road-mesh';
 import { createDistrictLayer } from './create-district-layer';
-import { createBuildingLayer } from './urban-building-layer';
+import {
+  attachBuildingCollapse,
+  createBuildingLayer,
+} from './urban-building-layer';
 import { createUrbanDetailLayer } from './urban-detail-layer';
 import { createUrbanTextures } from './urban-materials';
 import { generateCityLife } from './city-life-model';
@@ -534,32 +537,11 @@ export default function Scene() {
     );
     const collapseTargets = new Map<string, number>();
     const collapseProgress = new Map<string, number>();
-    const fallbackOriginals = new Map<
-      string,
-      { y: number; rotationZ: number; scaleY: number }
-    >();
+    // The procedural layer renders through instanced buckets and footprint
+    // groups, not the named marker groups: collapse must drive those.
+    const fallbackCollapse = attachBuildingCollapse(fallbackBuildings, city);
     const applyFallbackCollapse = (buildingId: string, progress: number) => {
-      for (const name of [buildingId, `foundation:${buildingId}`]) {
-        const object = fallbackBuildings.getObjectByName(name);
-        if (!object) continue;
-        const key = `${name}:collapse`;
-        if (!fallbackOriginals.has(key))
-          fallbackOriginals.set(key, {
-            y: object.position.y,
-            rotationZ: object.rotation.z,
-            scaleY: object.scale.y,
-          });
-        const original = fallbackOriginals.get(key)!;
-        const height = buildingHeightById.get(buildingId) ?? 6;
-        const direction =
-          [...buildingId].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 2 ===
-          0
-            ? 1
-            : -1;
-        object.position.y = original.y - progress * height * 0.4;
-        object.rotation.z = original.rotationZ + progress * 0.14 * direction;
-        object.scale.y = original.scaleY * (1 - 0.62 * progress);
-      }
+      fallbackCollapse(buildingId, progress);
     };
     const syncCollapseTargets = () => {
       if (!simulation) return;

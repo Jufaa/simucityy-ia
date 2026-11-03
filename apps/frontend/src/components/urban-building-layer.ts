@@ -1,8 +1,9 @@
 import * as THREE from 'three';
-import type { CityResponse } from './city-types';
+import type { Building, CityResponse, Point } from './city-types';
 import { createUrbanTextures } from './urban-materials';
 import { buildingBaseHeight, sampleTerrainHeight } from './terrain-view';
 import { createChunkedInstances } from './instanced-chunks';
+import { collapsePose } from './collapse-animation';
 
 type BoxPlacement = {
   position: THREE.Vector3;
@@ -104,6 +105,127 @@ function scaleInstanceUvs(material: THREE.MeshStandardMaterial) {
   };
 }
 
+function polygonAreaOf(points: Point[]): number {
+  let area = 0;
+  for (let i = 0; i < points.length; i++) {
+    const a = points[i]!;
+    const b = points[(i + 1) % points.length]!;
+    area += a.x * b.y - b.x * a.y;
+  }
+  return area / 2;
+}
+
+/**
+ * A footprint deserves its exact extruded shape (instead of the instanced
+ * rectangle) when it has courtyard holes, is concave, or fills much less
+ * than its oriented rectangle — churches, stations, L/U-shaped blocks.
+ */
+export function footprintIsComplex(building: Building): boolean {
+  const footprint = building.footprint;
+  if (!footprint || footprint.length < 3 || footprint.length > 800)
+    return false;
+  if (building.footprintHoles?.length) return true;
+  const width =
+    building.presentation?.widthInMeters ??
+    building.maxCorner.x - building.minCorner.x;
+  const depth =
+    building.presentation?.depthInMeters ??
+    building.maxCorner.y - building.minCorner.y;
+  const area = Math.abs(polygonAreaOf(footprint));
+  if (area <= 0 || width * depth > 1.45 * area) return true;
+  let sign = 0;
+  for (let i = 0; i < footprint.length; i++) {
+    const a = footprint[i]!;
+    const b = footprint[(i + 1) % footprint.length]!;
+    const c = footprint[(i + 2) % footprint.length]!;
+    const e1 = { x: b.x - a.x, y: b.y - a.y };
+    const e2 = { x: c.x - b.x, y: c.y - b.y };
+    // Normalized cross (sine of the turn angle): nearly collinear wall
+    // vertices from OSM must not read as concave corners.
+    const sine =
+      (e1.x * e2.y - e1.y * e2.x) /
+      Math.max(1e-9, Math.hypot(e1.x, e1.y) * Math.hypot(e2.x, e2.y));
+    if (Math.abs(sine) < 0.02) continue;
+    const current = Math.sign(sine);
+    if (sign !== 0 && current !== sign) return true;
+    sign = current;
+  }
+  return false;
+}
+
+/** Cap on individually-meshed exact footprints (two draw calls each). */
+export const MAX_EXACT_FOOTPRINTS = 200;
+
+/**
+ * Chooses which complex footprints get exact meshes: the largest by area,
+ * so landmarks and perimeter blocks win over small annexes. Deterministic
+ * (area, then id); the rest keep the instanced rectangle.
+ */
+export function selectExactFootprints(buildings: Building[]): Set<string> {
+  const candidates = buildings
+    .filter((building) => footprintIsComplex(building))
+    .map((building) => ({
+      id: building.id,
+      area: Math.abs(polygonAreaOf(building.footprint!)),
+    }))
+    .sort((a, b) => b.area - a.area || (a.id < b.id ? -1 : 1));
+  return new Set(
+    candidates.slice(0, MAX_EXACT_FOOTPRINTS).map((candidate) => candidate.id),
+  );
+}
+
+/** Splits a non-indexed extruded geometry into cap and wall parts by normal. */
+function splitExtrudeByNormal(geometry: THREE.BufferGeometry): {
+  caps: THREE.BufferGeometry;
+  walls: THREE.BufferGeometry;
+} {
+  const source = geometry.index ? geometry.toNonIndexed() : geometry;
+  const buckets = {
+    caps: {
+      position: [] as number[],
+      normal: [] as number[],
+      uv: [] as number[],
+    },
+    walls: {
+      position: [] as number[],
+      normal: [] as number[],
+      uv: [] as number[],
+    },
+  };
+  const position = source.getAttribute('position');
+  const normal = source.getAttribute('normal');
+  const uv = source.getAttribute('uv');
+  for (const group of source.groups) {
+    // Cap faces point along the extrusion axis (local ±Y after rotation).
+    const bucket =
+      Math.abs(normal.getY(group.start)) > 0.5 ? buckets.caps : buckets.walls;
+    for (let i = group.start; i < group.start + group.count; i++) {
+      bucket.position.push(
+        position.getX(i),
+        position.getY(i),
+        position.getZ(i),
+      );
+      bucket.normal.push(normal.getX(i), normal.getY(i), normal.getZ(i));
+      bucket.uv.push(uv ? uv.getX(i) : 0, uv ? uv.getY(i) : 0);
+    }
+  }
+  if (source !== geometry) source.dispose();
+  const build = (bucket: (typeof buckets)['caps']) => {
+    const out = new THREE.BufferGeometry();
+    out.setAttribute(
+      'position',
+      new THREE.Float32BufferAttribute(bucket.position, 3),
+    );
+    out.setAttribute(
+      'normal',
+      new THREE.Float32BufferAttribute(bucket.normal, 3),
+    );
+    out.setAttribute('uv', new THREE.Float32BufferAttribute(bucket.uv, 2));
+    return out;
+  };
+  return { caps: build(buckets.caps), walls: build(buckets.walls) };
+}
+
 type PlanePlacement = {
   position: THREE.Vector3;
   scale: THREE.Vector3;
@@ -180,8 +302,69 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     doors: PlanePlacement[] = [],
     storefronts: PlanePlacement[] = [],
     signs: PlanePlacement[][] = signMaterials.map(() => []);
+  const capsIds: string[] = [],
+    roofsIds: string[] = [],
+    doorsIds: string[] = [],
+    storefrontIds: string[] = [],
+    signIds: string[][] = signMaterials.map(() => []);
   const slabs: BoxPlacement[] = [],
-    rails: BoxPlacement[] = [];
+    slabIds: string[] = [],
+    rails: BoxPlacement[] = [],
+    railIds: string[] = [];
+  const exactFootprints = selectExactFootprints(city.buildings);
+  // Plain-colour materials for exact footprints (no per-instance UV shader).
+  const footprintFacadeMaterials = {
+    sand: new THREE.MeshStandardMaterial({ color: 0xdbc9a5, roughness: 0.88 }),
+    brick: new THREE.MeshStandardMaterial({ color: 0xbd876c, roughness: 0.88 }),
+    stone: new THREE.MeshStandardMaterial({ color: 0xbdc8cc, roughness: 0.88 }),
+  } as Record<FacadeName, THREE.MeshStandardMaterial>;
+  const createFootprintGroup = (
+    building: Building,
+    root: THREE.Group,
+  ): THREE.Group => {
+    const footprint = building.footprint!;
+    const toShapePoint = (point: Point): [number, number] => [
+      point.x - root.position.x,
+      -(point.y - root.position.z),
+    ];
+    const shape = new THREE.Shape();
+    footprint.forEach((point, index) => {
+      const [x, y] = toShapePoint(point);
+      if (index === 0) shape.moveTo(x, y);
+      else shape.lineTo(x, y);
+    });
+    shape.closePath();
+    for (const hole of building.footprintHoles ?? []) {
+      if (hole.length < 3) continue;
+      const path = new THREE.Path();
+      hole.forEach((point, index) => {
+        const [x, y] = toShapePoint(point);
+        if (index === 0) path.moveTo(x, y);
+        else path.lineTo(x, y);
+      });
+      path.closePath();
+      shape.holes.push(path);
+    }
+    const extruded = new THREE.ExtrudeGeometry(shape, {
+      depth: building.heightInMeters,
+      bevelEnabled: false,
+    });
+    extruded.rotateX(-Math.PI / 2);
+    const { caps, walls } = splitExtrudeByNormal(extruded);
+    extruded.dispose();
+    const group = new THREE.Group();
+    group.name = `footprint:${building.id}`;
+    group.position.copy(root.position);
+    const wallsMesh = new THREE.Mesh(
+      walls,
+      footprintFacadeMaterials[building.architecture?.facade ?? 'sand'],
+    );
+    const capsMesh = new THREE.Mesh(caps, flatRoof);
+    wallsMesh.castShadow = wallsMesh.receiveShadow = true;
+    capsMesh.castShadow = capsMesh.receiveShadow = true;
+    group.add(wallsMesh, capsMesh);
+    return group;
+  };
   for (const building of city.buildings) {
     const a = building.architecture;
     const w =
@@ -209,29 +392,39 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
     const rise = a?.roofRiseInMeters ?? 0,
       h = building.heightInMeters - rise;
     const balcony = a?.balconyDepthInMeters ?? 0;
+    // The largest complex real footprints draw as exact extrusions;
+    // everything else keeps the instanced rectangle buckets below.
+    const complex = exactFootprints.has(building.id);
+    if (complex) group.add(createFootprintGroup(building, root));
     const body: BoxPlacement = {
       position: worldAt(0, h / 2, -balcony / 2),
       scale: new THREE.Vector3(w, h, d - balcony),
       yaw,
     };
     const bucket = bodies[a?.facade ?? 'sand'];
-    bucket.placements.push(body);
-    bucket.ids.push(building.id);
-    bucket.uvScales.push(
-      ...(a ? [(d - balcony) / 3, w / 3, a.floors] : [1, 1, 1]),
-    );
-    caps.push(body);
-    if (a?.roof === 'gable')
+    if (!complex) {
+      bucket.placements.push(body);
+      bucket.ids.push(building.id);
+      bucket.uvScales.push(
+        ...(a ? [(d - balcony) / 3, w / 3, a.floors] : [1, 1, 1]),
+      );
+      caps.push(body);
+      capsIds.push(building.id);
+    }
+    if (!complex && a?.roof === 'gable') {
       roofs.push({
         position: worldAt(0, h, 0),
         scale: new THREE.Vector3(w, rise, d),
         yaw,
       });
-    if (a) {
+      roofsIds.push(building.id);
+    }
+    if (!complex && a) {
       const sideWidth =
         a.entranceSide === 'east' || a.entranceSide === 'west' ? d : w;
       const front = (
         placements: PlanePlacement[],
+        placementIds: string[],
         width: number,
         height: number,
         y: number,
@@ -249,18 +442,32 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
           scale: new THREE.Vector3(width, height, 1),
           yaw: yaw + local.yaw,
         });
+        placementIds.push(building.id);
       };
       const doorHeight = Math.min(2.2, h * 0.7);
-      front(doors, Math.min(1.2, sideWidth * 0.3), doorHeight, doorHeight / 2);
+      front(
+        doors,
+        doorsIds,
+        Math.min(1.2, sideWidth * 0.3),
+        doorHeight,
+        doorHeight / 2,
+      );
       if (a.style === 'shop') {
         const height = Math.min(3, h * 0.6);
-        front(storefronts, sideWidth * 0.8, height, height / 2 + 0.05);
+        front(
+          storefronts,
+          storefrontIds,
+          sideWidth * 0.8,
+          height,
+          height / 2 + 0.05,
+        );
         const label =
           Math.abs(
             [...building.id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0),
           ) % signMaterials.length;
         front(
           signs[label]!,
+          signIds[label]!,
           sideWidth * 0.8,
           Math.min(0.7, h * 0.12),
           Math.min(h - 0.4, height + 0.65),
@@ -274,12 +481,14 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
             scale: new THREE.Vector3(w * 0.8, 0.12, balcony),
             yaw,
           });
+          slabIds.push(building.id);
           rails.push({
             position: worldAt(0, y - baseHeight + 0.8, d / 2 - 0.05),
             scale: new THREE.Vector3(w * 0.8, 0.07, 0.07),
             yaw,
           });
-          for (const direction of [-1, 1])
+          railIds.push(building.id);
+          for (const direction of [-1, 1]) {
             rails.push({
               position: worldAt(
                 direction * w * 0.39,
@@ -289,6 +498,8 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
               scale: new THREE.Vector3(0.07, 0.8, 0.07),
               yaw,
             });
+            railIds.push(building.id);
+          }
         }
     }
     if (city.terrainProfile === 'basin' || city.organic || city.real) {
@@ -359,6 +570,7 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         placements: caps,
         castShadow: true,
         receiveShadow: true,
+        ids: capsIds,
       }),
     );
   if (roofs.length)
@@ -370,12 +582,14 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         placements: roofs,
         castShadow: true,
         receiveShadow: true,
+        ids: roofsIds,
       }),
     );
   const planes = (
     name: string,
     placements: PlanePlacement[],
     material: THREE.MeshStandardMaterial,
+    ids?: string[],
   ) => {
     if (!placements.length) return;
     group.add(
@@ -384,21 +598,198 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         geometry: new THREE.PlaneGeometry(1, 1),
         material,
         placements,
+        ids,
       }),
     );
   };
-  planes('building-doors', doors, door);
-  planes('building-storefronts', storefronts, glass);
+  planes('building-doors', doors, door, doorsIds);
+  planes('building-storefronts', storefronts, glass, storefrontIds);
   signs.forEach((placements, index) =>
-    planes(`building-sign-${index}`, placements, signMaterials[index]!),
+    planes(
+      `building-sign-${index}`,
+      placements,
+      signMaterials[index]!,
+      signIds[index],
+    ),
   );
   boxes('building-foundations', foundations, flatRoof, true, foundationIds);
-  boxes('balcony-slabs', slabs, flatRoof);
+  boxes('balcony-slabs', slabs, flatRoof, true, slabIds);
   boxes(
     'balcony-rails',
     rails,
     new THREE.MeshStandardMaterial({ color: 0x515d62, roughness: 0.6 }),
+    true,
+    railIds,
   );
   sideGeometry.dispose();
   return group;
+}
+
+/**
+ * Collapse driver for the procedural building layer. The visible geometry
+ * lives in chunked InstancedMesh buckets (facades, caps, roofs, doors,
+ * foundations...) and in per-building footprint groups; the named marker
+ * groups alone move nothing. This records every instance transform at build
+ * time and reapplies the shared collapse pose around each building's base,
+ * restoring the exact original matrices at progress 0. Mirrors the Kenney
+ * asset layer so both render paths collapse identically.
+ */
+export function attachBuildingCollapse(
+  layer: THREE.Group,
+  city: CityResponse,
+): (buildingId: string, progress: number) => void {
+  type Entry = {
+    mesh: THREE.InstancedMesh;
+    index: number;
+    original: THREE.Matrix4;
+    x: number;
+    base: number;
+    z: number;
+    height: number;
+    tilt: number;
+  };
+  const heightById = new Map(
+    city.buildings.map((building) => [building.id, building.heightInMeters]),
+  );
+  const entriesByBuilding = new Map<string, Entry[]>();
+  const footprintByBuilding = new Map<
+    string,
+    {
+      object: THREE.Object3D;
+      position: THREE.Vector3;
+      quaternion: THREE.Quaternion;
+      scale: THREE.Vector3;
+      height: number;
+      tilt: number;
+    }
+  >();
+  layer.traverse((object) => {
+    if (
+      object instanceof THREE.InstancedMesh &&
+      Array.isArray(object.userData.buildingIds)
+    ) {
+      (object.userData.buildingIds as string[]).forEach((id, index) => {
+        const marker = layer.getObjectByName(id);
+        if (!marker) return;
+        const original = new THREE.Matrix4();
+        object.getMatrixAt(index, original);
+        const entries = entriesByBuilding.get(id) ?? [];
+        entries.push({
+          mesh: object,
+          index,
+          original,
+          x: marker.position.x,
+          base: marker.position.y,
+          z: marker.position.z,
+          height: heightById.get(id) ?? 8,
+          tilt:
+            ([...id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 2 === 0
+              ? 1
+              : -1) * 0.16,
+        });
+        entriesByBuilding.set(id, entries);
+      });
+    }
+    if (object.name.startsWith('footprint:')) {
+      const id = object.name.slice('footprint:'.length);
+      footprintByBuilding.set(id, {
+        object,
+        position: object.position.clone(),
+        quaternion: object.quaternion.clone(),
+        scale: object.scale.clone(),
+        height: heightById.get(id) ?? 8,
+        tilt:
+          ([...id].reduce((sum, ch) => sum + ch.charCodeAt(0), 0) % 2 === 0
+            ? 1
+            : -1) * 0.16,
+      });
+    }
+  });
+  return (buildingId: string, progress: number) => {
+    const p = Math.max(0, Math.min(1, progress));
+    const entries = entriesByBuilding.get(buildingId);
+    if (entries) {
+      for (const entry of entries) {
+        if (p === 0) {
+          entry.mesh.setMatrixAt(entry.index, entry.original);
+        } else {
+          const pose = collapsePose(p);
+          const direction = Math.sign(entry.tilt);
+          const pivotX = entry.x + direction * entry.height * 0.18;
+          const pivotZ = entry.z + direction * entry.height * 0.1;
+          const drift = direction * pose.driftFactor * entry.height * 0.07;
+          const collapse = new THREE.Matrix4()
+            .makeTranslation(drift, 0, drift * 0.6)
+            .multiply(
+              new THREE.Matrix4().makeTranslation(pivotX, entry.base, pivotZ),
+            )
+            .multiply(
+              new THREE.Matrix4().makeRotationZ(entry.tilt * pose.tiltFactor),
+            )
+            .multiply(
+              new THREE.Matrix4().makeRotationX(
+                entry.tilt * 0.6 * pose.tiltFactor,
+              ),
+            )
+            .multiply(new THREE.Matrix4().makeScale(1, pose.scaleY, 1))
+            .multiply(
+              new THREE.Matrix4().set(
+                1,
+                direction * pose.shearFactor,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+                0,
+                0,
+                0,
+                0,
+                1,
+              ),
+            )
+            .multiply(
+              new THREE.Matrix4().makeTranslation(
+                -pivotX,
+                -entry.base,
+                -pivotZ,
+              ),
+            );
+          entry.mesh.setMatrixAt(
+            entry.index,
+            collapse.multiply(entry.original),
+          );
+        }
+        entry.mesh.instanceMatrix.needsUpdate = true;
+      }
+    }
+    const footprint = footprintByBuilding.get(buildingId);
+    if (footprint) {
+      if (p === 0) {
+        footprint.object.position.copy(footprint.position);
+        footprint.object.quaternion.copy(footprint.quaternion);
+        footprint.object.scale.copy(footprint.scale);
+      } else {
+        const pose = collapsePose(p);
+        const direction = Math.sign(footprint.tilt);
+        footprint.object.position.set(
+          footprint.position.x +
+            direction * pose.driftFactor * footprint.height * 0.07,
+          footprint.position.y,
+          footprint.position.z +
+            direction * pose.driftFactor * footprint.height * 0.042,
+        );
+        footprint.object.rotation.set(
+          footprint.tilt * 0.6 * pose.tiltFactor,
+          0,
+          footprint.tilt * pose.tiltFactor,
+        );
+        footprint.object.scale.set(1, pose.scaleY, 1);
+      }
+    }
+  };
 }
