@@ -1,5 +1,6 @@
 import { useEffect, useRef } from 'react';
 
+
 /**
  * Full-screen loading screen that blocks all interaction while the game
  * works. Includes a Chrome-style dino runner so long imports stay fun:
@@ -62,17 +63,28 @@ export function LoadingScreen(props: { message: string }) {
         }
       }
       ctx.clearRect(0, 0, width, height);
-      ctx.fillStyle = '#ffffff14';
+      ctx.fillStyle = '#0a1f16';
       ctx.fillRect(0, 0, width, height);
       ctx.strokeStyle = '#ffffff55';
       ctx.beginPath();
       ctx.moveTo(0, groundY);
       ctx.lineTo(width, groundY);
       ctx.stroke();
-      ctx.font = '34px system-ui';
-      ctx.fillText('🦖', 38, groundY - dinoY - 2);
-      ctx.font = '26px system-ui';
+      // Emoji glyphs ignore `fillStyle`, so the green is pushed with a
+      // saturation filter plus a green glow, drawn larger than before.
+      ctx.save();
+      try {
+        ctx.filter = 'saturate(2.6) contrast(1.15)';
+      } catch {
+        // Older engines without canvas filters still get size and glow.
+      }
+      ctx.shadowColor = '#22c55e';
+      ctx.shadowBlur = 14;
+      ctx.font = '46px system-ui';
+      ctx.fillText('🦖', 34, groundY - dinoY - 2);
+      ctx.font = '36px system-ui';
       for (const cactus of cacti) ctx.fillText('🌵', cactus.x, groundY - 2);
+      ctx.restore();
       ctx.fillStyle = '#eef6f7';
       ctx.font = '12px system-ui';
       ctx.fillText(`Puntos: ${score}`, 10, 18);
@@ -120,8 +132,8 @@ export function LoadingScreen(props: { message: string }) {
           width: 'min(420px, 86vw)',
           height: 220,
           borderRadius: 14,
-          background: '#ffffff14',
-          border: '1px solid #ffffff2e',
+          background: '#0a1f16',
+          border: '1px solid #22c55e66',
           cursor: 'pointer',
         }}
       />

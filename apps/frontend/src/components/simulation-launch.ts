@@ -1,6 +1,3 @@
-/** User-chosen simulated duration options (minutes of simulated time). */
-export const SIMULATION_DURATIONS_IN_MINUTES = [3, 5, 10] as const;
-
 /** Progress of the current run towards the chosen duration, 0..1. */
 export function simulationProgress(
   elapsedSeconds: number,

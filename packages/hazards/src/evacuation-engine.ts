@@ -22,6 +22,8 @@ type Agent = {
   arrival: number | null;
   lastPlanEpoch: number;
   lastPlanGeneration: number;
+  /** Advance call of the last plan attempt; gates same-call retry storms. */
+  lastPlanCallId: number;
 };
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
 const finitePoint = (p: Point) => Number.isFinite(p.x) && Number.isFinite(p.y);
@@ -37,6 +39,12 @@ export class EvacuationEngine {
   private capacityGeneration = 0;
   /** Bumps per advance call; a new call may bring new road closures. */
   private planEpoch = 0;
+  private advanceCallId = 0;
+  /** Agents currently walking; the per-event scans only need these. */
+  private readonly movers = new Set<Agent>();
+  /** Agents sorted by reaction delay; the pointer only moves forward. */
+  private readonly reactionQueue: Agent[];
+  private reactionIndex = 0;
 
   constructor(scenario: EvacuationScenario) {
     for (const node of scenario.roadGraph.nodes) {
@@ -120,6 +128,7 @@ export class EvacuationEngine {
           route: [],
           lastPlanEpoch: -1,
           lastPlanGeneration: -1,
+          lastPlanCallId: -1,
           shelter: null,
           edge: null,
           progress: 0,
@@ -127,6 +136,11 @@ export class EvacuationEngine {
         };
       })
       .sort((a, b) => compare(a.input.id, b.input.id));
+    this.reactionQueue = [...this.agents].sort(
+      (a, b) =>
+        a.input.reactionDelayInSeconds - b.input.reactionDelayInSeconds ||
+        compare(a.input.id, b.input.id),
+    );
   }
 
   /**
@@ -144,6 +158,7 @@ export class EvacuationEngine {
       agent.phase = 'trapped';
       agent.status = 'trapped';
       agent.edge = null;
+      this.movers.delete(agent);
       trapped++;
     }
     return trapped;
@@ -169,6 +184,7 @@ export class EvacuationEngine {
       agent.phase = 'trapped';
       agent.status = 'trapped';
       agent.edge = null;
+      this.movers.delete(agent);
       swept++;
     }
     return swept;
@@ -208,16 +224,31 @@ export class EvacuationEngine {
     const paths = new Map<string, PathInfo>();
     paths.set(agent.nodeId, { distance: 0, parent: null, arc: null });
     const visited = new Set<string>();
+    // Tie-break keys of settled nodes never change (settled nodes are
+    // never re-parented), so cache them: every node's parent chain runs
+    // through settled nodes, making key lookups O(1) amortised instead
+    // of a full chain walk per equal-distance relaxation.
+    const settledKeys = new Map<string, string>();
     const keyOf = (nodeId: string): string => {
+      const cached = settledKeys.get(nodeId);
+      if (cached !== undefined) return cached;
       const segments: string[] = [];
       let current: string | null = nodeId;
+      let prefix = '';
       while (current !== null) {
+        const hit = settledKeys.get(current);
+        if (hit !== undefined) {
+          prefix = hit;
+          break;
+        }
         const info: PathInfo = paths.get(current)!;
         if (info.arc === null || info.parent === null) break;
         segments.push(`\0${info.arc.id}\0${current}`);
         current = info.parent;
       }
-      return segments.reverse().join('');
+      const key = prefix + segments.reverse().join('');
+      if (visited.has(nodeId)) settledKeys.set(nodeId, key);
+      return key;
     };
     // Binary heap ordered by distance: same minimum extraction as a full
     // scan, without the quadratic scan per node.
@@ -345,6 +376,7 @@ export class EvacuationEngine {
       );
     const blocked = new Set(blockedRoadEdgeIds);
     this.planEpoch++;
+    this.advanceCallId++;
     const end = this.elapsed + seconds;
     let time = this.elapsed;
     // Process common reaction/arrival events, not one citizen's whole interval first.
@@ -380,6 +412,7 @@ export class EvacuationEngine {
           // el planificador ya evita ENTRAR en tramos cortados, pero
           // nadie se queda congelado a mitad del puente.
           agent.status = 'evacuating';
+          this.movers.add(agent);
           continue;
         }
         if (!agent.shelter) {
@@ -389,19 +422,28 @@ export class EvacuationEngine {
           const stale =
             agent.lastPlanEpoch !== this.planEpoch ||
             agent.lastPlanGeneration !== this.capacityGeneration;
-          if (stale) {
+          // One plan attempt per agent per advance call: every release
+          // bumps capacityGeneration, and retrying every stranded agent
+          // after each release turned one call into tens of thousands of
+          // Dijkstras on large graphs. The next call retries them (the
+          // caller advances continuously), so routes still update.
+          if (stale && agent.lastPlanCallId !== this.advanceCallId) {
             agent.lastPlanEpoch = this.planEpoch;
             agent.lastPlanGeneration = this.capacityGeneration;
+            agent.lastPlanCallId = this.advanceCallId;
             if (!this.plan(agent, blocked)) {
               agent.status = 'stranded';
+              this.movers.delete(agent);
               continue;
             }
           } else {
             agent.status = 'stranded';
+            this.movers.delete(agent);
             continue;
           }
         }
         agent.status = 'evacuating';
+        this.movers.add(agent);
         if (agent.phase === 'home') agent.phase = 'connector';
         if (agent.phase === 'connector') {
           const node = this.nodes.get(agent.nodeId)!;
@@ -421,70 +463,120 @@ export class EvacuationEngine {
           agent.phase = 'done';
           agent.status = 'evacuated';
           agent.arrival = time;
+          this.movers.delete(agent);
         }
       }
       if (time >= end) break;
+      // The interval runs to the next reaction event (or the call's end):
+      // edge completions of other agents cannot change this call's
+      // outcome — the blocked set is fixed, arrivals only convert a
+      // reservation into occupancy (same capacity sum), and releases are
+      // re-checked at the next iteration before anyone enters a new edge.
+      // Stopping at every edge completion made large graphs take tens of
+      // thousands of full-agent scans per call.
       let duration = end - time;
-      for (const agent of this.agents) {
-        if (agent.input.reactionDelayInSeconds > time) {
-          duration = Math.min(
-            duration,
-            agent.input.reactionDelayInSeconds - time,
-          );
-        } else if (agent.status === 'evacuating') {
-          const node = this.nodes.get(agent.nodeId)!;
-          const length =
-            agent.phase === 'connector'
-              ? Math.hypot(
-                  node.x - agent.input.position.x,
-                  node.y - agent.input.position.y,
-                )
-              : agent.phase === 'node'
-                ? agent.route[0]!.length
-                : agent.edge!.length;
-          duration = Math.min(
-            duration,
-            Math.max(0, length - agent.progress) /
+      while (
+        this.reactionIndex < this.reactionQueue.length &&
+        this.reactionQueue[this.reactionIndex]!.input.reactionDelayInSeconds <=
+          time
+      )
+        this.reactionIndex++;
+      if (this.reactionIndex < this.reactionQueue.length)
+        duration = Math.min(
+          duration,
+          this.reactionQueue[this.reactionIndex]!.input.reactionDelayInSeconds -
+            time,
+        );
+      // Each walker crosses as many whole edges as the interval allows,
+      // with exact sub-stepping: positions, node arrivals and shelter
+      // arrival times match the per-edge event walk. Nobody enters an
+      // edge in the blocked set: they wait at the node for the release
+      // check at the top of the next iteration.
+      for (const agent of this.movers) {
+        let remaining = duration;
+        while (remaining > 0) {
+          if (agent.phase === 'connector') {
+            const to = this.nodes.get(agent.nodeId)!;
+            const length = Math.hypot(
+              to.x - agent.input.position.x,
+              to.y - agent.input.position.y,
+            );
+            const step = Math.min(
+              remaining,
+              Math.max(0, length - agent.progress) /
+                (1.2 * agent.input.mobilityFactor),
+            );
+            agent.progress = Math.min(
+              length,
+              agent.progress + step * 1.2 * agent.input.mobilityFactor,
+            );
+            remaining -= step;
+            const ratio = length === 0 ? 1 : agent.progress / length;
+            agent.position = {
+              x:
+                agent.input.position.x +
+                (to.x - agent.input.position.x) * ratio,
+              y:
+                agent.input.position.y +
+                (to.y - agent.input.position.y) * ratio,
+            };
+            if (length - agent.progress > 1e-9) break;
+            agent.position = { ...to };
+            agent.progress = 0;
+            agent.phase = 'node';
+            continue;
+          }
+          if (agent.phase === 'node') {
+            if (!agent.route.length) {
+              // Shelter reached inside the interval: same arrival time
+              // the per-edge walk would have recorded.
+              agent.shelter!.reserved--;
+              agent.shelter!.occupancy++;
+              agent.phase = 'done';
+              agent.status = 'evacuated';
+              agent.arrival = time + (duration - remaining);
+              this.movers.delete(agent);
+              break;
+            }
+            const next = agent.route[0]!;
+            if (blocked.has(next.id)) {
+              routeCheck.add(agent);
+              break;
+            }
+            agent.route.shift();
+            agent.edge = next;
+            agent.progress = 0;
+            agent.phase = 'edge';
+            continue;
+          }
+          // phase === 'edge': finish this edge (even if it was blocked
+          // behind the walker), then loop to enter the next one.
+          const edge = agent.edge!;
+          const from = this.nodes.get(edge.from)!;
+          const to = this.nodes.get(edge.to)!;
+          const step = Math.min(
+            remaining,
+            Math.max(0, edge.length - agent.progress) /
               (1.2 * agent.input.mobilityFactor),
           );
-        }
-      }
-      for (const agent of this.agents) {
-        if (agent.status !== 'evacuating') continue;
-        if (agent.phase === 'node') {
-          agent.edge = agent.route.shift()!;
+          agent.progress = Math.min(
+            edge.length,
+            agent.progress + step * 1.2 * agent.input.mobilityFactor,
+          );
+          remaining -= step;
+          const ratio = edge.length === 0 ? 1 : agent.progress / edge.length;
+          agent.position = {
+            x: from.x + (to.x - from.x) * ratio,
+            y: from.y + (to.y - from.y) * ratio,
+          };
+          if (edge.length - agent.progress > 1e-9) break;
+          agent.position = { ...to };
+          agent.nodeId = edge.to;
+          agent.edge = null;
           agent.progress = 0;
-          agent.phase = 'edge';
-        }
-        const from =
-          agent.phase === 'connector'
-            ? agent.input.position
-            : this.nodes.get(agent.edge!.from)!;
-        const to = this.nodes.get(
-          agent.phase === 'connector' ? agent.nodeId : agent.edge!.to,
-        )!;
-        const length =
-          agent.phase === 'connector'
-            ? Math.hypot(to.x - from.x, to.y - from.y)
-            : agent.edge!.length;
-        agent.progress = Math.min(
-          length,
-          agent.progress + duration * 1.2 * agent.input.mobilityFactor,
-        );
-        const ratio = length === 0 ? 1 : agent.progress / length;
-        agent.position = {
-          x: from.x + (to.x - from.x) * ratio,
-          y: from.y + (to.y - from.y) * ratio,
-        };
-        if (length - agent.progress > 1e-9) continue;
-        agent.position = { ...to };
-        if (agent.phase === 'edge') {
-          agent.nodeId = agent.edge!.to;
+          agent.phase = 'node';
           routeCheck.add(agent);
         }
-        agent.edge = null;
-        agent.progress = 0;
-        agent.phase = 'node';
       }
       time += duration;
     }

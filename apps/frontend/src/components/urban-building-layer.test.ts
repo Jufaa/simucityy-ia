@@ -432,6 +432,31 @@ it('gives cathedrals twin spired towers unless surveyed parts exist', () => {
   expect(surveyedLayer.getObjectByName('cross:sagrada-like')).toBeInstanceOf(
     THREE.Group,
   );
+
+  // Concave footprint whose front bbox corner is cut away (a tower there
+  // would stand loose in the street): towers walk inside the footprint.
+  const concave = {
+    ...cathedral,
+    id: 'concava',
+    footprint: [
+      { x: 35, y: 20 },
+      { x: 50, y: 35 },
+      { x: 50, y: 80 },
+      { x: 20, y: 80 },
+      { x: 20, y: 35 },
+    ],
+  };
+  const concaveLayer = createBuildingLayer(flatCity([concave]));
+  const concaveTowers = concaveLayer.getObjectByName(
+    'cathedral-towers:concava',
+  )!;
+  expect(concaveTowers).toBeInstanceOf(THREE.Group);
+  const shafts = concaveTowers.children.filter(
+    (child, index) => index % 4 === 0,
+  );
+  // Local footprint x spans -15..15; the cut corner tower moved inward.
+  expect(shafts[0]!.position.x).toBeGreaterThan(-15 + 1);
+  expect(shafts[0]!.position.z).toBeGreaterThan(-30 + 1);
 });
 
 it('renders stadiums as an open bowl and obelisks with a pyramidion tip', () => {

@@ -17,7 +17,6 @@ it('keeps compact primary controls and truthful local-asset/automatic simulation
       elapsedSeconds: 120,
       assetStatus: 'ready',
       onPanelToggle: noop,
-      onRegenerate: noop,
       onView: noop,
       onToggle: noop,
       onReset: noop,
@@ -27,7 +26,7 @@ it('keeps compact primary controls and truthful local-asset/automatic simulation
   expect(html).toContain('190 edificios');
   expect(html).toContain('Simulación automática');
   expect(html).toContain('aria-expanded="false"');
-  expect(html).toContain('Otra ciudad');
+  expect(html).not.toContain('Otra ciudad');
   expect(html).toContain('Pausar');
 });
 
@@ -48,7 +47,6 @@ it('offers time speed multipliers up to x64 in the main controls', () => {
       timeScale: 2,
       onTimeScale: noop,
       onPanelToggle: noop,
-      onRegenerate: noop,
       onView: noop,
       onToggle: noop,
       onReset: noop,
@@ -80,7 +78,6 @@ it('does not pretend failed assets loaded and keeps pause/reset available', () =
       elapsedSeconds: 0,
       assetStatus: 'fallback',
       onPanelToggle: noop,
-      onRegenerate: noop,
       onView: noop,
       onToggle: noop,
       onReset: noop,
@@ -107,7 +104,6 @@ it('shows a primary real-zone import action next to the example-city actions', (
       elapsedSeconds: 0,
       assetStatus: 'ready',
       onPanelToggle: noop,
-      onRegenerate: noop,
       onRandom: noop,
       onImportZone: noop,
       onView: noop,
@@ -117,11 +113,11 @@ it('shows a primary real-zone import action next to the example-city actions', (
   );
   expect(html).toContain('Zona real o plano');
   expect(html).toContain('Ciudad aleatoria');
-  expect(html).toContain('Otra ciudad');
+  expect(html).not.toContain('Otra ciudad');
   expect(html).toContain('Ajustes');
 });
 
-it('offers random generation separately without replacing the existing seed-step action', () => {
+it('offers random generation without a duplicate next-city action', () => {
   const noop = () => {};
   const html = renderToStaticMarkup(
     CityToolbar({
@@ -136,13 +132,12 @@ it('offers random generation separately without replacing the existing seed-step
       elapsedSeconds: 0,
       assetStatus: 'ready',
       onPanelToggle: noop,
-      onRegenerate: noop,
       onRandom: noop,
       onView: noop,
       onToggle: noop,
       onReset: noop,
     }),
   );
-  expect(html).toContain('Otra ciudad');
+  expect(html).not.toContain('Otra ciudad');
   expect(html).toContain('Ciudad aleatoria');
 });

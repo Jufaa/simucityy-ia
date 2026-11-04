@@ -22,7 +22,6 @@ import { createStreetLabelLayer } from './street-labels';
 import { LoadingScreen } from './loading-screen';
 import { BeforeAfterSlider } from './before-after-slider';
 import {
-  SIMULATION_DURATIONS_IN_MINUTES,
   simulationProgress,
   shouldFinishSimulation,
 } from './simulation-launch';
@@ -35,7 +34,6 @@ import {
   saveScenario,
   type SavedScenario,
 } from './saved-scenarios';
-import { HAZARD_KINDS } from '@simulicity/hazards';
 import { CityTraffic } from './city-traffic-model';
 import { createCityTrafficLayer } from './city-traffic-layer';
 import {
@@ -1605,7 +1603,6 @@ export default function Scene() {
           setPanelOpen(false);
           setImportCardOpen(true);
         }}
-        onRegenerate={() => regenerateCity((citySeed + 1) >>> 0)}
         onRandom={generateRandomCity}
         onView={(view) => {
           cameraViewRef.current = view;
@@ -1732,24 +1729,11 @@ export default function Scene() {
             zIndex: 5,
           }}
         >
-          <strong style={{ fontSize: 14 }}>🎛 Configurar simulación</strong>
-          <label style={{ display: 'block', fontSize: 12, marginTop: 10 }}>
-            Catástrofe
-            <select
-              aria-label="Catástrofe"
-              value={hazardKind}
-              onChange={(event) =>
-                applyHazard(event.target.value as HazardKind)
-              }
-              style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
-            >
-              {HAZARD_KINDS.map((kind) => (
-                <option key={kind} value={kind}>
-                  {hazardPreset(kind).label}
-                </option>
-              ))}
-            </select>
-          </label>
+          <strong style={{ fontSize: 14 }}>⏱ Simulación</strong>
+          <p style={{ fontSize: 11, margin: '6px 0 0', color: '#425466' }}>
+            La catástrofe se elige en la barra superior y la velocidad con los
+            botones ×1…×64 de abajo; acá queda solo lo propio de esta corrida.
+          </p>
           {(hazardKind === 'rain' || hazardKind === 'river-overflow') && (
             <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
               Intensidad de lluvia: {rainIntensity} mm/h
@@ -1777,44 +1761,34 @@ export default function Scene() {
             </label>
           )}
           <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
-            ¿Cuánto tiempo simular?
-            <select
-              aria-label="Duración de la simulación"
-              value={durationMinutes}
-              onChange={(event) =>
-                setDurationMinutes(Number(event.target.value))
-              }
-              style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
-            >
-              {SIMULATION_DURATIONS_IN_MINUTES.map((minutes) => (
-                <option key={minutes} value={minutes}>
-                  {minutes} minutos
-                </option>
-              ))}
-            </select>
-          </label>
-          <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
-            Velocidad
-            <select
-              aria-label="Velocidad"
-              value={speed}
+            ¿Cuánto tiempo simular? Escribí los minutos del mundo simulado
+            que quieras; si lo dejás vacío, no termina sola y la cortás vos
+            con “Terminar y ver resumen”.
+            <input
+              aria-label="Duración de la simulación en minutos"
+              type="number"
+              min={1}
+              step={1}
+              inputMode="numeric"
+              placeholder="Sin límite"
+              value={durationMinutes > 0 ? durationMinutes : ''}
               onChange={(event) => {
-                const value = Number(event.target.value) as 3 | 30 | 300;
-                speedRef.current = value;
-                setSpeed(value);
-                simulationRef.current?.setSpeed(value);
+                const raw = event.target.value;
+                if (raw === '') {
+                  setDurationMinutes(0);
+                  return;
+                }
+                const value = Number(raw);
+                if (Number.isFinite(value) && value >= 0)
+                  setDurationMinutes(Math.floor(value));
               }}
               style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
-            >
-              <option value={3}>3× · ver caminar</option>
-              <option value={30}>30× · detalle</option>
-              <option value={300}>300× · evento rápido</option>
-            </select>
+            />
           </label>
           <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
-            Mejora aplicada
+            Comparación de la mejora
             <select
-              aria-label="Mejora aplicada"
+              aria-label="Comparación de la mejora"
               value={arm}
               onChange={(event) => {
                 const selected = event.target.value as ComparisonArm;
@@ -1831,9 +1805,22 @@ export default function Scene() {
               }}
               style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
             >
-              <option value="before">Sin mejora</option>
-              <option value="after">Con mejora</option>
+              <option value="before">Sin mejora · ciudad original</option>
+              <option value="after">Con mejora · ciudad protegida</option>
             </select>
+            <span
+              style={{
+                display: 'block',
+                marginTop: 4,
+                fontSize: 11,
+                color: '#425466',
+              }}
+            >
+              La misma catástrofe se corre dos veces: sin tocar la ciudad y
+              con la mejora activada (drenajes en lluvia, alerta en tsunami,
+              refuerzo en terremoto/viento). Esto solo cambia cuál de las dos
+              versiones estás mirando, para comparar el daño.
+            </span>
           </label>
           <div
             aria-label="Progreso de la simulación"
@@ -1855,8 +1842,10 @@ export default function Scene() {
             />
           </div>
           <p style={{ fontSize: 11, margin: '5px 0 0', color: '#425466' }}>
-            {Math.floor(flood.elapsedTimeInSeconds / 60)} / {durationMinutes}{' '}
-            min ·{' '}
+            {durationMinutes > 0
+              ? `${Math.floor(flood.elapsedTimeInSeconds / 60)} / ${durationMinutes} min`
+              : `${Math.floor(flood.elapsedTimeInSeconds / 60)} min · sin límite`}{' '}
+            ·{' '}
             {running
               ? 'En marcha'
               : simulationRef.current?.started

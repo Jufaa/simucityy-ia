@@ -164,9 +164,12 @@ Then point the import in `Scene.tsx` at the new file (and adjust the label).
   highest tower. Landmarks are tiered by OSM tags: cathedrals and
   basílicas — including places of worship carrying a Wikidata id, e.g.
   the Basílica de Luján (`building=church` + `wikidata`, no surveyed
-  towers in OSM) — get twin spired facade towers with crosses unless
-  surveyed 3D parts already provide their towers; ordinary churches
-  keep the single spire. Where no surveyed height exists
+  towers in OSM) — get twin spired facade towers with crosses, anchored
+  inside the real footprint at its short (facade) end — never at raw
+  bounding-box corners, which left towers loose in the street on
+  concave footprints — unless surveyed 3D parts already provide their
+  towers; ordinary churches keep the single spire. Where no surveyed
+  height exists
   (e.g. Camp Nou), the height is a declared estimate scaled by footprint.
   Ordinary buildings and houses stay on the fast instanced rectangles.
   The parts query is a separate Overpass call: if it times out, the zone
@@ -186,7 +189,12 @@ Then point the import in `Scene.tsx` at the new file (and adjust the label).
 - Selecting the district costs one local conversion (~0.2–0.5 s) plus the
   usual scene dressing; evacuation planning on the 4,561-edge real graph
   required heap-based Dijkstra in `packages/hazards` (same routes, much
-  faster). Extreme time multipliers (×32–×64) remain heavy on this graph.
+  faster). The evacuation walker also batches each citizen's movement
+  per call (stopping only at reaction events, with exact sub-stepping)
+  instead of halting at every edge completion: on the Eixample graph a
+  10 s advance after the alarm went from ~3–6 s of CPU to ~0.2–0.5 s,
+  which is what let simulated flood time actually flow in large
+  districts. Extreme time multipliers (×32–×64) remain heavy.
 - Rendering this district produces ~3,100 draw calls (vs ~700 in the
   synthetic city), mostly per-building rooftop detail meshes that are not
   instanced. Browser inspection (headless Edge, software rendering) showed

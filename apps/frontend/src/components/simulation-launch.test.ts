@@ -30,6 +30,12 @@ describe('simulation launch and final summary', () => {
     expect(shouldFinishSimulation(120, 5, true)).toBe(false);
   });
 
+  it('never auto-finishes with a zero or negative duration', () => {
+    // A blank duration field means "no limit": the user ends the run.
+    expect(shouldFinishSimulation(99999, 0, true)).toBe(false);
+    expect(simulationProgress(99999, 0)).toBe(0);
+  });
+
   it('builds loss rows with percentages', () => {
     const rows = finalSummaryRows(input);
     expect(rows).toContainEqual({

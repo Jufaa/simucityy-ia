@@ -15,6 +15,14 @@ describe('loading screen and comparison slider', () => {
     expect(html).toContain('aria-busy="true"');
   });
 
+  it('renders the game canvas on an opaque dark background', () => {
+    const html = renderToStaticMarkup(
+      createElement(LoadingScreen, { message: 'Generando…' }),
+    );
+    expect(html).toContain('#0a1f16');
+    expect(html).not.toContain('#ffffff14');
+  });
+
   it('clamps the wipe percentage', () => {
     expect(clampWipePercent(-20)).toBe(0);
     expect(clampWipePercent(130)).toBe(100);

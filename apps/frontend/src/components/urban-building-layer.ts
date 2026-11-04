@@ -650,45 +650,53 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       const torch: THREE.BufferGeometry[] = [];
       const robeProfile: [number, number][] = [
         [0, 0],
-        [0.94, 0],
-        [1.0, 0.03],
-        [0.88, 0.16],
-        [0.7, 0.38],
-        [0.55, 0.6],
-        [0.47, 0.74],
+        [0.98, 0],
+        [1.05, 0.02],
+        [0.96, 0.1],
+        [0.78, 0.3],
+        [0.6, 0.52],
+        [0.5, 0.68],
       ];
       figure.push(
         new THREE.LatheGeometry(
           robeProfile.map(([rx, hy]) => new THREE.Vector2(rx * R, hy * H)),
-          14,
+          18,
         ).toNonIndexed(),
       );
       const torso = new THREE.CylinderGeometry(
-        R * 0.4,
+        R * 0.38,
         R * 0.47,
-        H * 0.14,
+        H * 0.13,
         10,
       ).toNonIndexed();
-      torso.translate(0, H * 0.81, 0);
+      torso.translate(0, H * 0.745, 0);
       figure.push(torso);
-      const headRadius = Math.max(0.35, Math.min(1.9, H * 0.035, R * 0.24));
-      const headY = H * 0.9;
+      const headRadius = Math.max(0.35, Math.min(1.9, H * 0.034, R * 0.22));
+      const headY = H * 0.845;
       const head = new THREE.SphereGeometry(headRadius, 10, 8).toNonIndexed();
       head.translate(0, headY, 0);
       figure.push(head);
       if (H >= 12) {
-        // Crown of seven spikes, tilted outward from the head.
+        // Crown: a band around the head plus seven rays fanning upward.
+        const band = new THREE.CylinderGeometry(
+          headRadius * 1.04,
+          headRadius * 1.04,
+          headRadius * 0.38,
+          10,
+        ).toNonIndexed();
+        band.translate(0, headY + headRadius * 0.48, 0);
+        figure.push(band);
         for (let i = 0; i < 7; i++) {
           const angle = (i / 7) * Math.PI * 2;
           const spike = new THREE.ConeGeometry(
-            headRadius * 0.16,
-            headRadius * 1.7,
+            headRadius * 0.15,
+            headRadius * 2.1,
             5,
           ).toNonIndexed();
           const direction = new THREE.Vector3(
-            Math.cos(angle) * 0.55,
+            Math.cos(angle) * 0.38,
             1,
-            Math.sin(angle) * 0.55,
+            Math.sin(angle) * 0.38,
           ).normalize();
           spike.applyQuaternion(
             new THREE.Quaternion().setFromUnitVectors(
@@ -697,9 +705,9 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
             ),
           );
           spike.translate(
-            Math.cos(angle) * headRadius * 0.55,
-            headY + headRadius * 0.6,
-            Math.sin(angle) * headRadius * 0.55,
+            Math.cos(angle) * headRadius * 0.5,
+            headY + headRadius * 0.85,
+            Math.sin(angle) * headRadius * 0.5,
           );
           figure.push(spike);
         }
@@ -729,29 +737,34 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         geometry.translate(middle.x, middle.y, middle.z);
         return geometry;
       };
-      const armRadius = Math.max(0.18, headRadius * 0.32);
-      // Raised right arm holding the torch high.
+      const armRadius = Math.max(0.18, headRadius * 0.3);
+      // Raised right arm, close to the head and nearly vertical (the
+      // Liberty pose): shoulder -> elbow -> hand above the crown.
       figure.push(
-        limb([R * 0.34, H * 0.84, 0], [R * 0.6, H * 0.92, 0], armRadius),
+        limb([R * 0.34, H * 0.76, 0], [R * 0.5, H * 0.88, 0], armRadius),
       );
       figure.push(
-        limb([R * 0.6, H * 0.92, 0], [R * 0.74, H * 1.0, 0], armRadius * 0.9),
+        limb([R * 0.5, H * 0.88, 0], [R * 0.56, H * 0.985, 0], armRadius * 0.9),
       );
       // Left arm bent, holding a tablet against the body.
       figure.push(
-        limb([R * -0.34, H * 0.84, 0], [R * -0.56, H * 0.68, 0], armRadius),
+        limb([R * -0.34, H * 0.76, 0], [R * -0.55, H * 0.6, 0], armRadius),
       );
       const tablet = new THREE.BoxGeometry(
-        R * 0.36,
-        R * 0.46,
+        R * 0.34,
+        R * 0.44,
         R * 0.07,
       ).toNonIndexed();
       tablet.rotateZ(0.18);
-      tablet.translate(R * -0.6, H * 0.7, 0);
+      tablet.translate(R * -0.58, H * 0.63, 0);
       figure.push(tablet);
       // Torch handle + emissive flame above the raised hand.
       figure.push(
-        limb([R * 0.74, H * 1.0, 0], [R * 0.78, H * 1.05, 0], armRadius * 0.55),
+        limb(
+          [R * 0.56, H * 0.985, 0],
+          [R * 0.575, H * 1.02, 0],
+          armRadius * 0.55,
+        ),
       );
       const flameRadius = Math.max(0.4, headRadius * 0.55);
       const flame = new THREE.ConeGeometry(
@@ -759,7 +772,7 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         flameRadius * 2.4,
         8,
       ).toNonIndexed();
-      flame.translate(R * 0.78, H * 1.05 + flameRadius * 1.1, 0);
+      flame.translate(R * 0.575, H * 1.02 + flameRadius * 1.1, 0);
       torch.push(flame);
       return { figure, torch };
     };
@@ -1033,13 +1046,17 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       // crosses, at the footprint's front corners. Surveyed 3D parts
       // (Sagrada Familia) always win over this archetype.
       cathedralTowersAdded = true;
-      const localXs = footprint.map((p) => p.x - root.position.x);
-      const localZs = footprint.map((p) => p.y - root.position.z);
+      const localFootprint = footprint.map((point) => ({
+        x: point.x - root.position.x,
+        z: point.y - root.position.z,
+      }));
+      const localXs = localFootprint.map((p) => p.x);
+      const localZs = localFootprint.map((p) => p.z);
       const footprintWidth = Math.max(...localXs) - Math.min(...localXs);
       const footprintDepth = Math.max(...localZs) - Math.min(...localZs);
       const towerSizeInMeters = Math.max(
         3,
-        Math.min(9, Math.min(footprintWidth, footprintDepth) * 0.18),
+        Math.min(7.5, Math.min(footprintWidth, footprintDepth) * 0.16),
       );
       const towerTopInMeters =
         building.heightInMeters +
@@ -1048,13 +1065,58 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         8,
         Math.min(22, towerTopInMeters * 0.32),
       );
-      const frontZ = Math.min(...localZs) + towerSizeInMeters / 2 + 1;
+      // Towers belong to the facade, INSIDE the real footprint: start at
+      // each front bbox corner and walk toward the centroid until the
+      // point is inside the footprint polygon. Bbox corners of concave
+      // or rotated footprints fall outside the building (a tower loose
+      // in the street or buried in the nave), so they are never used raw.
+      // The facade is the short end of the nave: towers spread along it.
+      const insideFootprint = (x: number, z: number): boolean => {
+        let inside = false;
+        for (
+          let i = 0, j = localFootprint.length - 1;
+          i < localFootprint.length;
+          j = i++
+        ) {
+          const a = localFootprint[i]!;
+          const b = localFootprint[j]!;
+          if (
+            a.z > z !== b.z > z &&
+            x < ((b.x - a.x) * (z - a.z)) / (b.z - a.z) + a.x
+          )
+            inside = !inside;
+        }
+        return inside;
+      };
+      const centroidLocal = {
+        x: localXs.reduce((sum, v) => sum + v, 0) / localXs.length,
+        z: localZs.reduce((sum, v) => sum + v, 0) / localZs.length,
+      };
+      const alongX = footprintWidth <= footprintDepth;
+      const frontCorners = alongX
+        ? [
+            { x: Math.min(...localXs), z: Math.min(...localZs) },
+            { x: Math.max(...localXs), z: Math.min(...localZs) },
+          ]
+        : [
+            { x: Math.min(...localXs), z: Math.min(...localZs) },
+            { x: Math.min(...localXs), z: Math.max(...localZs) },
+          ];
+      const towerCenters = frontCorners.map((corner) => {
+        for (let t = 0.06; t <= 0.8; t += 0.03) {
+          const candidate = {
+            x: corner.x + (centroidLocal.x - corner.x) * t,
+            z: corner.z + (centroidLocal.z - corner.z) * t,
+          };
+          if (insideFootprint(candidate.x, candidate.z)) return candidate;
+        }
+        return { ...centroidLocal };
+      });
       const towers = new THREE.Group();
       towers.name = `cathedral-towers:${building.id}`;
-      for (const towerX of [
-        Math.min(...localXs) + towerSizeInMeters / 2 + 1,
-        Math.max(...localXs) - towerSizeInMeters / 2 - 1,
-      ]) {
+      for (const towerCenter of towerCenters) {
+        const towerX = towerCenter.x;
+        const frontZ = towerCenter.z;
         const shaft = new THREE.Mesh(
           new THREE.BoxGeometry(
             towerSizeInMeters,

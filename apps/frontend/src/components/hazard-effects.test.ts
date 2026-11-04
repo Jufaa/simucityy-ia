@@ -103,6 +103,16 @@ it('marks earthquake damage, then rubble and debris when buildings collapse', ()
       building.maxCorner.y - building.minCorner.y,
     );
     expect(Math.max(apron.scale.x, apron.scale.y)).toBeGreaterThan(footprint);
+    // The pile grows in place at the building centre (not dragged toward
+    // the scene origin), spreading sideways before it gains height.
+    expect(pile.position.x).toBeCloseTo(
+      (building.minCorner.x + building.maxCorner.x) / 2,
+    );
+    expect(pile.position.z).toBeCloseTo(
+      (building.minCorner.y + building.maxCorner.y) / 2,
+    );
+    layer.animate(0.45, true);
+    expect(pile.scale.y).toBeLessThan(pile.scale.x);
   }
   expect(JSON.stringify(city)).toBe(before);
   layer.dispose();

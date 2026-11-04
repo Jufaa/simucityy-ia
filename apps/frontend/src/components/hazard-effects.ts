@@ -106,6 +106,11 @@ export function createHazardEffects(
     const base = buildingBaseHeight(city, building);
     const cx = (building.minCorner.x + building.maxCorner.x) / 2;
     const cz = (building.minCorner.y + building.maxCorner.y) / 2;
+    // The pile group sits at the building centre and its chunks are
+    // local: scaling the group to grow the rubble must happen in place.
+    // (Before, chunks carried world coordinates and the growth scale
+    // dragged the whole pile toward the scene origin.)
+    pile.position.set(cx, base, cz);
     // Mancha de escombros y tierra sobre el suelo: un disco irregular que
     // se sale de la parcela, como el material esparcido al caer.
     const apron = new THREE.Mesh(
@@ -125,7 +130,7 @@ export function createHazardEffects(
     apron.name = `hazard-debris-ground:${buildingId}`;
     apron.rotation.x = -Math.PI / 2;
     apron.rotation.z = hazardHash(`apron:${buildingId}`) * Math.PI;
-    apron.position.set(cx, base + 0.07, cz);
+    apron.position.set(0, 0.07, 0);
     apron.scale.set(
       w * 0.75 + 2.4 + hazardHash(`apron-x:${buildingId}`) * 2,
       d * 0.75 + 2.4 + hazardHash(`apron-z:${buildingId}`) * 2,
@@ -142,9 +147,9 @@ export function createHazardEffects(
         i % 2 === 0 ? dustMaterial : rubbleMaterial,
       );
       chunk.position.set(
-        cx + Math.cos(angle) * Math.max(w, d) * reach * 0.72,
-        base + 0.28,
-        cz + Math.sin(angle) * Math.max(w, d) * reach * 0.72,
+        Math.cos(angle) * Math.max(w, d) * reach * 0.72,
+        0.28,
+        Math.sin(angle) * Math.max(w, d) * reach * 0.72,
       );
       chunk.scale.set(
         0.9 + hazardHash(`scatter-s:${buildingId}:${i}`) * 1.1,
@@ -163,9 +168,9 @@ export function createHazardEffects(
         i % 3 === 0 ? dustMaterial : rubbleMaterial,
       );
       chunk.position.set(
-        cx + (r - 0.5) * w * 0.8,
-        base + 0.4 + r * Math.min(2.2, building.heightInMeters * 0.12),
-        cz + (hazardHash(`rubble-z:${buildingId}:${i}`) - 0.5) * d * 0.8,
+        (r - 0.5) * w * 0.8,
+        0.4 + r * Math.min(2.2, building.heightInMeters * 0.12),
+        (hazardHash(`rubble-z:${buildingId}:${i}`) - 0.5) * d * 0.8,
       );
       chunk.scale.set(
         1.6 + r * w * 0.32,
@@ -493,7 +498,7 @@ export function createHazardEffects(
         if (!pile.visible) {
           pile.visible = true;
           rubbleGrowth.set(impact.buildingId, 0);
-          pile.scale.setScalar(0.15);
+          pile.scale.set(0.25, 0.12, 0.25);
         }
       }
       for (const [id, pile] of rubbleByBuilding) {
@@ -563,12 +568,21 @@ export function createHazardEffects(
       if (!Number.isFinite(delta) || delta <= 0 || disposed) return;
       if (running) elapsed += delta;
       if (windStreaks && running) writeWind();
-      // Los escombros crecen hasta su tamaño en ~2,2 s, al ritmo del derrumbe.
+      // Los escombros se asientan en ~2,2 s: el montón se expande primero
+      // hacia los lados y después gana altura, con easing de salida (el
+      // material cae rápido y se acomoda), en vez de inflarse uniforme.
       for (const [id, growth] of rubbleGrowth) {
         if (growth >= 1) continue;
         const next = Math.min(1, growth + delta / 2.2);
         rubbleGrowth.set(id, next);
-        rubbleByBuilding.get(id)?.scale.setScalar(0.15 + 0.85 * next);
+        const eased = 1 - Math.pow(1 - next, 3);
+        rubbleByBuilding
+          .get(id)
+          ?.scale.set(
+            0.25 + 0.75 * eased,
+            0.12 + 0.88 * eased * eased,
+            0.25 + 0.75 * eased,
+          );
       }
       if (wave) {
         const hasWater = waveTargets.some(

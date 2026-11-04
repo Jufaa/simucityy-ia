@@ -40,7 +40,6 @@ export function CityToolbar(props: {
   timeScale?: 1 | 2 | 4 | 8 | 16 | 32 | 64;
   onTimeScale?(scale: 1 | 2 | 4 | 8 | 16 | 32 | 64): void;
   onPanelToggle(): void;
-  onRegenerate(): void;
   onRandom?(): void;
   /** Opens the real-zone / plan import card. */
   onImportZone?(): void;
@@ -90,11 +89,6 @@ export function CityToolbar(props: {
           {props.onRandom && (
             <button type="button" style={button} onClick={props.onRandom}>
               Ciudad aleatoria
-            </button>
-          )}
-          {props.organic && (
-            <button type="button" style={button} onClick={props.onRegenerate}>
-              Otra ciudad
             </button>
           )}
           {props.onImportZone && (
