@@ -2,8 +2,11 @@ import { describe, expect, it } from 'vitest';
 import {
   assessStructuralDamage,
   buildingImpactAt,
+  clampEarthquakeMagnitude,
+  clampTsunamiWaveHeightInMeters,
   createDemoCompatibleScenario,
   createHazardPulses,
+  EARTHQUAKE_MAGNITUDE_LIMITS,
   floodCollapseDepthInMeters,
   floodImpactLoadInMeters,
   FloodEngine,
@@ -11,6 +14,7 @@ import {
   hazardPreset,
   isHazardKind,
   roadEdgeIdsBlockedByBuildings,
+  TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS,
   type CityScenarioInput,
 } from '../src/index.js';
 
@@ -29,6 +33,57 @@ describe('hazard scenarios', () => {
     expect(hazardPreset('strong-wind').windSpeedKmh).toBeGreaterThan(0);
     expect(isHazardKind('tsunami')).toBe(true);
     expect(isHazardKind('meteorito')).toBe(false);
+  });
+
+  it('la magnitud y la ola son elegibles dentro de limites reales', () => {
+    // Terremoto: el mayor registrado es 9,5 (Chile 1960); nada por encima.
+    expect(EARTHQUAKE_MAGNITUDE_LIMITS).toEqual({ min: 4, max: 9.5 });
+    expect(clampEarthquakeMagnitude(500)).toBe(9.5);
+    expect(clampEarthquakeMagnitude(1)).toBe(4);
+    expect(clampEarthquakeMagnitude(Number.NaN)).toBe(6.8);
+    expect(clampEarthquakeMagnitude(7.4)).toBeCloseTo(7.4);
+    // Tsunami: ni olas de 500.000 m ni negativas.
+    expect(TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS).toEqual({
+      min: 0.5,
+      max: 20,
+    });
+    expect(clampTsunamiWaveHeightInMeters(500000)).toBe(20);
+    expect(clampTsunamiWaveHeightInMeters(-3)).toBe(0.5);
+
+    const scenario = createDemoCompatibleScenario(200, 200, 25);
+    // La ola elegida escala los pulsos; el preset sigue siendo el default.
+    const preset = createHazardPulses(scenario, 'tsunami');
+    const big = createHazardPulses(scenario, 'tsunami', [], 10);
+    const maxDepth = (pulses: typeof preset) =>
+      Math.max(...pulses.map((pulse) => pulse.depthInMeters));
+    expect(maxDepth(big)).toBeCloseTo(10);
+    expect(maxDepth(preset)).toBeCloseTo(2.2);
+    // Y una ola absurda se recorta al máximo real, no entra cruda.
+    expect(maxDepth(createHazardPulses(scenario, 'tsunami', [], 500000))).toBe(
+      20,
+    );
+
+    // La magnitud escala el daño: 5 apenas daña, 6,8 es el histórico y
+    // 9,5 daña estrictamente más (suma de severidades, monótona).
+    const assessmentAt = (magnitude?: number) =>
+      assessStructuralDamage(scenario, 'earthquake', {
+        seed: 7,
+        ...(magnitude !== undefined ? { magnitude } : {}),
+      });
+    const severitySum = (magnitude?: number) =>
+      assessmentAt(magnitude).buildings.reduce(
+        (sum, item) => sum + item.severity,
+        0,
+      );
+    expect(assessmentAt().damagedBuildingIds).toEqual(
+      assessmentAt(6.8).damagedBuildingIds,
+    );
+    expect(severitySum(5)).toBeLessThan(severitySum(6.8));
+    expect(severitySum(9.5)).toBeGreaterThan(severitySum(6.8));
+    expect(severitySum(500)).toBe(severitySum(9.5));
+    expect(assessmentAt(5).damagedBuildingIds.length).toBeLessThanOrEqual(
+      assessmentAt(6.8).damagedBuildingIds.length,
+    );
   });
 
   it('lluvia, terremoto y viento no inyectan agua inicial', () => {

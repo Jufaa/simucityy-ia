@@ -97,6 +97,39 @@ export function hazardPreset(kind: HazardKind): HazardPreset {
   return HAZARD_PRESETS[kind];
 }
 
+/**
+ * Real-world selectable ranges. Earthquake: moment magnitude — damage
+ * starts around 5, the largest ever recorded is 9.5 (Chile, 1960), so
+ * the scale cannot go higher. Tsunami: incoming wave height at the
+ * coast — most events are under 3 m, Tōhoku 2011 reached ~10 m on the
+ * coast (extreme local run-up aside), so 20 m caps the plausible range
+ * with headroom. Out-of-range or non-finite input falls back to the
+ * clamped bound or the preset.
+ */
+export const EARTHQUAKE_MAGNITUDE_LIMITS = { min: 4, max: 9.5 } as const;
+export const TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS = {
+  min: 0.5,
+  max: 20,
+} as const;
+
+export function clampEarthquakeMagnitude(value: unknown): number {
+  const fallback = HAZARD_PRESETS.earthquake.magnitude ?? 6.8;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(
+    EARTHQUAKE_MAGNITUDE_LIMITS.max,
+    Math.max(EARTHQUAKE_MAGNITUDE_LIMITS.min, value),
+  );
+}
+
+export function clampTsunamiWaveHeightInMeters(value: unknown): number {
+  const fallback = HAZARD_PRESETS.tsunami.waveHeightInMeters ?? 2.2;
+  if (typeof value !== 'number' || !Number.isFinite(value)) return fallback;
+  return Math.min(
+    TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS.max,
+    Math.max(TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS.min, value),
+  );
+}
+
 /** FNV-1a estable: misma entrada, mismo valor en cualquier plataforma. */
 export function hazardHash(text: string): number {
   let hash = 0x811c9dc5;
@@ -155,6 +188,7 @@ export function createHazardPulses(
   scenario: CityScenarioInput,
   kind: HazardKind,
   blockedCellIndices: readonly number[] = [],
+  waveHeightInMeters?: number,
 ): FloodPulse[] {
   if (kind === 'rain' || kind === 'earthquake' || kind === 'strong-wind')
     return [];
@@ -165,7 +199,9 @@ export function createHazardPulses(
     (cell) => !blocked.has(cell.row * columns + cell.column),
   );
   if (kind === 'tsunami') {
-    const wave = HAZARD_PRESETS.tsunami.waveHeightInMeters ?? 1.6;
+    const wave = clampTsunamiWaveHeightInMeters(
+      waveHeightInMeters ?? HAZARD_PRESETS.tsunami.waveHeightInMeters,
+    );
     // El mar del mundo procedural está al oeste (x menor): la ola entra por
     // la columna 0 y pierde altura hacia el interior.
     return open
@@ -272,7 +308,7 @@ function distanceToSegment(
 export function assessStructuralDamage(
   scenario: CityScenarioInput,
   kind: HazardKind,
-  options: { seed?: number; reinforced?: boolean } = {},
+  options: { seed?: number; reinforced?: boolean; magnitude?: number } = {},
 ): StructuralAssessment {
   const empty: StructuralAssessment = {
     kind,
@@ -324,6 +360,14 @@ export function assessStructuralDamage(
         // El viento castiga la altura expuesta y la orientación aleatoria.
         const heightRatio = Math.min(1, building.heightInMeters / 36);
         severity = (0.22 + 0.85 * heightRatio) * (0.55 + 0.65 * random);
+      }
+      if (kind === 'earthquake') {
+        // Magnitude scaling around the preset event (6.8 = factor 1, so
+        // historical behaviour is unchanged): severity grows with the
+        // square of the magnitude ratio — M5 ≈ 0.54x (mostly intact),
+        // M7.5 ≈ 1.2x, M9 ≈ 1.75x (clamped by the 0..1 severity cap).
+        const magnitude = clampEarthquakeMagnitude(options.magnitude);
+        severity *= (magnitude / 6.8) ** 2;
       }
       severity = Math.max(0, Math.min(1, severity * factor));
       const collapsed = severity >= COLLAPSE_THRESHOLDS[kind];

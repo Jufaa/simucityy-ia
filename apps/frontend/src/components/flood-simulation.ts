@@ -1,4 +1,5 @@
 import {
+  clampTsunamiWaveHeightInMeters,
   createHazardPulses,
   FloodEngine,
   hazardPreset,
@@ -21,6 +22,8 @@ export class FloodSimulation {
     private readonly environment: FloodEnvironment = {},
     hazard: HazardKind = 'rain',
     private readonly rainIntensityOverrideMmPerHour?: number,
+    /** Tsunami only: incoming wave height in metres (clamped to real range). */
+    private readonly waveHeightOverrideInMeters?: number,
   ) {
     this.hazard = hazard;
     this.engine = this.createEngine();
@@ -33,6 +36,7 @@ export class FloodSimulation {
       this.city,
       this.hazard,
       this.environment.blockedCellIndices ?? [],
+      this.hazard === 'tsunami' ? this.waveHeightOverrideInMeters : undefined,
     );
     // El pulso inicial no basta: el río sigue aportando caudal durante su
     // hidrográfica y el tsunami llega en un tren de olas por el borde oeste.
@@ -51,11 +55,17 @@ export class FloodSimulation {
           ? {
               // Tren de olas sostenido: sin aporte continuo el frente se
               // diluye por debajo del umbral visible y se atasca en la
-              // primera fila de edificios.
+              // primera fila de edificios. El caudal escala con la altura
+              // de ola elegida (preset 2,2 m = factor 1).
               cellIndices: pulses
                 .filter((p) => p.column <= 1)
                 .map((p) => p.row * columns + p.column),
-              rateInMetersPerSecond: 0.0016,
+              rateInMetersPerSecond:
+                0.0016 *
+                (clampTsunamiWaveHeightInMeters(
+                  this.waveHeightOverrideInMeters,
+                ) /
+                  (hazardPreset('tsunami').waveHeightInMeters ?? 2.2)),
               durationInSeconds: 5400,
             }
           : undefined);

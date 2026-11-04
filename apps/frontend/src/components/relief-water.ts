@@ -16,6 +16,15 @@ export function reconstructWaterLevels(
   city: CityScenarioInput,
   cells: readonly CellBounds[],
   snapshot: FloodSnapshot,
+): Float64Array {
+  return reconstructWaterSurface(city, cells, snapshot).levels;
+}
+
+/** Levels plus, per terrain vertex, how many wet cells contributed. */
+export function reconstructWaterSurface(
+  city: CityScenarioInput,
+  cells: readonly CellBounds[],
+  snapshot: FloodSnapshot,
 ) {
   const columns = city.terrainGrid.xCoordinates.length;
   const levels = new Float64Array(
@@ -40,7 +49,7 @@ export function reconstructWaterLevels(
   for (let vertex = 0; vertex < levels.length; vertex++) {
     if (counts[vertex]) levels[vertex] = levels[vertex]! / counts[vertex]!;
   }
-  return levels;
+  return { levels, counts };
 }
 
 /**
@@ -89,7 +98,7 @@ export function createReliefWater(
     mesh,
     update(snapshot: FloodSnapshot) {
       let vertices = 0;
-      const levels = reconstructWaterLevels(city, cells, snapshot);
+      const { levels, counts } = reconstructWaterSurface(city, cells, snapshot);
       const columns = city.terrainGrid.xCoordinates.length;
       function triangle(points: THREE.Vector3[], surfaces: number[]) {
         const clipped: THREE.Vector3[] = [];
@@ -159,7 +168,20 @@ export function createReliefWater(
       }
       cells.forEach((cell, index) => {
         const depth = snapshot.waterDepthInMeters[index] ?? 0;
-        if (depth <= 0) return;
+        const cellCorner = cell.row * columns + cell.column;
+        // Dry cells whose four corners all touch wet cells still get the
+        // sheet: building-blocked cells hold no solver depth, and without
+        // this the flood left a dry island exactly on every building —
+        // rubble piles looked like they dammed the water instead of
+        // being submerged by it. Display reconstruction only; solver
+        // depths are untouched.
+        const surroundedByWater =
+          depth <= 0 &&
+          counts[cellCorner]! > 0 &&
+          counts[cellCorner + 1]! > 0 &&
+          counts[cellCorner + columns]! > 0 &&
+          counts[cellCorner + columns + 1]! > 0;
+        if (depth <= 0 && !surroundedByWater) return;
         const grid = city.terrainGrid.elevationsInMeters,
           r = cell.row,
           c = cell.column;

@@ -130,6 +130,19 @@ Then point the import in `Scene.tsx` at the new file (and adjust the label).
 - **Heights:** most buildings carry OSM `height`/`building:levels`; the
   rest are deterministic estimates by OSM id, counted as _estimated_ in
   the metadata and panel, never presented as measured data.
+- **DEM conditioning:** isolated one-cell spikes (a node >2.5 m above
+  all four neighbours — a since-demolished building or tree the SRTM
+  still carries) are clamped to the highest neighbour at conversion;
+  real slopes and multi-cell plateaus pass through untouched, and the
+  flood solver uses the same conditioned grid. Parks and plazas are
+  additionally levelled: their DEM nodes are set to the park's median
+  elevation, and the one-cell street ring around them is capped to
+  that level +1 m (tree-canopy and rooftop noise lifted one corner of
+  Plaza Roca, Río Cuarto, by metres — the corner the shelter sits on;
+  a paved plaza and its kerbs are flat), solver included. The
+  display water sheet also covers
+  dry building-blocked cells fully surrounded by water, so collapsed
+  buildings submerge instead of damming the flood as dry islands.
 - **DEM noise vs building pads:** the Terrarium/SRTM elevation is a
   surface model — over the Buenos Aires Obelisco zone it spans
   18.6–49.9 m with building-height spikes. Building pads therefore

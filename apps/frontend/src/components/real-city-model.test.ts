@@ -454,6 +454,60 @@ describe('createRealCity', () => {
     expect(metadata.landmarkBuildings).toBeGreaterThanOrEqual(6);
   });
 
+  it('levels park DEM nodes to the park median (flat plaza)', () => {
+    const source = fixture();
+    // Fixture park spans x 20-50, y 20-45: DEM nodes at x 20/40, y 20/40.
+    // One park corner carries +15 m of tree/building surface-model noise.
+    const elevations = source.dem.yCoordinates.map((y) =>
+      source.dem.xCoordinates.map((x) => {
+        if (x === 60 || x === 80) return 12; // real slope outside the park
+        if (x >= 20 && x <= 40 && y >= 20 && y <= 40)
+          return x === 40 && y === 40 ? 25 : 10;
+        return 10;
+      }),
+    );
+    const { city } = createRealCity({
+      ...source,
+      dem: { ...source.dem, elevationsInMeters: elevations },
+    });
+    const grid = city.terrainGrid!;
+    const cAt = (v: number) => grid.xCoordinates.indexOf(v);
+    const rAt = (v: number) => grid.yCoordinates.indexOf(v);
+    // Every park node reads the median (10): the plaza is flat.
+    expect(grid.elevationsInMeters[rAt(40)]![cAt(40)]).toBe(10);
+    expect(grid.elevationsInMeters[rAt(20)]![cAt(20)]).toBe(10);
+    // The street ring one cell out is capped to plaza level + 1 m...
+    expect(grid.elevationsInMeters[rAt(40)]![cAt(60)]).toBe(11);
+    // ...and beyond the apron the terrain is untouched.
+    expect(grid.elevationsInMeters[rAt(40)]![cAt(80)]).toBe(12);
+  });
+
+  it('clamps isolated one-cell DEM spikes but keeps real slopes', () => {
+    const source = fixture();
+    const rows = source.dem.yCoordinates.length;
+    const cols = source.dem.xCoordinates.length;
+    const elevations = source.dem.yCoordinates.map((_, r) =>
+      source.dem.xCoordinates.map((_, c) => {
+        if (r === Math.floor(rows / 2) && c === Math.floor(cols / 2)) return 30;
+        if (c >= Math.floor(cols / 2)) return 12; // broad step, not a spike
+        return 10;
+      }),
+    );
+    const { city } = createRealCity({
+      ...source,
+      dem: { ...source.dem, elevationsInMeters: elevations },
+    });
+    const grid = city.terrainGrid!;
+    const midR = Math.floor(rows / 2);
+    const midC = Math.floor(cols / 2);
+    // Spike clamped to its highest neighbour (12), slope step preserved.
+    expect(grid.elevationsInMeters[midR]![midC]).toBe(12);
+    expect(grid.elevationsInMeters[midR]![midC + 2]).toBe(12);
+    expect(grid.elevationsInMeters[midR]![1]).toBe(10);
+    // Source object untouched.
+    expect(elevations[midR]![midC]).toBe(30);
+  });
+
   it('classifies building=obelisk ways as obelisk monuments', () => {
     const source = fixture();
     source.elements.push({

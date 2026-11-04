@@ -175,6 +175,29 @@ it('averages absolute surfaces rather than depths and excludes dry neighbors', (
   layer.mesh.geometry.dispose();
 });
 
+it('covers dry blocked cells fully surrounded by water (no crater islands)', () => {
+  const { snapshot, layer } = fixture(
+    [
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+      [0, 0, 0, 0],
+    ],
+    // 3x3 cells; the centre cell is dry (building-blocked), all around wet.
+    [0.5, 0.5, 0.5, 0.5, 0, 0.5, 0.5, 0.5, 0.5],
+  );
+  layer.update(snapshot);
+  const points = layer.mesh.geometry.getAttribute('position');
+  let covering = 0;
+  for (let i = 0; i + 2 < layer.mesh.geometry.drawRange.count; i += 3) {
+    const cx = (points.getX(i) + points.getX(i + 1) + points.getX(i + 2)) / 3;
+    const cz = (points.getZ(i) + points.getZ(i + 1) + points.getZ(i + 2)) / 3;
+    if (cx > 1.05 && cx < 1.95 && cz > 1.05 && cz < 1.95) covering++;
+  }
+  expect(covering).toBeGreaterThan(0);
+  layer.mesh.geometry.dispose();
+});
+
 it('keeps fixed reusable attributes within budget on repeated updates', () => {
   const { snapshot, layer } = fixture(
     [

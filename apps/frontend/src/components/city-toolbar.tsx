@@ -37,6 +37,8 @@ export function CityToolbar(props: {
   assetStatus: 'loading' | 'ready' | 'fallback' | 'procedural';
   hazard?: HazardKind;
   onHazard?(kind: HazardKind): void;
+  waveHeightInMeters?: number;
+  earthquakeMagnitude?: number;
   timeScale?: 1 | 2 | 4 | 8 | 16 | 32 | 64;
   onTimeScale?(scale: 1 | 2 | 4 | 8 | 16 | 32 | 64): void;
   onPanelToggle(): void;
@@ -83,7 +85,12 @@ export function CityToolbar(props: {
           </div>
         </div>
         {props.hazard && props.onHazard && (
-          <HazardSelector value={props.hazard} onChange={props.onHazard} />
+          <HazardSelector
+            value={props.hazard}
+            onChange={props.onHazard}
+            waveHeightInMeters={props.waveHeightInMeters}
+            earthquakeMagnitude={props.earthquakeMagnitude}
+          />
         )}
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {props.onRandom && (

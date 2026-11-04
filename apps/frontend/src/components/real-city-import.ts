@@ -43,6 +43,7 @@ const TAG_WHITELIST = [
   'monument',
   'wikidata',
   'artwork_type',
+  'area',
 ];
 
 export async function searchPlaces(query: string): Promise<PlaceResult[]> {
@@ -417,7 +418,8 @@ function tagsFromProperties(
   if (!tags.amenity && kind === 'hospital') tags.amenity = 'hospital';
   if (!tags.highway && ['road', 'street', 'calle'].includes(kind))
     tags.highway = 'residential';
-  if (!tags.leisure && ['park', 'parque'].includes(kind)) tags.leisure = 'park';
+  if (!tags.leisure && ['park', 'parque', 'plaza'].includes(kind))
+    tags.leisure = 'park';
   if (
     !tags.tourism &&
     [

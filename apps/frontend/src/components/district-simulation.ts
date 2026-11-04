@@ -45,6 +45,10 @@ export interface DistrictSimulationOptions {
   hazard?: HazardKind;
   /** Overrides the hazard preset rain intensity (mm/h), both arms alike. */
   rainIntensityMmPerHour?: number;
+  /** Tsunami only: incoming wave height in metres, both arms alike. */
+  waveHeightInMeters?: number;
+  /** Earthquake only: moment magnitude, both arms alike. */
+  earthquakeMagnitude?: number;
   /** Extra user-placed drains, active only in the improved arm. */
   extraDrains?: readonly { x: number; y: number }[];
   /** Tsunami early warning: improved-arm citizens react much sooner. */
@@ -77,6 +81,8 @@ export class DistrictSimulation {
   private speed = 300;
   readonly drains: readonly FloodDrain[];
   private rainIntensityMmPerHour: number | undefined;
+  private waveHeightInMeters: number | undefined;
+  private earthquakeMagnitude: number | undefined;
   private earlyWarning = false;
   private reinforcement = true;
   private extraDrains: readonly FloodDrain[];
@@ -96,6 +102,8 @@ export class DistrictSimulation {
     this.alarmMode = options.alarmMode ?? 'automatic';
     this.hazard = options.hazard ?? 'rain';
     this.rainIntensityMmPerHour = options.rainIntensityMmPerHour;
+    this.waveHeightInMeters = options.waveHeightInMeters;
+    this.earthquakeMagnitude = options.earthquakeMagnitude;
     this.earlyWarning = options.earlyWarning ?? false;
     this.reinforcement = options.reinforcement ?? true;
     this.extraDrains = (options.extraDrains ?? []).map((point, index) => ({
@@ -157,10 +165,15 @@ export class DistrictSimulation {
       environment,
       this.hazard,
       this.rainIntensityMmPerHour,
+      this.hazard === 'tsunami' ? this.waveHeightInMeters : undefined,
     );
     const structural = assessStructuralDamage(this.input, this.hazard, {
       seed: this.city.config.seed ?? 123,
       reinforced: improved && this.reinforcement,
+      ...(this.hazard === 'earthquake' &&
+      this.earthquakeMagnitude !== undefined
+        ? { magnitude: this.earthquakeMagnitude }
+        : {}),
     });
     const shelters = (this.city.shelters ?? []).flatMap((s) =>
       s.capacity === undefined ? [] : [{ ...s, capacity: s.capacity }],
@@ -217,6 +230,18 @@ export class DistrictSimulation {
   /** Changes rain intensity and rebuilds both arms (setup-time choice). */
   applyRainIntensity(mmPerHour: number) {
     this.rainIntensityMmPerHour = mmPerHour;
+    this.reset();
+  }
+
+  /** Changes the tsunami wave height and rebuilds both arms. */
+  applyWaveHeightInMeters(waveHeightInMeters: number) {
+    this.waveHeightInMeters = waveHeightInMeters;
+    this.reset();
+  }
+
+  /** Changes the earthquake magnitude and rebuilds both arms. */
+  applyEarthquakeMagnitude(magnitude: number) {
+    this.earthquakeMagnitude = magnitude;
     this.reset();
   }
 

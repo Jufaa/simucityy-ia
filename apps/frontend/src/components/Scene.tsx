@@ -96,6 +96,8 @@ import {
   sampleTerrainHeight,
 } from './terrain-view';
 import {
+  EARTHQUAKE_MAGNITUDE_LIMITS,
+  TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS,
   hazardPreset,
   type CityScenarioInput,
   type FloodSnapshot,
@@ -268,6 +270,16 @@ export default function Scene() {
   );
   const rainIntensityRef = useRef(rainIntensity);
   rainIntensityRef.current = rainIntensity;
+  const [waveHeightInMeters, setWaveHeightInMeters] = useState<number>(
+    hazardPreset('tsunami').waveHeightInMeters ?? 2.2,
+  );
+  const waveHeightRef = useRef(waveHeightInMeters);
+  waveHeightRef.current = waveHeightInMeters;
+  const [earthquakeMagnitude, setEarthquakeMagnitude] = useState<number>(
+    hazardPreset('earthquake').magnitude ?? 6.8,
+  );
+  const earthquakeMagnitudeRef = useRef(earthquakeMagnitude);
+  earthquakeMagnitudeRef.current = earthquakeMagnitude;
   const [userDrains, setUserDrains] = useState<{ x: number; y: number }[]>([]);
   const [hazardMeasure, setHazardMeasure] = useState(true);
   const hazardMeasureRef = useRef(true);
@@ -723,6 +735,12 @@ export default function Scene() {
             hazard: hazardKind,
             ...(hazardKind === 'rain' || hazardKind === 'river-overflow'
               ? { rainIntensityMmPerHour: rainIntensityRef.current }
+              : {}),
+            ...(hazardKind === 'tsunami'
+              ? { waveHeightInMeters: waveHeightRef.current }
+              : {}),
+            ...(hazardKind === 'earthquake'
+              ? { earthquakeMagnitude: earthquakeMagnitudeRef.current }
               : {}),
             extraDrains: userDrainsRef.current,
             earlyWarning: hazardKind === 'tsunami' && hazardMeasureRef.current,
@@ -1217,6 +1235,11 @@ export default function Scene() {
   function applyHazard(kind: HazardKind) {
     if (kind === hazardKind) return;
     setRainIntensity(hazardPreset(kind).rainIntensityMmPerHour);
+    setWaveHeightInMeters(hazardPreset('tsunami').waveHeightInMeters ?? 2.2);
+    waveHeightRef.current = hazardPreset('tsunami').waveHeightInMeters ?? 2.2;
+    setEarthquakeMagnitude(hazardPreset('earthquake').magnitude ?? 6.8);
+    earthquakeMagnitudeRef.current =
+      hazardPreset('earthquake').magnitude ?? 6.8;
     setHazardMeasure(true);
     hazardMeasureRef.current = true;
     setEventSamples([]);
@@ -1590,6 +1613,8 @@ export default function Scene() {
         assetStatus={assetStatus}
         hazard={hazardKind}
         onHazard={applyHazard}
+        waveHeightInMeters={waveHeightInMeters}
+        earthquakeMagnitude={earthquakeMagnitude}
         timeScale={timeScale}
         onTimeScale={(scale) => {
           timeScaleRef.current = scale;
@@ -1758,6 +1783,62 @@ export default function Scene() {
               {simulationRef.current?.started
                 ? 'Se ajusta antes de iniciar (o al reiniciar).'
                 : 'Aplica al iniciar la simulación.'}
+            </label>
+          )}
+          {hazardKind === 'tsunami' && (
+            <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+              Altura de la ola: {waveHeightInMeters} m
+              <input
+                aria-label="Altura de la ola del tsunami"
+                type="range"
+                min={TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS.min}
+                max={TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS.max}
+                step={0.5}
+                value={waveHeightInMeters}
+                disabled={!!simulationRef.current?.started}
+                onChange={(event) => {
+                  setWaveHeightInMeters(Number(event.target.value));
+                  waveHeightRef.current = Number(event.target.value);
+                  if (!simulationRef.current?.started)
+                    simulationRef.current?.applyWaveHeightInMeters(
+                      Number(event.target.value),
+                    );
+                }}
+                style={{ width: '100%', marginTop: 3 }}
+              />
+              La mayoría de los tsunamis llega con menos de 3 m; Japón 2011
+              rondó los 10 m en la costa. Máximo ofrecido: 20 m.
+              {simulationRef.current?.started
+                ? ' Se ajusta antes de iniciar (o al reiniciar).'
+                : ''}
+            </label>
+          )}
+          {hazardKind === 'earthquake' && (
+            <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+              Magnitud: {earthquakeMagnitude.toFixed(1)}
+              <input
+                aria-label="Magnitud del terremoto"
+                type="range"
+                min={EARTHQUAKE_MAGNITUDE_LIMITS.min}
+                max={EARTHQUAKE_MAGNITUDE_LIMITS.max}
+                step={0.1}
+                value={earthquakeMagnitude}
+                disabled={!!simulationRef.current?.started}
+                onChange={(event) => {
+                  setEarthquakeMagnitude(Number(event.target.value));
+                  earthquakeMagnitudeRef.current = Number(event.target.value);
+                  if (!simulationRef.current?.started)
+                    simulationRef.current?.applyEarthquakeMagnitude(
+                      Number(event.target.value),
+                    );
+                }}
+                style={{ width: '100%', marginTop: 3 }}
+              />
+              El daño empieza cerca de 5; el mayor registrado es 9,5 (Chile,
+              1960) y la escala no pasa de ahí.
+              {simulationRef.current?.started
+                ? ' Se ajusta antes de iniciar (o al reiniciar).'
+                : ''}
             </label>
           )}
           <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
@@ -2345,11 +2426,11 @@ export default function Scene() {
           </label>
           <p style={{ margin: '8px 0', fontSize: 12 }}>
             {hazardKind === 'earthquake' &&
-              `Magnitud ${hazardPreset(hazardKind).magnitude} · daño estructural y escombros. `}
+              `Magnitud ${earthquakeMagnitude.toFixed(1)} · daño estructural y escombros. `}
             {hazardKind === 'strong-wind' &&
               `Rachas de ${hazardPreset(hazardKind).windSpeedKmh} km/h · daño en edificios altos. `}
             {hazardKind === 'tsunami' &&
-              `Ola de ${hazardPreset(hazardKind).waveHeightInMeters} m entrando desde el oeste. `}
+              `Ola de ${waveHeightInMeters} m entrando desde el oeste. `}
             {WATER_HAZARDS.includes(hazardKind) &&
               hazardKind !== 'tsunami' &&
               `Agua animada · Lluvia: ${hazardPreset(hazardKind).rainIntensityMmPerHour} mm/h · Drenaje: ${hazardPreset(hazardKind).drainRateMmPerHour} mm/h. `}

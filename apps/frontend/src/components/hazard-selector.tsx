@@ -5,13 +5,17 @@ import {
   type HazardKind,
 } from '@simulicity/hazards';
 
-const detail = (kind: HazardKind): string => {
+const detail = (
+  kind: HazardKind,
+  overrides: { waveHeightInMeters?: number; earthquakeMagnitude?: number },
+): string => {
   const preset = HAZARD_PRESETS[kind];
-  if (preset.magnitude !== undefined) return `Magnitud ${preset.magnitude}`;
+  if (preset.magnitude !== undefined)
+    return `Magnitud ${(overrides.earthquakeMagnitude ?? preset.magnitude).toFixed(1)}`;
   if (preset.windSpeedKmh !== undefined)
     return `Rachas ${preset.windSpeedKmh} km/h`;
   if (preset.waveHeightInMeters !== undefined)
-    return `Ola ${preset.waveHeightInMeters} m`;
+    return `Ola ${overrides.waveHeightInMeters ?? preset.waveHeightInMeters} m`;
   return `Lluvia ${preset.rainIntensityMmPerHour} mm/h`;
 };
 
@@ -32,6 +36,9 @@ const buttonStyle = (selected: boolean): CSSProperties => ({
 export function HazardSelector(props: {
   value: HazardKind;
   onChange(kind: HazardKind): void;
+  /** User-chosen scales (default: the presets); shown on the buttons. */
+  waveHeightInMeters?: number;
+  earthquakeMagnitude?: number;
 }) {
   return (
     <fieldset
@@ -70,7 +77,7 @@ export function HazardSelector(props: {
           >
             <strong>{preset.label}</strong>
             <br />
-            <span style={{ color: '#60787a' }}>{detail(kind)}</span>
+            <span style={{ color: '#60787a' }}>{detail(kind, props)}</span>
           </button>
         );
       })}

@@ -132,8 +132,8 @@ export function createHazardEffects(
     apron.rotation.z = hazardHash(`apron:${buildingId}`) * Math.PI;
     apron.position.set(0, 0.07, 0);
     apron.scale.set(
-      w * 0.75 + 2.4 + hazardHash(`apron-x:${buildingId}`) * 2,
-      d * 0.75 + 2.4 + hazardHash(`apron-z:${buildingId}`) * 2,
+      w * 0.6 + 1.5 + hazardHash(`apron-x:${buildingId}`) * 1.2,
+      d * 0.6 + 1.5 + hazardHash(`apron-z:${buildingId}`) * 1.2,
       1,
     );
     apron.receiveShadow = true;

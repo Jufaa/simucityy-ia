@@ -570,9 +570,59 @@ export function createRealCity(
     throw new RangeError(
       'DEM grid must be monotonic, match the bbox extent and provide one elevation per axis pair.',
     );
-  const elevations = dem.elevationsInMeters;
-  if (elevations.flat().some((value) => !Number.isFinite(value)))
+  if (dem.elevationsInMeters.flat().some((value) => !Number.isFinite(value)))
     throw new RangeError('DEM elevations must be finite.');
+  // DEM conditioning (source data, applied once, solver included): the
+  // Terrarium/SRTM grid is a surface model, so a single cell can carry a
+  // building or tree that no longer exists — e.g. a demolished corner
+  // building lifting one corner of Plaza Roca in Río Cuarto. A node that
+  // towers more than 2.5 m over ALL its orthogonal neighbours is an
+  // isolated spike, not terrain: clamp it to the highest neighbour.
+  // Broad slopes and multi-cell plateaus are untouched. The source
+  // object is never mutated; the converted city uses this copy.
+  const sourceElevations = dem.elevationsInMeters;
+  let elevations = sourceElevations.map((row, r) =>
+    row.map((value, c) => {
+      if (
+        r === 0 ||
+        c === 0 ||
+        r === sourceElevations.length - 1 ||
+        c === row.length - 1
+      )
+        return value;
+      const neighbourMax = Math.max(
+        sourceElevations[r - 1]![c]!,
+        sourceElevations[r + 1]![c]!,
+        sourceElevations[r]![c - 1]!,
+        sourceElevations[r]![c + 1]!,
+      );
+      return value > neighbourMax + 2.5 ? neighbourMax : value;
+    }),
+  );
+  // Block-scale surface-model noise (tree canopies and whole rooftops
+  // bleeding into street/plaza cells) survives the single-spike clamp
+  // as two-to-four-cell plateaus of several metres — the block next to
+  // Plaza Roca reads +11 m over the plaza. Two bounded 5x5 median
+  // passes (only nodes more than 2 m off the window median move) level
+  // those plateaus; a genuine slope is far broader than the 100 m
+  // window, where the median is the node's own value, so real
+  // gradients pass through untouched.
+  for (let pass = 0; pass < 2; pass++) {
+    const src = elevations;
+    elevations = src.map((row, r) =>
+      row.map((value, c) => {
+        if (r < 2 || c < 2 || r >= src.length - 2 || c >= row.length - 2)
+          return value;
+        const neighbourhood: number[] = [];
+        for (let dr = -2; dr <= 2; dr++)
+          for (let dc = -2; dc <= 2; dc++)
+            neighbourhood.push(src[r + dr]![c + dc]!);
+        neighbourhood.sort((a, b) => a - b);
+        const median = neighbourhood[12]!;
+        return Math.abs(value - median) > 2 ? median : value;
+      }),
+    );
+  }
   const sampleElevation = (x: number, y: number): number => {
     const locate = (axis: number[], value: number) => {
       const clamped = Math.max(axis[0]!, Math.min(axis.at(-1)!, value));
@@ -684,7 +734,10 @@ export function createRealCity(
       tags.leisure === 'garden' ||
       ['grass', 'meadow', 'recreation_ground', 'village_green'].includes(
         tags.landuse ?? '',
-      );
+      ) ||
+      // Pedestrian plazas mapped as areas (e.g. Plaza Roca) are parks
+      // for levelling/rendering, not ring roads.
+      (tags.highway === 'pedestrian' && tags.area === 'yes');
     const isBuilding = tags.building !== undefined && tags.building !== 'no';
     // building:part elements are 3D detail of a parent building, never
     // standalone buildings; they are collected separately below. Elements
@@ -762,7 +815,8 @@ export function createRealCity(
       tags.leisure === 'garden' ||
       ['grass', 'meadow', 'recreation_ground', 'village_green'].includes(
         tags.landuse ?? '',
-      );
+      ) ||
+      (tags.highway === 'pedestrian' && tags.area === 'yes');
     // Nothing may render outside the selected square: footprints that
     // cross its border are clipped to it instead of sticking out.
     const polygon = clipPolygonToExtent(
@@ -936,6 +990,47 @@ export function createRealCity(
         balconyDepthInMeters: floors >= 4 ? 0.6 : 0,
       },
     });
+  }
+  // Urban parks and plazas are level ground. DEM cells under them carry
+  // tree-canopy and corner-building noise from the surface model (Plaza
+  // Roca in Río Cuarto reads metres higher at one corner), so level each
+  // park's DEM nodes to the park's own median elevation — the same pad
+  // logic buildings get. One grid: the solver sees the levelled park
+  // too, which matches a real paved plaza. Mutates only the converted
+  // copy, never the source.
+  for (const park of parks) {
+    const columns: number[] = [];
+    const rows: number[] = [];
+    xs.forEach((x, c) => {
+      if (x >= park.minCorner.x - 0.01 && x <= park.maxCorner.x + 0.01)
+        columns.push(c);
+    });
+    ys.forEach((y, r) => {
+      if (y >= park.minCorner.y - 0.01 && y <= park.maxCorner.y + 0.01)
+        rows.push(r);
+    });
+    if (!columns.length || !rows.length) continue;
+    const values = rows
+      .flatMap((r) => columns.map((c) => elevations[r]![c]!))
+      .sort((a, b) => a - b);
+    const median = values[Math.floor(values.length / 2)]!;
+    for (const r of rows) for (const c of columns) elevations[r]![c] = median;
+    // One-cell apron: the street ring around the plaza is capped to the
+    // plaza's level (+1 m), so surface-model bumps on the corner block
+    // do not ramp the streets at the plaza's corners (the exact spot
+    // shelters and evacuees use). Only the ring is clamped; the rest of
+    // the city's terrain is untouched.
+    const apronRows = new Set(rows.flatMap((r) => [r - 1, r, r + 1]));
+    const apronColumns = new Set(columns.flatMap((c) => [c - 1, c, c + 1]));
+    for (const r of apronRows) {
+      if (r < 0 || r >= elevations.length) continue;
+      for (const c of apronColumns) {
+        if (c < 0 || c >= elevations[r]!.length) continue;
+        if (rows.includes(r) && columns.includes(c)) continue;
+        // Cap only: never raise the ring (low kerbs drain to the street).
+        elevations[r]![c] = Math.min(elevations[r]![c]!, median + 1);
+      }
+    }
   }
   // Attach OSM 3D parts (building:part with real heights, e.g. the Sagrada
   // Familia towers at ~170 m) to the building whose footprint contains

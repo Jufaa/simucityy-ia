@@ -648,32 +648,82 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
       const R = radiusInMeters;
       const figure: THREE.BufferGeometry[] = [];
       const torch: THREE.BufferGeometry[] = [];
+      // Robe: a draped gown silhouette — wide hem with a slight train,
+      // gathering through the knees and waist into the chest. Two fold
+      // harmonics (broad 9-fold drape + fine 23-fold ripple) break the
+      // light so it reads as cloth, not a turned bell.
       const robeProfile: [number, number][] = [
         [0, 0],
-        [0.98, 0],
-        [1.05, 0.02],
-        [0.96, 0.1],
-        [0.78, 0.3],
-        [0.6, 0.52],
-        [0.5, 0.68],
+        [1.0, 0],
+        [1.12, 0.012],
+        [1.1, 0.035],
+        [1.0, 0.09],
+        [0.88, 0.18],
+        [0.76, 0.3],
+        [0.66, 0.42],
+        [0.58, 0.54],
+        [0.52, 0.64],
+        [0.49, 0.71],
       ];
-      figure.push(
-        new THREE.LatheGeometry(
-          robeProfile.map(([rx, hy]) => new THREE.Vector2(rx * R, hy * H)),
-          18,
-        ).toNonIndexed(),
-      );
-      const torso = new THREE.CylinderGeometry(
-        R * 0.38,
-        R * 0.47,
-        H * 0.13,
+      const robe = new THREE.LatheGeometry(
+        robeProfile.map(([rx, hy]) => new THREE.Vector2(rx * R, hy * H)),
+        36,
+      ).toNonIndexed();
+      const robePositions = robe.getAttribute('position');
+      for (let i = 0; i < robePositions.count; i++) {
+        const x = robePositions.getX(i);
+        const y = robePositions.getY(i);
+        const z = robePositions.getZ(i);
+        const theta = Math.atan2(z, x);
+        const fade = 1 - (y / H) * 0.7;
+        const fold =
+          1 +
+          (0.055 * Math.sin(theta * 9 + 0.6) + 0.022 * Math.sin(theta * 23)) *
+            fade;
+        robePositions.setX(i, x * fold);
+        robePositions.setZ(i, z * fold);
+      }
+      robe.computeVertexNormals();
+      figure.push(robe);
+      // Shoulders: a squashed sphere gives the organic shoulder line a
+      // cylinder torso never has.
+      const shoulders = new THREE.SphereGeometry(
+        R * 0.46,
+        14,
         10,
       ).toNonIndexed();
-      torso.translate(0, H * 0.745, 0);
+      shoulders.scale(1.08, 0.52, 0.82);
+      shoulders.translate(0, H * 0.755, 0);
+      figure.push(shoulders);
+      const torso = new THREE.CylinderGeometry(
+        R * 0.34,
+        R * 0.46,
+        H * 0.12,
+        12,
+      ).toNonIndexed();
+      torso.translate(0, H * 0.72, 0);
       figure.push(torso);
-      const headRadius = Math.max(0.35, Math.min(1.9, H * 0.034, R * 0.22));
-      const headY = H * 0.845;
-      const head = new THREE.SphereGeometry(headRadius, 10, 8).toNonIndexed();
+      // Diagonal drape sash across the chest.
+      const sash = new THREE.BoxGeometry(
+        R * 0.8,
+        H * 0.04,
+        R * 0.5,
+      ).toNonIndexed();
+      sash.rotateZ(0.62);
+      sash.translate(0, H * 0.745, 0);
+      figure.push(sash);
+      const neck = new THREE.CylinderGeometry(
+        R * 0.09,
+        R * 0.11,
+        H * 0.045,
+        8,
+      ).toNonIndexed();
+      neck.translate(0, H * 0.815, 0);
+      figure.push(neck);
+      const headRadius = Math.max(0.35, Math.min(1.9, H * 0.033, R * 0.21));
+      const headY = H * 0.85;
+      const head = new THREE.SphereGeometry(headRadius, 14, 10).toNonIndexed();
+      head.scale(0.92, 1.14, 0.96);
       head.translate(0, headY, 0);
       figure.push(head);
       if (H >= 12) {
@@ -686,17 +736,21 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         ).toNonIndexed();
         band.translate(0, headY + headRadius * 0.48, 0);
         figure.push(band);
+        // Seven rays in a frontal fan (the Liberty crown is a diadem,
+        // not a hedgehog): spread in the coronal plane facing the
+        // raised-arm side (+x), from -68° to +68° off vertical, the
+        // centre ray longest.
         for (let i = 0; i < 7; i++) {
-          const angle = (i / 7) * Math.PI * 2;
+          const angle = (-68 + i * (136 / 6)) * (Math.PI / 180);
           const spike = new THREE.ConeGeometry(
-            headRadius * 0.15,
-            headRadius * 2.1,
+            headRadius * 0.13,
+            headRadius * (2.5 - Math.abs(i - 3) * 0.16),
             5,
           ).toNonIndexed();
           const direction = new THREE.Vector3(
-            Math.cos(angle) * 0.38,
-            1,
-            Math.sin(angle) * 0.38,
+            0.1,
+            Math.cos(angle),
+            Math.sin(angle),
           ).normalize();
           spike.applyQuaternion(
             new THREE.Quaternion().setFromUnitVectors(
@@ -705,8 +759,8 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
             ),
           );
           spike.translate(
-            Math.cos(angle) * headRadius * 0.5,
-            headY + headRadius * 0.85,
+            0,
+            headY + headRadius * 0.6,
             Math.sin(angle) * headRadius * 0.5,
           );
           figure.push(spike);
@@ -737,43 +791,87 @@ export function createBuildingLayer(city: CityResponse): THREE.Group {
         geometry.translate(middle.x, middle.y, middle.z);
         return geometry;
       };
-      const armRadius = Math.max(0.18, headRadius * 0.3);
+      // Arms are robed too: thick tapered sleeves, not sticks. Radii are
+      // in head units so the figure scales from garden statue to Liberty.
+      const sleeveRadius = Math.max(0.22, headRadius * 0.42);
+      const armRadius = Math.max(0.16, headRadius * 0.26);
       // Raised right arm, close to the head and nearly vertical (the
       // Liberty pose): shoulder -> elbow -> hand above the crown.
       figure.push(
-        limb([R * 0.34, H * 0.76, 0], [R * 0.5, H * 0.88, 0], armRadius),
+        limb([R * 0.32, H * 0.75, 0], [R * 0.47, H * 0.87, 0], sleeveRadius),
       );
       figure.push(
-        limb([R * 0.5, H * 0.88, 0], [R * 0.56, H * 0.985, 0], armRadius * 0.9),
+        limb([R * 0.47, H * 0.87, 0], [R * 0.53, H * 0.975, 0], armRadius),
       );
-      // Left arm bent, holding a tablet against the body.
-      figure.push(
-        limb([R * -0.34, H * 0.76, 0], [R * -0.55, H * 0.6, 0], armRadius),
-      );
-      const tablet = new THREE.BoxGeometry(
-        R * 0.34,
-        R * 0.44,
-        R * 0.07,
+      const hand = new THREE.SphereGeometry(
+        armRadius * 1.05,
+        8,
+        6,
       ).toNonIndexed();
-      tablet.rotateZ(0.18);
-      tablet.translate(R * -0.58, H * 0.63, 0);
-      figure.push(tablet);
-      // Torch handle + emissive flame above the raised hand.
+      hand.translate(R * 0.53, H * 0.985, 0);
+      figure.push(hand);
+      // Left arm: sleeve down, forearm forward holding the tablet
+      // against the left hip, tablet face tilted up slightly.
+      figure.push(
+        limb([R * -0.32, H * 0.75, 0], [R * -0.5, H * 0.61, 0], sleeveRadius),
+      );
       figure.push(
         limb(
-          [R * 0.56, H * 0.985, 0],
-          [R * 0.575, H * 1.02, 0],
-          armRadius * 0.55,
+          [R * -0.5, H * 0.61, 0],
+          [R * -0.44, H * 0.56, R * 0.14],
+          armRadius,
         ),
       );
-      const flameRadius = Math.max(0.4, headRadius * 0.55);
-      const flame = new THREE.ConeGeometry(
+      const tablet = new THREE.BoxGeometry(
+        R * 0.32,
+        R * 0.42,
+        R * 0.06,
+      ).toNonIndexed();
+      tablet.rotateX(-0.16);
+      tablet.rotateZ(0.14);
+      tablet.translate(R * -0.46, H * 0.6, R * 0.17);
+      figure.push(tablet);
+      // Torch: handle, flared cup, and a two-cone flame (outer glow +
+      // brighter core look from the same emissive material at two
+      // scales), sized so the flame tip lands near the surveyed top.
+      figure.push(
+        limb(
+          [R * 0.53, H * 0.985, 0],
+          [R * 0.545, H * 1.015, 0],
+          armRadius * 0.5,
+        ),
+      );
+      const cup = new THREE.CylinderGeometry(
+        headRadius * 0.46,
+        headRadius * 0.14,
+        headRadius * 0.55,
+        10,
+      ).toNonIndexed();
+      cup.translate(R * 0.545, H * 1.015 + headRadius * 0.25, 0);
+      figure.push(cup);
+      const flameRadius = Math.max(0.4, headRadius * 0.5);
+      const flameOuter = new THREE.ConeGeometry(
         flameRadius,
-        flameRadius * 2.4,
+        flameRadius * 2.6,
+        10,
+      ).toNonIndexed();
+      flameOuter.translate(
+        R * 0.545,
+        H * 1.015 + headRadius * 0.5 + flameRadius * 1.15,
+        0,
+      );
+      torch.push(flameOuter);
+      const flameCore = new THREE.ConeGeometry(
+        flameRadius * 0.55,
+        flameRadius * 1.7,
         8,
       ).toNonIndexed();
-      flame.translate(R * 0.575, H * 1.02 + flameRadius * 1.1, 0);
-      torch.push(flame);
+      flameCore.translate(
+        R * 0.545,
+        H * 1.015 + headRadius * 0.5 + flameRadius * 0.8,
+        0,
+      );
+      torch.push(flameCore);
       return { figure, torch };
     };
     for (const part of building.parts ?? []) {
