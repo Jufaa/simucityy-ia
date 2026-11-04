@@ -20,6 +20,8 @@ export interface AiServiceDeps {
   userKey: string;
   fallbackKey?: string | undefined;
   model?: string | undefined;
+  /** OpenAI-compatible endpoint. Defaults to the Meta API. */
+  baseUrl?: string | undefined;
 }
 
 export interface GuidedParams {
@@ -42,7 +44,7 @@ export async function runAi(
     throw new Error('No API key available for this user.');
   }
 
-  const client = createMetaClient(apiKey);
+  const client = createMetaClient(apiKey, deps.baseUrl);
 
   const params: OpenAI.Chat.ChatCompletionCreateParams = {
     model: deps.model ?? DEFAULT_MODEL,
@@ -96,7 +98,7 @@ async function chatJson(
 ): Promise<unknown> {
   const apiKey = deps.userKey || deps.fallbackKey;
   if (!apiKey) throw new Error('No API key available for this user.');
-  const client = createMetaClient(apiKey);
+  const client = createMetaClient(apiKey, deps.baseUrl);
   let completion: OpenAI.Chat.ChatCompletion;
   try {
     completion = await client.chat.completions.create({

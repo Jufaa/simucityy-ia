@@ -1,118 +1,241 @@
 # Simulicity IA
 
-A synthetic city simulator (Three.js) with terrain, water, streets, buildings, services and citizens, deterministic hazards (rain/flood, river overflow, tsunami, earthquake, strong wind) with before/after same-seed comparison, real-district import from OpenStreetMap, and Meta AI features described below.
+> A synthetic 3D city simulator for exploring the impact of natural
+> hazards (floods, earthquakes, tsunamis, strong wind) with same-seed
+> before/after comparison and AI-assisted interventions.
 
-> Note: parts of this README below still describe the earlier health-only baseline. The current state is summarized here; `AGENTS.md` is the shared engineering contract.
+**Demo video:** *\[https://www.youtube.com/watch?v=zcfY3OEeHbQ]*
 
-## Meta AI (optional, server-side)
+![Simulicity IA overview](assets/MainMenu.png)
 
-Two features call the Meta Model API (`api.meta.ai/v1`, Muse Spark) from the backend; the browser never receives a key:
+*The Simulicity IA start screen: choose to generate a city with AI, a
+random seed, or import a real map.*
 
-- **Create city with AI**: describe a city in the simulator panel; the model proposes a validated generation plan (seed, scale, building/park targets, height, lake and river scales) and the local procedural generator builds it.
-- **Intervention agent**: from measured simulator metrics, the model proposes bounded interventions (up to 12 auto-placed drains, early warning, reinforcement). The app applies them, reruns with the same seed and can iterate up to 3 times, citing only measured numbers.
+------------------------------------------------------------------------
 
-Set `META_API_KEY` (`LLM_...`) in `apps/backend/.env`, or save a per-user key through the BYOK routes. Without any key the demo still works: both features fall back to deterministic local plans and label themselves "Sin IA (local)". Each model call costs a fraction of a cent at standard rates and takes roughly 15-30 s.
+## What is it?
 
-## Start here
+Simulicity IA is a city simulator built with **Three.js**, **Next.js**,
+and **React**. It procedurally generates synthetic cities (terrain,
+water, streets, buildings, services, and citizens) and lets you run
+**deterministic hazards** on them. Because generation is deterministic
+per seed, you can compare the **before and after** of the same city
+under the same hazard, and measure the impact on buildings, population,
+and services.
 
-Use Node.js **22.23.2** (`.nvmrc`) and pnpm **10.32.1** (`package.json`). From the repository root:
+The project also includes a **real-district importer from
+OpenStreetMap**, and two optional AI features that propose city plans
+and mitigation interventions (with a local fallback when no API key is
+set).
 
-```bash
-pnpm install --frozen-lockfile
-pnpm dev
+> **Disclaimer**: this is an experimental project. It is not a
+> scientific prediction tool or a certified emergency-management system.
+> Coefficients are demonstrative and not calibrated.
+
+------------------------------------------------------------------------
+
+## Features
+
+-   **Procedural city generation**: terrain, rivers, lakes, streets,
+    blocks, buildings, parks, services, and population.
+-   **Deterministic hazards**: rain/flood, river overflow, tsunami,
+    earthquake, and strong wind.
+-   **Before/after comparison** with the same seed: same scenario, same
+    buildings, reproducible results.
+-   **Real-district import** from OpenStreetMap.
+-   **Optional AI** (Meta Model API) to propose city plans and
+    mitigation interventions. Without a key, it falls back to a local
+    plan labeled *"Sin IA (local)"*.
+-   **Measured metrics**: exposed buildings, trapped people, max water
+    depth, resilience score, etc.
+-   **Simulation panel** with generation controls, hazard selection, and
+    comparison.
+
+------------------------------------------------------------------------
+
+## Screenshots
+
+### City generation and simulation
+
+![City generation](assets/simulacionEnCurso.png)
+
+*A synthetic city generated procedurally, ready for simulation. The top
+bar shows the active hazard and the right panel displays live simulation
+metrics.*
+
+### Simulation summary
+
+![Simulation summary](assets/ResumenSimulacion.png)
+
+*After running a hazard, the app shows a detailed summary: evacuated
+population, trapped people, collapsed buildings, max water depth, and an
+analysis of the impact.*
+
+### Hazards and evacuation
+
+![Hazard and evacuation](assets/TerremotoEvacuacion.png)
+
+*Earthquake simulation at street level: buildings shake, debris falls,
+and citizens evacuate across the bridge.*
+
+### Real district import
+
+![OSM import](assets/ImportacionBarcelona.png)
+
+*Importing a real district (Barcelona's Eixample) from OpenStreetMap.
+The 3D model is generated automatically from the map data.*
+
+### AI-assisted interventions
+
+*\[Pending capture: assets/ai.png\]*
+
+*The intervention agent proposes bounded mitigations based on measured
+metrics, labeled "Sin IA (local)" when no API key is set.*
+
+------------------------------------------------------------------------
+
+## How it works (technical summary)
+
+1.  **Deterministic generation**: a seeded PRNG produces terrain,
+    streets, blocks, buildings, and population. The same seed always
+    produces the same city.
+2.  **Hazard simulation**: each hazard applies a deterministic model on
+    the city (water depth, structural damage, evacuation, etc.).
+3.  **Comparison**: because the city is reproducible, the "before" and
+    "after" states can be rendered side by side.
+4.  **Optional AI**: the backend (or the local fallback) proposes plans
+    and interventions from the measured metrics. Interventions are
+    applied, the simulation is re-run with the same seed, and results
+    are compared.
+
+------------------------------------------------------------------------
+
+## Stack
+
+  Layer              Technology
+  ------------------ -----------------------------------------
+  Frontend           Next.js, React, Tailwind, Three.js
+  City generation    Pure TypeScript (`@simulicity/cities`)
+  Hazards            Pure TypeScript (`@simulicity/hazards`)
+  Shared contracts   Zod (`@simulicity/shared`)
+  Monorepo           pnpm workspaces + Turbo
+  AI (optional)      Meta Model API (server-side)
+  Deploy             Vercel (frontend only)
+
+------------------------------------------------------------------------
+
+## Getting started
+
+Requirements: **Node.js 22.x** and **pnpm 10.x**.
+
+``` bash
+pnpm install
+pnpm --filter @simulicity/web dev
 ```
 
-The workspace and lockfile use `apps/frontend`, `apps/backend` and `packages/shared`. The lockfile records the exact resolved dependency versions so local development and CI install the same dependency graph.
+Open <http://localhost:3000>.
 
-Open **http://localhost:3000**. The homepage shows **Simulicity IA** and **Frontend implementation pending.** The command starts Next.js and Fastify together; stop both with `Ctrl+C`.
+### Environment variables (optional)
 
-No database, Docker, external account or API key is required. Defaults work without an `.env` file. To customize them, copy `.env.example` to `.env` only if `.env` does not already exist; do not overwrite local settings.
+If you want to use the AI features, you need a Meta Model API key.
+Without a key, the app still works and shows *"Sin IA (local)"*.
 
-| Application | Default address       | Current responsibility                    |
-| ----------- | --------------------- | ----------------------------------------- |
-| Web         | http://localhost:3000 | Neutral page and server-side health proxy |
-| API         | http://127.0.0.1:4000 | Liveness check                            |
-
-If port 3000 is occupied, leave the other process alone and use:
-
-```bash
-WEB_PORT=3100 CORS_ORIGINS=http://localhost:3100,http://127.0.0.1:3100 pnpm dev
+``` bash
+# apps/backend/.env (only if you keep the AI backend)
+META_API_KEY=LLM_...
 ```
 
-To change the API port, update `PORT` and the matching `API_URL` together. The [API guide](apps/backend/README.md) documents configuration and errors.
+> In the Vercel deployment (frontend only), AI features use the local
+> fallback.
 
-## What remains
+------------------------------------------------------------------------
 
-```text
+## Repository structure
+
+``` text
 apps/
-  frontend/  Next.js, React, Tailwind, neutral page and health proxy
-  backend/   Fastify server, configuration, errors, CORS and /health
+  frontend/        Next.js + Three.js + simulator UI
 packages/
-  shared/    Health response schema and TypeScript type only
-docs/
-  TEAM_CHECKLIST.md  Future work and team responsibilities
-  API_CATALOG.md     External services to evaluate, not integrations
-  ARCHITECTURE.md    Current boundaries and future decisions
+  cities/          Procedural city generator (deterministic)
+  hazards/         Hazard and evacuation models
+  shared/          Shared contracts and types (Zod)
+scenarios/         Example scenarios (JSON)
+assets/            Screenshots used in this README
 ```
 
-This is a monorepo: the applications and internal shared library live in one repository. Folder names and package names are separate: the frontend package is still `@simulicity/web`, and the backend package is still `@simulicity/api`.
+------------------------------------------------------------------------
 
-### Shared code and empty folders
+## Useful scripts
 
-`packages/shared` is not another server. It exports `healthSchema`, which validates the health response with Zod, and `Health`, its inferred TypeScript type. The backend and Next.js health proxy import the same definition rather than duplicate it. There are no city, scenario or simulation contracts yet.
-
-Empty component and state directories contain `.gitkeep` files so Git can retain the folder structure. These files do not execute anything and can be removed once real files are added. A `map` or `simulator` folder does not mean that feature exists.
-
-### Development tools
-
-| Tool              | Purpose                                                     |
-| ----------------- | ----------------------------------------------------------- |
-| pnpm workspaces   | Manage applications and internal packages with one lockfile |
-| Turbo             | Coordinate development, build and type-check tasks          |
-| TypeScript        | Check types during development                              |
-| ESLint / Prettier | Check code quality and formatting                           |
-| Vitest            | Run automated tests                                         |
-| GitHub Actions    | Run quality checks; no deployment is configured             |
-
-There are **no product demos, scenario models or routes, simulation engine, geographic utilities/importers, map configuration, AI adapter, Prisma schema or database container** in the current baseline. Map/3D/state/UI dependencies without consumers were removed. No stored database data was changed.
-
-## Current API reference
-
-With both applications running:
-
-```bash
-curl http://127.0.0.1:4000/health
-curl http://localhost:3000/api/health
+``` bash
+pnpm build        # build the whole monorepo
+pnpm lint         # ESLint
+pnpm typecheck    # TypeScript
+pnpm test         # Vitest
+pnpm format       # Prettier
 ```
 
-Both return:
+To build only the frontend (what Vercel does):
 
-```json
-{ "status": "ok", "service": "simulicity-api", "version": "0.1.0" }
+``` bash
+pnpm turbo run build --filter=@simulicity/web
 ```
 
-The web endpoint validates the upstream response and returns `502 API_UNAVAILABLE` when the API is unavailable or invalid. This connection does not add a visible status widget to the homepage.
+------------------------------------------------------------------------
 
-Previous `/api/v1/*` demo and placeholder routes were removed; they return `404 NOT_FOUND`. No simulation, persistence or AI operation is registered.
+## Deploy
 
-## Verify the baseline
+The frontend is deployed on **Vercel** with:
 
-```bash
-pnpm format:check
-pnpm lint
-pnpm typecheck
-pnpm test
-pnpm build
-```
+-   **Root Directory**: `apps/frontend`
+-   **Build Command**:
+    `cd ../.. && pnpm turbo run build --filter=@simulicity/web`
+-   **Install Command**: `cd ../.. && pnpm install --frozen-lockfile`
+-   **Environment variables**: none (AI features fall back to the local
+    plan)
 
-GitHub Actions runs these checks with a frozen dependency install. Tests cover the neutral homepage, shared health contract, API health/configuration/CORS/errors, absence of product routes and health proxy success/failure. A build is not evidence of a working simulator.
+The configuration lives in `apps/frontend/vercel.json`.
 
-The local, user-provided `Ideadelproyect.md` is excluded from automatic formatting so its original text and layout are preserved. The source code, maintained guides and configuration remain subject to formatting checks.
+------------------------------------------------------------------------
 
-## Build deliberately
+## Limitations and disclaimer
 
-Start with the [team checklist](docs/TEAM_CHECKLIST.md): agree on the idea and user journey, approve mockups, then define the first necessary shared contracts and implement a small feature.
+-   **Experimental** project: not a scientific prediction or a certified
+    emergency tool.
+-   Hazard coefficients are **demonstrative**, not calibrated against
+    real data.
+-   OpenStreetMap import depends on OSM data availability and quality.
+-   AI features are **optional** and not required to use the simulator.
 
-The [API catalog](docs/API_CATALOG.md) is a list of options to evaluate, not installed integrations or mandatory dependencies. The [architecture](docs/ARCHITECTURE.md) describes only the current baseline and identifies future choices. `Ideadelproyect.md` is user-provided local planning material and may not exist in a fresh clone.
+------------------------------------------------------------------------
 
-Database, geography, simulation and AI modules should be introduced when their first agreed requirement needs them. Their names and boundaries are proposals, not existing code. This experimental project is not a scientific prediction or certified emergency-management tool.
+## Demo video
+
+*\[https://www.youtube.com/watch?v=zcfY3OEeHbQ]*
+
+Suggested demo script:
+
+1.  **Intro (10 s)**: what Simulicity IA is and what problem it
+    explores.
+2.  **Generate a city (20 s)**: show the panel, pick a seed, generate.
+3.  **Run a hazard (30 s)**: select flood, show before/after and
+    metrics.
+4.  **Interventions (30 s)**: show the AI proposal (or the local
+    fallback), apply it, compare.
+5.  **Import a real district (20 s)**: load an OSM district and
+    simulate.
+6.  **Outro (10 s)**: limitations, stack, and repo link.
+
+------------------------------------------------------------------------
+
+## License
+
+*\[to be defined --- MIT, Apache 2.0, etc.\]*
+
+------------------------------------------------------------------------
+
+## Credits
+
+-   3D models: Kenney City Kit and Poly Haven (see
+    `apps/frontend/public/models/`).
+-   Real-district data: OpenStreetMap contributors.

@@ -11,10 +11,13 @@ export function resolveModel(
   return value ? value : DEFAULT_MODEL;
 }
 
-export function createMetaClient(apiKey: string): OpenAI {
+export function createMetaClient(
+  apiKey: string,
+  baseURL: string = META_BASE_URL,
+): OpenAI {
   return new OpenAI({
     apiKey,
-    baseURL: META_BASE_URL,
+    baseURL,
     timeout: 15000, // 15s
     maxRetries: 1,
   });

@@ -31,6 +31,11 @@ Do not expose this unauthenticated development API publicly. CORS is not authent
   disabled by default (`BYOK_ENABLED=false`) because the API has no
   authentication: a userId alone is an identifier, not a credential.
   Enable BYOK only on a trusted network until real authentication exists.
+- The server key can run on any OpenAI-compatible inference provider
+  (`AI_API_KEY` + `AI_BASE_URL` + `AI_MODEL`, taking precedence over
+  `META_API_KEY`): useful to spend hackathon partner credits (Fireworks,
+  Baseten, Modal) hosting Meta open-weights models once deployed, with
+  Meta's API remaining the default. BYOK keys always use the Meta API.
 - Provider errors are logged server-side and answered with generic
   messages; upstream error text is never returned to clients.
 - Before any public deployment: terminate TLS in front of the API, set

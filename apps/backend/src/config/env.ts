@@ -47,6 +47,14 @@ const configSchema = z.object({
     .regex(/^LLM_[A-Za-z0-9_-]+$/, 'META_API_KEY must start with LLM_')
     .optional(),
   META_MODEL: z.string().min(1).optional(),
+
+  // Optional: any OpenAI-compatible inference provider for the server
+  // key (e.g. hackathon partners hosting Meta open-weights models).
+  // When AI_API_KEY is set it takes precedence over META_API_KEY, and
+  // AI_BASE_URL / AI_MODEL select that provider's endpoint and model.
+  AI_API_KEY: z.string().min(1).optional(),
+  AI_BASE_URL: z.string().url().optional(),
+  AI_MODEL: z.string().min(1).optional(),
 });
 
 export interface ApiConfig {
@@ -58,6 +66,9 @@ export interface ApiConfig {
   byokEnabled: boolean;
   metaApiKey?: string | undefined;
   metaModel?: string | undefined;
+  aiApiKey?: string | undefined;
+  aiBaseUrl?: string | undefined;
+  aiModel?: string | undefined;
 }
 
 export function loadConfig(
@@ -79,5 +90,8 @@ export function loadConfig(
     byokEnabled: result.data.BYOK_ENABLED,
     metaApiKey: result.data.META_API_KEY,
     metaModel: result.data.META_MODEL,
+    aiApiKey: result.data.AI_API_KEY,
+    aiBaseUrl: result.data.AI_BASE_URL,
+    aiModel: result.data.AI_MODEL,
   };
 }

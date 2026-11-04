@@ -143,20 +143,43 @@ export async function registerAiRoutes(
     }
   });
 
-  // Resolves the caller's BYOK key first, then the server fallback key.
+  // Resolves the caller's BYOK key first, then the server key. A BYOK
+  // key is always a Meta key, so it keeps the Meta endpoint; the server
+  // key may belong to any configured OpenAI-compatible provider.
   // Returns null when AI is not configured at all.
-  async function resolveKey(userId?: string): Promise<string | null> {
+  async function resolveKey(userId?: string): Promise<{
+    key: string;
+    baseUrl?: string | undefined;
+    model?: string | undefined;
+  } | null> {
     if (userId && config.byokEnabled) {
       const stored = await repo.findByUserId(userId);
       if (stored) {
         try {
-          return decryptUserKey(stored.encryptedKey, config.byokMasterKey);
+          return {
+            key: decryptUserKey(stored.encryptedKey, config.byokMasterKey),
+          };
         } catch {
           return null;
         }
       }
     }
-    return config.metaApiKey ?? null;
+    if (config.aiApiKey) {
+      return {
+        key: config.aiApiKey,
+        ...(config.aiBaseUrl ? { baseUrl: config.aiBaseUrl } : {}),
+        ...((config.aiModel ?? config.metaModel)
+          ? { model: config.aiModel ?? config.metaModel }
+          : {}),
+      };
+    }
+    if (config.metaApiKey) {
+      return {
+        key: config.metaApiKey,
+        ...(config.metaModel ? { model: config.metaModel } : {}),
+      };
+    }
+    return null;
   }
 
   function aiError(
@@ -197,12 +220,13 @@ export async function registerAiRoutes(
         },
       });
     }
-    const key = await resolveKey(parsed.data.userId);
-    if (!key) return reply.status(503).send(NOT_CONFIGURED);
+    const resolved = await resolveKey(parsed.data.userId);
+    if (!resolved) return reply.status(503).send(NOT_CONFIGURED);
     try {
       const plan = await proposeCityPlan(parsed.data.description ?? null, {
-        userKey: key,
-        model: config.metaModel,
+        userKey: resolved.key,
+        model: resolved.model,
+        baseUrl: resolved.baseUrl,
       });
       return reply.send({ plan });
     } catch (err) {
@@ -221,12 +245,13 @@ export async function registerAiRoutes(
         },
       });
     }
-    const key = await resolveKey(parsed.data.userId);
-    if (!key) return reply.status(503).send(NOT_CONFIGURED);
+    const resolved = await resolveKey(parsed.data.userId);
+    if (!resolved) return reply.status(503).send(NOT_CONFIGURED);
     try {
       const plan = await proposeInterventions(parsed.data.context, {
-        userKey: key,
-        model: config.metaModel,
+        userKey: resolved.key,
+        model: resolved.model,
+        baseUrl: resolved.baseUrl,
       });
       return reply.send({ plan });
     } catch (err) {
@@ -245,12 +270,13 @@ export async function registerAiRoutes(
         },
       });
     }
-    const key = await resolveKey(parsed.data.userId);
-    if (!key) return reply.status(503).send(NOT_CONFIGURED);
+    const resolved = await resolveKey(parsed.data.userId);
+    if (!resolved) return reply.status(503).send(NOT_CONFIGURED);
     try {
       const replyText = await explainCitizen(parsed.data.context, {
-        userKey: key,
-        model: config.metaModel,
+        userKey: resolved.key,
+        model: resolved.model,
+        baseUrl: resolved.baseUrl,
       });
       return reply.send({ reply: replyText });
     } catch (err) {
@@ -269,12 +295,13 @@ export async function registerAiRoutes(
         },
       });
     }
-    const key = await resolveKey(parsed.data.userId);
-    if (!key) return reply.status(503).send(NOT_CONFIGURED);
+    const resolved = await resolveKey(parsed.data.userId);
+    if (!resolved) return reply.status(503).send(NOT_CONFIGURED);
     try {
       const result = await writeEmergencyReport(parsed.data.context, {
-        userKey: key,
-        model: config.metaModel,
+        userKey: resolved.key,
+        model: resolved.model,
+        baseUrl: resolved.baseUrl,
       });
       return reply.send({ report: result.report });
     } catch (err) {

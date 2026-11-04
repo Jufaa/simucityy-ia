@@ -179,3 +179,27 @@ describe('security hardening', () => {
     expect(res.headers['x-frame-options']).toBe('DENY');
   });
 });
+
+describe('inference provider configuration', () => {
+  it('routes the server key to a configured OpenAI-compatible provider', async () => {
+    const { proposeCityPlan } = await import('../../modules/ai/service');
+    const res = await makeApp({
+      AI_API_KEY: 'provider-key',
+      AI_BASE_URL: 'https://provider.example/v1',
+      AI_MODEL: 'llama-test',
+    }).inject({
+      method: 'POST',
+      url: '/ai/city-plan',
+      payload: { description: 'ciudad con rio' },
+    });
+    expect(res.statusCode).toBe(200);
+    expect(vi.mocked(proposeCityPlan)).toHaveBeenLastCalledWith(
+      'ciudad con rio',
+      {
+        userKey: 'provider-key',
+        baseUrl: 'https://provider.example/v1',
+        model: 'llama-test',
+      },
+    );
+  });
+});
