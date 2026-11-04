@@ -36,9 +36,7 @@ export function createDemoCompatibleScenario(
     yCoordinates.push(heightInMeters);
   }
 
-  const elevationsInMeters = yCoordinates.map(() =>
-    xCoordinates.map(() => 0),
-  );
+  const elevationsInMeters = yCoordinates.map(() => xCoordinates.map(() => 0));
 
   const centerX = widthInMeters / 2;
   const centerY = heightInMeters / 2;

@@ -170,8 +170,7 @@ export class DistrictSimulation {
     const structural = assessStructuralDamage(this.input, this.hazard, {
       seed: this.city.config.seed ?? 123,
       reinforced: improved && this.reinforcement,
-      ...(this.hazard === 'earthquake' &&
-      this.earthquakeMagnitude !== undefined
+      ...(this.hazard === 'earthquake' && this.earthquakeMagnitude !== undefined
         ? { magnitude: this.earthquakeMagnitude }
         : {}),
     });

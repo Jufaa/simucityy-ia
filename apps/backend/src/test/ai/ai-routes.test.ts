@@ -129,3 +129,53 @@ describe('POST /ai/citizen and /ai/report', () => {
     expect(report.json().report).toContain('Informe');
   });
 });
+
+describe('security hardening', () => {
+  it('hides BYOK key management while BYOK is disabled (default)', async () => {
+    const app = makeApp({ META_API_KEY: 'LLM_test_key' });
+    const save = await app.inject({
+      method: 'POST',
+      url: '/ai/keys',
+      payload: { userId: 'someone', apiKey: 'LLM_test_key' },
+    });
+    expect(save.statusCode).toBe(404);
+    const del = await app.inject({ method: 'DELETE', url: '/ai/keys/someone' });
+    expect(del.statusCode).toBe(404);
+    const chat = await app.inject({
+      method: 'POST',
+      url: '/ai/chat',
+      payload: { userId: 'someone', mode: 'auto', prompt: 'hola' },
+    });
+    expect(chat.statusCode).toBe(404);
+  });
+
+  it('does not echo provider details on validation errors', async () => {
+    const res = await makeApp({ META_API_KEY: 'LLM_test_key' }).inject({
+      method: 'POST',
+      url: '/ai/interventions',
+      payload: { context: { hazardKind: 'rain' } },
+    });
+    expect(res.statusCode).toBe(400);
+    expect(res.body).not.toContain('issues');
+  });
+
+  it('rate-limits AI routes per client', async () => {
+    const app = makeApp();
+    let lastStatus = 0;
+    for (let index = 0; index < 31; index++) {
+      const res = await app.inject({
+        method: 'POST',
+        url: '/ai/city-plan',
+        payload: { description: 'ciudad con rio' },
+      });
+      lastStatus = res.statusCode;
+    }
+    expect(lastStatus).toBe(429);
+  });
+
+  it('sends baseline security headers', async () => {
+    const res = await makeApp().inject({ method: 'GET', url: '/health' });
+    expect(res.headers['x-content-type-options']).toBe('nosniff');
+    expect(res.headers['x-frame-options']).toBe('DENY');
+  });
+});

@@ -34,6 +34,13 @@ const configSchema = z.object({
       'BYOK_MASTER_KEY must be 64 hex chars (32 bytes).',
     ),
 
+  // BYOK key storage is opt-in: without authentication, userId alone
+  // must never authorize using, replacing or deleting a stored key.
+  BYOK_ENABLED: z
+    .enum(['true', 'false'])
+    .default('false')
+    .transform((value) => value === 'true'),
+
   // Optional: global Meta API key as fallback
   META_API_KEY: z
     .string()
@@ -48,6 +55,7 @@ export interface ApiConfig {
   logLevel: z.infer<typeof configSchema>['LOG_LEVEL'];
   corsOrigins: string[];
   byokMasterKey: Buffer;
+  byokEnabled: boolean;
   metaApiKey?: string | undefined;
   metaModel?: string | undefined;
 }
@@ -68,6 +76,7 @@ export function loadConfig(
     logLevel: result.data.LOG_LEVEL,
     corsOrigins: result.data.CORS_ORIGINS,
     byokMasterKey: Buffer.from(result.data.BYOK_MASTER_KEY, 'hex'),
+    byokEnabled: result.data.BYOK_ENABLED,
     metaApiKey: result.data.META_API_KEY,
     metaModel: result.data.META_MODEL,
   };

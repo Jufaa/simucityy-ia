@@ -9,3 +9,6 @@ dist
 
 # Preserve the original formatting of the user-provided local planning source.
 /Ideadelproyect.md
+
+# Generated OpenStreetMap snapshot data (single-line JSON, 3+ MB).
+/apps/frontend/src/data/eixample-source.json

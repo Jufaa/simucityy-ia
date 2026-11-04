@@ -3,6 +3,7 @@ import { healthSchema } from '@simulicity/shared';
 import { registerErrorHandlers } from './common/errors';
 import { loadConfig, type ApiConfig } from './config/env';
 import { registerCors } from './plugins/cors';
+import { registerSecurity } from './plugins/security';
 import { registerAiRoutes } from './modules/ai/routes';
 import { registerCityRoutes } from './modules/cities/routes';
 
@@ -37,6 +38,7 @@ export function buildApp(config: ApiConfig = loadConfig(process.env)) {
           },
   });
   registerErrorHandlers(app);
+  registerSecurity(app);
   registerCors(app, config);
   registerCityRoutes(app);
 
