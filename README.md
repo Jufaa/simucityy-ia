@@ -4,14 +4,14 @@
 > hazards (floods, earthquakes, tsunamis, strong wind) with same-seed
 > before/after comparison and AI-assisted interventions.
 
-**Demo video:** _\[https://www.youtube.com/watch?v=zcfY3OEeHbQ]_
+**Demo video:** *\[https://www.youtube.com/watch?v=zcfY3OEeHbQ]*
 
 ![Simulicity IA overview](assets/MainMenu.png)
 
-_The Simulicity IA start screen: choose to generate a city with AI, a
-random seed, or import a real map._
+*The Simulicity IA start screen: choose to generate a city with AI, a
+random seed, or import a real map.*
 
----
+------------------------------------------------------------------------
 
 ## What is it?
 
@@ -32,26 +32,26 @@ set).
 > scientific prediction tool or a certified emergency-management system.
 > Coefficients are demonstrative and not calibrated.
 
----
+------------------------------------------------------------------------
 
 ## Features
 
-- **Procedural city generation**: terrain, rivers, lakes, streets,
-  blocks, buildings, parks, services, and population.
-- **Deterministic hazards**: rain/flood, river overflow, tsunami,
-  earthquake, and strong wind.
-- **Before/after comparison** with the same seed: same scenario, same
-  buildings, reproducible results.
-- **Real-district import** from OpenStreetMap.
-- **Optional AI** (Meta Model API) to propose city plans and
-  mitigation interventions. Without a key, it falls back to a local
-  plan labeled _"Sin IA (local)"_.
-- **Measured metrics**: exposed buildings, trapped people, max water
-  depth, resilience score, etc.
-- **Simulation panel** with generation controls, hazard selection, and
-  comparison.
+-   **Procedural city generation**: terrain, rivers, lakes, streets,
+    blocks, buildings, parks, services, and population.
+-   **Deterministic hazards**: rain/flood, river overflow, tsunami,
+    earthquake, and strong wind.
+-   **Before/after comparison** with the same seed: same scenario, same
+    buildings, reproducible results.
+-   **Real-district import** from OpenStreetMap.
+-   **Optional AI** (Meta Model API) to propose city plans and
+    mitigation interventions. Without a key, it falls back to a local
+    plan labeled *"Sin IA (local)"*.
+-   **Measured metrics**: exposed buildings, trapped people, max water
+    depth, resilience score, etc.
+-   **Simulation panel** with generation controls, hazard selection, and
+    comparison.
 
----
+------------------------------------------------------------------------
 
 ## Screenshots
 
@@ -59,40 +59,40 @@ set).
 
 ![City generation](assets/simulacionEnCurso.png)
 
-_A synthetic city generated procedurally, ready for simulation. The top
+*A synthetic city generated procedurally, ready for simulation. The top
 bar shows the active hazard and the right panel displays live simulation
-metrics._
+metrics.*
 
 ### Simulation summary
 
 ![Simulation summary](assets/ResumenSimulacion.png)
 
-_After running a hazard, the app shows a detailed summary: evacuated
+*After running a hazard, the app shows a detailed summary: evacuated
 population, trapped people, collapsed buildings, max water depth, and an
-analysis of the impact._
+analysis of the impact.*
 
 ### Hazards and evacuation
 
 ![Hazard and evacuation](assets/TerremotoEvacuacion.png)
 
-_Earthquake simulation at street level: buildings shake, debris falls,
-and citizens evacuate across the bridge._
+*Earthquake simulation at street level: buildings shake, debris falls,
+and citizens evacuate across the bridge.*
 
 ### Real district import
 
 ![OSM import](assets/ImportacionBarcelona.png)
 
-_Importing a real district (Barcelona's Eixample) from OpenStreetMap.
-The 3D model is generated automatically from the map data._
+*Importing a real district (Barcelona's Eixample) from OpenStreetMap.
+The 3D model is generated automatically from the map data.*
 
 ### AI-assisted interventions
 
-_\[Pending capture: assets/ai.png\]_
+*\[Pending capture: assets/ai.png\]*
 
-_The intervention agent proposes bounded mitigations based on measured
-metrics, labeled "Sin IA (local)" when no API key is set._
+*The intervention agent proposes bounded mitigations based on measured
+metrics, labeled "Sin IA (local)" when no API key is set.*
 
----
+------------------------------------------------------------------------
 
 ## How it works (technical summary)
 
@@ -108,29 +108,27 @@ metrics, labeled "Sin IA (local)" when no API key is set._
     applied, the simulation is re-run with the same seed, and results
     are compared.
 
----
+------------------------------------------------------------------------
 
 ## Stack
 
-Layer Technology
+  Layer              Technology
+  ------------------ -----------------------------------------
+  Frontend           Next.js, React, Tailwind, Three.js
+  City generation    Pure TypeScript (`@simulicity/cities`)
+  Hazards            Pure TypeScript (`@simulicity/hazards`)
+  Shared contracts   Zod (`@simulicity/shared`)
+  Monorepo           pnpm workspaces + Turbo
+  AI (optional)      Meta Model API (server-side)
+  Deploy             Vercel (frontend only)
 
----
-
-Frontend Next.js, React, Tailwind, Three.js
-City generation Pure TypeScript (`@simulicity/cities`)
-Hazards Pure TypeScript (`@simulicity/hazards`)
-Shared contracts Zod (`@simulicity/shared`)
-Monorepo pnpm workspaces + Turbo
-AI (optional) Meta Model API (server-side)
-Deploy Vercel (frontend only)
-
----
+------------------------------------------------------------------------
 
 ## Getting started
 
 Requirements: **Node.js 22.x** and **pnpm 10.x**.
 
-```bash
+``` bash
 pnpm install
 pnpm --filter @simulicity/web dev
 ```
@@ -140,9 +138,9 @@ Open <http://localhost:3000>.
 ### Environment variables (optional)
 
 If you want to use the AI features, you need a Meta Model API key.
-Without a key, the app still works and shows _"Sin IA (local)"_.
+Without a key, the app still works and shows *"Sin IA (local)"*.
 
-```bash
+``` bash
 # apps/backend/.env (only if you keep the AI backend)
 META_API_KEY=LLM_...
 ```
@@ -150,11 +148,11 @@ META_API_KEY=LLM_...
 > In the Vercel deployment (frontend only), AI features use the local
 > fallback.
 
----
+------------------------------------------------------------------------
 
 ## Repository structure
 
-```text
+``` text
 apps/
   frontend/        Next.js + Three.js + simulator UI
 packages/
@@ -165,11 +163,11 @@ scenarios/         Example scenarios (JSON)
 assets/            Screenshots used in this README
 ```
 
----
+------------------------------------------------------------------------
 
 ## Useful scripts
 
-```bash
+``` bash
 pnpm build        # build the whole monorepo
 pnpm lint         # ESLint
 pnpm typecheck    # TypeScript
@@ -179,41 +177,41 @@ pnpm format       # Prettier
 
 To build only the frontend (what Vercel does):
 
-```bash
+``` bash
 pnpm turbo run build --filter=@simulicity/web
 ```
 
----
+------------------------------------------------------------------------
 
 ## Deploy
 
 The frontend is deployed on **Vercel** with:
 
-- **Root Directory**: `apps/frontend`
-- **Build Command**:
-  `cd ../.. && pnpm turbo run build --filter=@simulicity/web`
-- **Install Command**: `cd ../.. && pnpm install --frozen-lockfile`
-- **Environment variables**: none (AI features fall back to the local
-  plan)
+-   **Root Directory**: `apps/frontend`
+-   **Build Command**:
+    `cd ../.. && pnpm turbo run build --filter=@simulicity/web`
+-   **Install Command**: `cd ../.. && pnpm install --frozen-lockfile`
+-   **Environment variables**: none (AI features fall back to the local
+    plan)
 
 The configuration lives in `apps/frontend/vercel.json`.
 
----
+------------------------------------------------------------------------
 
 ## Limitations and disclaimer
 
-- **Experimental** project: not a scientific prediction or a certified
-  emergency tool.
-- Hazard coefficients are **demonstrative**, not calibrated against
-  real data.
-- OpenStreetMap import depends on OSM data availability and quality.
-- AI features are **optional** and not required to use the simulator.
+-   **Experimental** project: not a scientific prediction or a certified
+    emergency tool.
+-   Hazard coefficients are **demonstrative**, not calibrated against
+    real data.
+-   OpenStreetMap import depends on OSM data availability and quality.
+-   AI features are **optional** and not required to use the simulator.
 
----
+------------------------------------------------------------------------
 
 ## Demo video
 
-_\[https://www.youtube.com/watch?v=zcfY3OEeHbQ]_
+*\[https://www.youtube.com/watch?v=zcfY3OEeHbQ]*
 
 Suggested demo script:
 
@@ -228,16 +226,16 @@ Suggested demo script:
     simulate.
 6.  **Outro (10 s)**: limitations, stack, and repo link.
 
----
+------------------------------------------------------------------------
 
 ## License
 
-_\[to be defined --- MIT, Apache 2.0, etc.\]_
+*\[to be defined --- MIT, Apache 2.0, etc.\]*
 
----
+------------------------------------------------------------------------
 
 ## Credits
 
-- 3D models: Kenney City Kit and Poly Haven (see
-  `apps/frontend/public/models/`).
-- Real-district data: OpenStreetMap contributors.
+-   3D models: Kenney City Kit and Poly Haven (see
+    `apps/frontend/public/models/`).
+-   Real-district data: OpenStreetMap contributors.
