@@ -56,7 +56,7 @@ const chipStyle: CSSProperties = {
 };
 
 const PRESETS: { label: string; center: LatLon }[] = [
-  { label: 'Eixample, Barcelona', center: { lat: 41.3955, lon: 2.164 } },
+  { label: 'Example, Barcelona', center: { lat: 41.3955, lon: 2.164 } },
   { label: 'Gràcia, Barcelona', center: { lat: 41.402, lon: 2.1565 } },
   { label: 'Centro, Madrid', center: { lat: 40.4168, lon: -3.7038 } },
   { label: 'Ciutat Vella, València', center: { lat: 39.4699, lon: -0.3763 } },
@@ -115,13 +115,21 @@ export function RealCityImporter(props: {
     try {
       const saved = await getSavedZone(summary.id);
       if (!saved) throw new Error('La zona guardada ya no está disponible.');
-      setStage(`Cargando «${saved.name}» guardada…`);
+      setStage(
+        tx(
+          `Loading saved "${saved.name}"…`,
+          `Cargando «${saved.name}» guardada…`,
+        ),
+      );
       const { city } = createRealCity(saved.source, {
         infillSyntheticHouses: saved.infillSyntheticHouses,
       });
       props.onImported(city);
       setStage(
-        `Zona guardada lista: ${city.buildings.length} edificios, ${city.roads.length} tramos. La simulación ya corre sobre esta zona.`,
+        tx(
+          `Saved zone ready: ${city.buildings.length} buildings, ${city.roads.length} road segments. The simulation is now running on this zone.`,
+          `Zona guardada lista: ${city.buildings.length} edificios, ${city.roads.length} tramos. La simulación ya corre sobre esta zona.`,
+        ),
       );
     } catch (error) {
       setImportError(
@@ -184,7 +192,10 @@ export function RealCityImporter(props: {
       setViewCenter(centre);
       setSelection((current) => ({ ...current, center: centre }));
       setStage(
-        `Plano cargado: ${parsed.elements.length} elementos (${parsed.skippedCount} omitidos). Arrastrá el cuadrado para recortar la zona.`,
+        tx(
+          `Plan loaded: ${parsed.elements.length} elements (${parsed.skippedCount} skipped). Drag the square to crop the zone.`,
+          `Plano cargado: ${parsed.elements.length} elementos (${parsed.skippedCount} omitidos). Arrastrá el cuadrado para recortar la zona.`,
+        ),
       );
     } catch (error) {
       setPlan(null);
@@ -206,13 +217,24 @@ export function RealCityImporter(props: {
           ? await sourceFromPlan(
               plan!,
               bbox,
-              planName || 'Plano subido',
+              planName || tx('Uploaded plan', 'Plano subido'),
               useRealDem,
               setStage,
+              language,
             )
-          : await fetchOsmSource(bbox, placeName || 'Zona elegida', setStage);
+          : await fetchOsmSource(
+              bbox,
+              placeName || tx('Selected zone', 'Zona elegida'),
+              setStage,
+              language,
+            );
       if (request !== requestRef.current) return;
-      setStage('Convirtiendo a ciudad simulable…');
+      setStage(
+        tx(
+          'Converting into a simulatable city…',
+          'Convirtiendo a ciudad simulable…',
+        ),
+      );
       const { city } = createRealCity(source, {
         infillSyntheticHouses: infill,
       });
@@ -222,8 +244,8 @@ export function RealCityImporter(props: {
       void saveSavedZone({
         name:
           tab === 'plan'
-            ? planName || 'Plano subido'
-            : placeName || 'Zona elegida',
+            ? planName || tx('Uploaded plan', 'Plano subido')
+            : placeName || tx('Selected zone', 'Zona elegida'),
         kind: tab === 'plan' ? 'plan' : 'osm',
         buildingCount: city.buildings.length,
         roadCount: city.roads.length,
@@ -233,14 +255,26 @@ export function RealCityImporter(props: {
         .then(refreshSavedZones)
         .catch(() => {});
       setStage(
-        `Zona lista: ${city.buildings.length} edificios, ${city.roads.length} tramos, ${city.citizens?.length ?? 0} personas sintéticas. La simulación ya corre sobre esta zona.` +
+        tx(
+          `Zone ready: ${city.buildings.length} buildings, ${city.roads.length} road segments, ${city.citizens?.length ?? 0} synthetic people. The simulation is now running on this zone.`,
+          `Zona lista: ${city.buildings.length} edificios, ${city.roads.length} tramos, ${city.citizens?.length ?? 0} personas sintéticas. La simulación ya corre sobre esta zona.`,
+        ) +
           (city.real && city.real.syntheticBuildings > 0
-            ? ` Incluye ${city.real.syntheticBuildings} casas sintéticas de relleno (no son datos reales).`
+            ? tx(
+                ` It includes ${city.real.syntheticBuildings} synthetic infill houses (not real data).`,
+                ` Incluye ${city.real.syntheticBuildings} casas sintéticas de relleno (no son datos reales).`,
+              )
             : '') +
           (city.buildings.length < 150
-            ? ' Ojo: la fuente trae pocos edificios cargados para esta zona (la cobertura de OpenStreetMap varía mucho por ciudad); se representa lo que existe en los datos. Podés agrandar el cuadrado o activar el relleno sintético.'
+            ? tx(
+                ' Note: the source has few buildings loaded for this zone (OpenStreetMap coverage varies a lot by city); what exists in the data is what is shown. You can enlarge the square or enable synthetic infill.',
+                ' Ojo: la fuente trae pocos edificios cargados para esta zona (la cobertura de OpenStreetMap varía mucho por ciudad); se representa lo que existe en los datos. Podés agrandar el cuadrado o activar el relleno sintético.',
+              )
             : '') +
-          ' Quedó guardada en este navegador para acceso rápido.',
+          tx(
+            ' It was saved in this browser for quick access.',
+            ' Quedó guardada en este navegador para acceso rápido.',
+          ),
       );
     } catch (error) {
       if (request !== requestRef.current) return;
@@ -258,7 +292,11 @@ export function RealCityImporter(props: {
       aria-label={tx('Import a real zone', 'Importar zona real')}
       style={{ margin: '4px 0' }}
     >
-      {busy && <LoadingScreen message={stage ?? 'Importando la zona…'} />}
+      {busy && (
+        <LoadingScreen
+          message={stage ?? tx('Importing the zone…', 'Importando la zona…')}
+        />
+      )}
       <p style={{ fontSize: 12, marginTop: 0 }}>
         {tx(
           'Search a city or neighborhood, or upload your GeoJSON plan. Drag the square on the map to choose where the fixed zone goes (1000 m per side) and load it into the simulation. Free data: © OpenStreetMap (ODbL) and Terrarium DEM.',

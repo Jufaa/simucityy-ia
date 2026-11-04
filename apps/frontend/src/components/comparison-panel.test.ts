@@ -28,11 +28,11 @@ it('labels cumulative and matched metrics and never displays unfinished evacuati
       total: 12,
     }),
   );
-  expect(html).toContain('Sin mejora');
-  expect(html).toContain('Con mejora');
-  expect(html).toContain('No completada');
+  expect(html).toContain('Without improvement');
+  expect(html).toContain('With improvement');
+  expect(html).toContain('Not completed');
   expect(html).toContain('2.0 min');
-  expect(html).toContain('Edificios expuestos (acum.)');
+  expect(html).toContain('Exposed buildings (cumulative)');
 });
 
 it('does not imply evacuation is active when population behavior is disabled', () => {
@@ -58,7 +58,7 @@ it('does not imply evacuation is active when population behavior is disabled', (
       evacuationEnabled: false,
     }),
   );
-  expect(html).toContain('comportamiento automático desactivado');
-  expect(html).not.toContain('Evacuados');
-  expect(html).not.toContain('Evacuación desde alarma');
+  expect(html).toContain('automatic behavior disabled');
+  expect(html).not.toContain('Evacuated');
+  expect(html).not.toContain('Evacuation from alarm');
 });

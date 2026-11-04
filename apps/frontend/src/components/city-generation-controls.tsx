@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { CityGenerationMode } from './city-generation-preset';
 import { pick, useLanguage } from './language';
+import { simField, simGhostButton, simPrimaryButton } from './ui-theme';
 
 export function parseCitySeed(value: string): number | null {
   if (!/^\d+$/.test(value)) return null;
@@ -42,6 +43,7 @@ export function CityGenerationControls(props: {
         <label style={{ display: 'block', marginBottom: 8 }}>
           {tx('Urban scale', 'Escala urbana')}{' '}
           <select
+            style={simField}
             aria-label={tx('Urban scale', 'Escala urbana')}
             value={props.mode ?? 'district'}
             onChange={(event) => {
@@ -57,7 +59,7 @@ export function CityGenerationControls(props: {
           </select>
         </label>
       )}
-      <button type="button" onClick={props.onRandom}>
+      <button type="button" style={simGhostButton} onClick={props.onRandom}>
         {tx('Random city', 'Ciudad aleatoria')}
       </button>
       <form
@@ -74,10 +76,14 @@ export function CityGenerationControls(props: {
             inputMode="numeric"
             value={seed}
             onChange={(event) => setSeed(event.target.value)}
-            style={{ width: 110 }}
+            style={{ ...simField, width: 110, padding: '6px 8px' }}
           />
         </label>
-        <button type="submit" disabled={parsed === null}>
+        <button
+          type="submit"
+          style={simPrimaryButton}
+          disabled={parsed === null}
+        >
           {tx('Rebuild city', 'Reproducir ciudad')}
         </button>
       </form>

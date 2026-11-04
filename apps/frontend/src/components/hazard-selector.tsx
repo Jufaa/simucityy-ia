@@ -1,7 +1,7 @@
 import type { CSSProperties } from 'react';
 import { pick, useLanguage } from './language';
 
-const HAZARD_LABELS: Record<HazardKind, { en: string; es: string }> = {
+export const HAZARD_LABELS: Record<HazardKind, { en: string; es: string }> = {
   rain: { en: 'Intense rain', es: 'Lluvia intensa' },
   'river-overflow': { en: 'River overflow', es: 'Desborde de río' },
   tsunami: { en: 'Tsunami', es: 'Tsunami' },
@@ -13,6 +13,32 @@ import {
   HAZARD_PRESETS,
   type HazardKind,
 } from '@simulicity/hazards';
+
+export const HAZARD_DESCRIPTIONS: Record<
+  HazardKind,
+  { en: string; es: string }
+> = {
+  rain: {
+    en: 'Uniform rain at 120 mm/h; water collects in low areas and cuts off streets.',
+    es: 'Lluvia uniforme de 120 mm/h; el agua se acumula en las zonas bajas y corta calles.',
+  },
+  'river-overflow': {
+    en: 'The channel and lake start with water and the rain pushes it over the banks into the neighborhoods.',
+    es: 'El cauce y el lago parten con agua y la lluvia la empuja sobre las orillas hacia los barrios.',
+  },
+  tsunami: {
+    en: 'A wave enters from the sea (west edge) and moves inland losing height.',
+    es: 'Una ola entra desde el mar (borde oeste) y avanza tierra adentro perdiendo altura.',
+  },
+  earthquake: {
+    en: 'Instant shaking: damages buildings near the epicenter and blocks streets with debris.',
+    es: 'Sacudida instantánea: daña edificios cerca del epicentro y bloquea calles con escombros.',
+  },
+  'strong-wind': {
+    en: 'Gusts of 110 km/h: damage tall buildings first and cut streets with debris.',
+    es: 'Rachas de 110 km/h: dañan primero los edificios altos y cortan calles con restos.',
+  },
+};
 
 const detail = (
   kind: HazardKind,
@@ -77,7 +103,6 @@ export function HazardSelector(props: {
         {pick(language, 'Hazard', 'Catástrofe')}
       </legend>
       {HAZARD_KINDS.map((kind) => {
-        const preset = HAZARD_PRESETS[kind];
         const selected = props.value === kind;
         return (
           <button
@@ -85,7 +110,7 @@ export function HazardSelector(props: {
             type="button"
             aria-pressed={selected}
             aria-label={`${pick(language, 'Hazard', 'Catástrofe')}: ${HAZARD_LABELS[kind][language]}`}
-            title={preset.description}
+            title={HAZARD_DESCRIPTIONS[kind][language]}
             style={buttonStyle(selected)}
             onClick={() => props.onChange(kind)}
           >

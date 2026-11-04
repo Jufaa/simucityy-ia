@@ -1,6 +1,12 @@
 import { useEffect, useState } from 'react';
 import type { WorldCameraView, WorldLayerName } from './world-layer';
 import { pick, useLanguage } from './language';
+import {
+  simField,
+  simGhostButton,
+  simPrimaryButton,
+  simTheme,
+} from './ui-theme';
 
 export function WorldControls({
   seed,
@@ -38,9 +44,9 @@ export function WorldControls({
       style={{
         margin: '12px 0',
         padding: 12,
-        border: '1px solid #c7d5bd',
+        border: `1px solid ${simTheme.border}`,
         borderRadius: 8,
-        background: '#f3f7ee',
+        background: simTheme.fieldBackground,
         fontSize: 12,
       }}
     >
@@ -83,10 +89,10 @@ export function WorldControls({
             value={draft}
             readOnly={!onSeed}
             onChange={(event) => setDraft(event.target.value)}
-            style={{ width: 110, border: '1px solid #a8b6a0', padding: 4 }}
+            style={{ ...simField, width: 110, padding: '6px 8px' }}
           />
         </label>{' '}
-        <button type="submit" disabled={!onSeed}>
+        <button type="submit" style={simGhostButton} disabled={!onSeed}>
           {tx('Apply', 'Aplicar')}
         </button>
       </form>
@@ -101,14 +107,7 @@ export function WorldControls({
       <button
         type="button"
         onClick={onGenerate}
-        style={{
-          margin: '8px 0',
-          padding: '6px 10px',
-          background: '#426f49',
-          color: 'white',
-          border: 0,
-          borderRadius: 5,
-        }}
+        style={{ ...simPrimaryButton, margin: '8px 0' }}
       >
         {tx('Generate another surroundings', 'Generar otro entorno')}
       </button>
@@ -117,6 +116,7 @@ export function WorldControls({
           <label key={name}>
             <input
               type="checkbox"
+              style={{ accentColor: simTheme.accent }}
               checked={visible[name]}
               onChange={(event) => onLayer(name, event.target.checked)}
             />{' '}
@@ -127,6 +127,7 @@ export function WorldControls({
       <div style={{ display: 'flex', gap: 8, marginTop: 8 }}>
         <button
           type="button"
+          style={simGhostButton}
           aria-pressed={view === 'world'}
           onClick={() => onView('world')}
         >
@@ -134,6 +135,7 @@ export function WorldControls({
         </button>
         <button
           type="button"
+          style={simGhostButton}
           aria-pressed={view === 'city'}
           onClick={() => onView('city')}
         >

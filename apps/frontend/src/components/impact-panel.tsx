@@ -1,3 +1,5 @@
+import { pick, useLanguage } from './language';
+import { simTheme } from './ui-theme';
 import type { ImpactSummary } from './impact-summary';
 
 export function ImpactPanel({
@@ -7,32 +9,37 @@ export function ImpactPanel({
   summary: ImpactSummary;
   narrative: string[];
 }) {
+  const language = useLanguage();
+  const tx = (en: string, es: string) => pick(language, en, es);
   const metrics: [string, string][] = [
     [
-      'Personas evacuadas',
+      tx('Evacuated people', 'Personas evacuadas'),
       `${summary.evacuated} / ${summary.totalCitizens} (${summary.evacuatedPercent}%)`,
     ],
     [
-      'Edificios expuestos',
+      tx('Exposed buildings', 'Edificios expuestos'),
       `${summary.exposedBuildings} (${summary.exposedPercent}%)`,
     ],
-    ['Tramos bloqueados', String(summary.blockedRoads)],
-    ['Agua máxima', `${(summary.maxWaterDepthInMeters * 100).toFixed(1)} cm`],
-    ['Tiempo simulado', `${summary.elapsedMinutes} min`],
+    [tx('Blocked segments', 'Tramos bloqueados'), String(summary.blockedRoads)],
+    [
+      tx('Max water', 'Agua máxima'),
+      `${(summary.maxWaterDepthInMeters * 100).toFixed(1)} cm`,
+    ],
+    [tx('Simulated time', 'Tiempo simulado'), `${summary.elapsedMinutes} min`],
   ];
   return (
     <section
-      aria-label="Impacto del evento"
+      aria-label={tx('Event impact', 'Impacto del evento')}
       style={{
         margin: '12px 0',
         padding: 12,
-        border: '1px solid #b9c8e8',
+        border: `1px solid ${simTheme.border}`,
         borderRadius: 8,
-        background: '#eef3fd',
+        background: simTheme.fieldBackground,
         fontSize: 13,
       }}
     >
-      <strong>Impacto del evento</strong>
+      <strong>{tx('Event impact', 'Impacto del evento')}</strong>
       <dl
         style={{
           display: 'grid',
@@ -43,7 +50,7 @@ export function ImpactPanel({
       >
         {metrics.map(([label, value]) => (
           <div key={label}>
-            <dt style={{ fontSize: 11, color: '#44506b' }}>{label}</dt>
+            <dt style={{ fontSize: 11, color: simTheme.muted }}>{label}</dt>
             <dd style={{ margin: 0, fontSize: 17, fontWeight: 700 }}>
               {value}
             </dd>
@@ -55,7 +62,12 @@ export function ImpactPanel({
           {line}
         </p>
       ))}
-      <small>Relato generado desde los datos de la simulación, sin IA.</small>
+      <small>
+        {tx(
+          'Account generated from simulation data, without AI.',
+          'Relato generado desde los datos de la simulación, sin IA.',
+        )}
+      </small>
     </section>
   );
 }

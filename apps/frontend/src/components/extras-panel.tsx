@@ -2,6 +2,7 @@ import { useState } from 'react';
 import type { AlertMessage } from './alerts';
 import type { CitizenVoiceResult } from './citizen-voice';
 import { pick, useLanguage } from './language';
+import { simField, simPrimaryButton, simTheme } from './ui-theme';
 
 /** Simulated municipal WhatsApp thread, fed only by measured event state. */
 export function WhatsAppPanel(props: { messages: AlertMessage[] }) {
@@ -213,7 +214,7 @@ export function CitizenVoicePanel(props: {
           aria-label={pick(language, 'Person to ask', 'Persona a preguntar')}
           value={citizenId}
           onChange={(event) => setSelected(event.target.value)}
-          style={{ maxWidth: '100%' }}
+          style={{ ...simField, maxWidth: '100%' }}
         >
           {props.citizens.slice(0, 60).map((citizen) => (
             <option key={citizen.id} value={citizen.id}>
@@ -226,7 +227,7 @@ export function CitizenVoicePanel(props: {
         type="button"
         disabled={props.busy || !citizenId}
         onClick={() => props.onAsk(citizenId)}
-        style={{ marginTop: 6 }}
+        style={{ ...simPrimaryButton, marginTop: 6 }}
       >
         {props.busy
           ? pick(language, 'Asking…', 'Preguntando…')
@@ -237,13 +238,14 @@ export function CitizenVoicePanel(props: {
           style={{
             margin: '8px 0 0',
             padding: '8px 10px',
-            background: '#eef6f3',
+            background: simTheme.fieldBackground,
+            border: `1px solid ${simTheme.border}`,
             borderRadius: 8,
             fontSize: 12.5,
           }}
         >
           “{props.answer.text}”
-          <footer style={{ fontSize: 11, color: '#425466' }}>
+          <footer style={{ fontSize: 11, color: simTheme.muted }}>
             {props.answer.citizenId} ·{' '}
             {props.answer.source === 'meta'
               ? 'Meta AI'

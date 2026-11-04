@@ -5,6 +5,7 @@ import {
   type RealCitySource,
 } from './real-city-model';
 import { latLonToWorldPixels, type LatLon } from './map-projection';
+import { pick, type AppLanguage } from './language';
 
 /**
  * Browser-side acquisition for user-chosen real zones. All sources are free
@@ -191,6 +192,7 @@ export async function fetchOsmSource(
   bbox: Bbox,
   name: string,
   onStage?: (stage: string) => void,
+  language: AppLanguage = 'es',
 ): Promise<RealCitySource> {
   const query = `[out:json][timeout:120];
 (
@@ -236,7 +238,13 @@ out geom;`;
     for (const endpoint of OVERPASS_ENDPOINTS) {
       for (let attempt = 1; attempt <= attemptsPerEndpoint; attempt++) {
         try {
-          onStage?.(`${stageLabel} (intento ${attempt})…`);
+          onStage?.(
+            pick(
+              language,
+              `${stageLabel} (attempt ${attempt})…`,
+              `${stageLabel} (intento ${attempt})…`,
+            ),
+          );
           const response = await fetch(endpoint, {
             method: 'POST',
             headers: {
@@ -254,14 +262,20 @@ out geom;`;
         }
       }
     }
-    throw lastError instanceof Error ? lastError : new Error('sin respuesta');
+    throw lastError instanceof Error
+      ? lastError
+      : new Error(pick(language, 'no response', 'sin respuesta'));
   };
   // The three downloads are independent: run them concurrently instead of
   // queueing parts and DEM behind the main query. Same data, same render
   // quality, roughly the slowest single download instead of their sum.
   const partsPromise = fetchOverpass(
     `[out:json][timeout:90];(way["building:part"](${bbox.south},${bbox.west},${bbox.north},${bbox.east});relation["building:part"](${bbox.south},${bbox.west},${bbox.north},${bbox.east}););out geom;`,
-    'Descargando detalle 3D de monumentos',
+    pick(
+      language,
+      'Downloading 3D landmark detail',
+      'Descargando detalle 3D de monumentos',
+    ),
     1,
     90000,
   ).catch(() => null);
@@ -271,12 +285,20 @@ out geom;`;
   try {
     osm = await fetchOverpass(
       query,
-      'Descargando calles y edificios de OpenStreetMap',
+      pick(
+        language,
+        'Downloading streets and buildings from OpenStreetMap',
+        'Descargando calles y edificios de OpenStreetMap',
+      ),
       2,
     );
   } catch (error) {
     throw new Error(
-      `No se pudo descargar la zona desde OpenStreetMap (${error instanceof Error ? error.message : 'sin respuesta'}). Probá de nuevo en unos segundos.`,
+      pick(
+        language,
+        `Could not download the zone from OpenStreetMap (${error instanceof Error ? error.message : 'no response'}). Please try again in a few seconds.`,
+        `No se pudo descargar la zona desde OpenStreetMap (${error instanceof Error ? error.message : 'sin respuesta'}). Probá de nuevo en unos segundos.`,
+      ),
       { cause: error },
     );
   }
@@ -290,7 +312,11 @@ out geom;`;
     };
   else
     onStage?.(
-      'El detalle 3D de monumentos tardó demasiado; la zona entra sin torres.',
+      pick(
+        language,
+        'The 3D landmark detail took too long; the zone loads without towers.',
+        'El detalle 3D de monumentos tardó demasiado; la zona entra sin torres.',
+      ),
     );
   const roundPoint = (point: { lat: number; lon: number }) => ({
     lat: Math.round(point.lat * 1e7) / 1e7,
@@ -344,8 +370,20 @@ out geom;`;
     },
   );
   if (!elements.some((element) => element.tags?.highway))
-    throw new Error('La zona elegida no devolvió calles utilizables.');
-  onStage?.('Descargando el relieve (DEM)…');
+    throw new Error(
+      pick(
+        language,
+        'The selected zone returned no usable streets.',
+        'La zona elegida no devolvió calles utilizables.',
+      ),
+    );
+  onStage?.(
+    pick(
+      language,
+      'Downloading terrain elevation (DEM)…',
+      'Descargando el relieve (DEM)…',
+    ),
+  );
   const sampler = await demSamplerPromise;
   return {
     name,
@@ -606,20 +644,45 @@ export async function sourceFromPlan(
   name: string,
   useRealDem: boolean,
   onStage?: (stage: string) => void,
+  language: AppLanguage = 'es',
 ): Promise<RealCitySource> {
   const elements = filterElementsToBbox(plan.elements, bbox);
   if (!elements.some((element) => element.tags?.building))
-    throw new Error('La zona recortada del plano no contiene edificios.');
+    throw new Error(
+      pick(
+        language,
+        'The cropped plan area contains no buildings.',
+        'La zona recortada del plano no contiene edificios.',
+      ),
+    );
   if (!elements.some((element) => element.tags?.highway))
-    throw new Error('La zona recortada del plano no contiene calles.');
+    throw new Error(
+      pick(
+        language,
+        'The cropped plan area contains no streets.',
+        'La zona recortada del plano no contiene calles.',
+      ),
+    );
   let dem: RealCitySource['dem'];
   if (useRealDem) {
     try {
-      onStage?.('Descargando el relieve (DEM)…');
+      onStage?.(
+        pick(
+          language,
+          'Downloading terrain elevation (DEM)…',
+          'Descargando el relieve (DEM)…',
+        ),
+      );
       const sampler = await loadTerrariumElevationSampler(bbox);
       dem = buildDemGrid(bbox, 20, sampler, 'terrarium-tiles-z15');
     } catch {
-      onStage?.('Sin relieve disponible: se usa terreno plano a cota 0.');
+      onStage?.(
+        pick(
+          language,
+          'No elevation data available: using flat terrain at elevation 0.',
+          'Sin relieve disponible: se usa terreno plano a cota 0.',
+        ),
+      );
       dem = flatDemGrid(bbox, 20);
     }
   } else {

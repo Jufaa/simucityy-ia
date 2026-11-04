@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import type { AiCityPlanResult } from './ai-city';
 import { pick, useLanguage } from './language';
+import { simField, simPrimaryButton } from './ui-theme';
 
 export interface AgentHistoryEntry {
   iteration: number;
@@ -48,7 +49,12 @@ export function AiCityPanel(props: {
         value={description}
         onChange={(event) => setDescription(event.target.value)}
         rows={3}
-        style={{ width: '100%', boxSizing: 'border-box' }}
+        style={{
+          ...simField,
+          width: '100%',
+          boxSizing: 'border-box',
+          padding: 8,
+        }}
         placeholder={pick(
           language,
           'A coastal city with a wide river, low buildings and lots of parks',
@@ -59,7 +65,7 @@ export function AiCityPanel(props: {
         type="button"
         disabled={props.busy}
         onClick={() => props.onCreate(description)}
-        style={{ marginTop: 6 }}
+        style={{ ...simPrimaryButton, marginTop: 6 }}
       >
         {props.busy
           ? pick(language, 'Generating…', 'Generando…')
@@ -127,6 +133,7 @@ export function AgentPanel(props: {
         type="button"
         disabled={props.busy || props.done || props.disabledReason !== null}
         onClick={props.onRun}
+        style={simPrimaryButton}
       >
         {props.busy
           ? pick(language, 'Asking…', 'Consultando…')
@@ -144,7 +151,7 @@ export function AgentPanel(props: {
             props.busy || props.mayorBusy || props.disabledReason !== null
           }
           onClick={props.onMayor}
-          style={{ display: 'block', marginTop: 8 }}
+          style={{ ...simPrimaryButton, display: 'block', marginTop: 8 }}
         >
           {props.mayorBusy
             ? pick(

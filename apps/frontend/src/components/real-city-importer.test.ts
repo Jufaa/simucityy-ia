@@ -23,7 +23,7 @@ it('presents search, plan upload, the zone map and a clear primary action', () =
   expect(planHtml).toContain('hidden=""');
   expect(html).toContain('City or neighborhood to search');
   expect(html).toContain('Suggested cities:');
-  expect(html).toContain('Eixample, Barcelona');
+  expect(html).toContain('Example, Barcelona');
   expect(html).toContain('Map to choose the zone to render');
   expect(html).toContain('Fixed zone: 1000 m per side');
   // The main action must read as a button, with the primary styling inline.

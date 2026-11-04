@@ -2,24 +2,41 @@ import { describe, expect, it } from 'vitest';
 import { createElement } from 'react';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { LoadingScreen } from './loading-screen';
+import { LanguageContext } from './language';
 import { BeforeAfterSlider, clampWipePercent } from './before-after-slider';
 
 describe('loading screen and comparison slider', () => {
   it('blocks interaction and shows the mini-game', () => {
     const html = renderToStaticMarkup(
-      createElement(LoadingScreen, { message: 'Importando la zona…' }),
+      createElement(LoadingScreen, { message: 'Generating city…' }),
     );
-    expect(html).toContain('Importando la zona…');
-    expect(html).toContain('saltar obstáculos');
-    expect(html).toContain('Mini-juego');
+    expect(html).toContain('Generating city…');
+    expect(html).toContain('jump the cacti');
+    expect(html).toContain('Dino runner game');
+    expect(html).toContain('Please wait, we are preparing the city…');
+    expect(html).not.toContain('Generando la ciudad');
     expect(html).toContain('aria-busy="true"');
   });
 
-  it('renders the game canvas on an opaque dark background', () => {
+  it('follows the active language instead of always using Spanish', () => {
     const html = renderToStaticMarkup(
-      createElement(LoadingScreen, { message: 'Generando…' }),
+      createElement(
+        LanguageContext.Provider,
+        { value: 'es' },
+        createElement(LoadingScreen, { message: 'Generando la ciudad…' }),
+      ),
     );
-    expect(html).toContain('#0a1f16');
+    expect(html).toContain('Generando la ciudad…');
+    expect(html).toContain('Cargando');
+    expect(html).toContain('saltar los cactus');
+    expect(html).not.toContain('jump the cacti');
+  });
+
+  it('renders the game canvas with the Chrome offline light look', () => {
+    const html = renderToStaticMarkup(
+      createElement(LoadingScreen, { message: 'Generating…' }),
+    );
+    expect(html).toContain('#f7f7f7');
     expect(html).not.toContain('#ffffff14');
   });
 
