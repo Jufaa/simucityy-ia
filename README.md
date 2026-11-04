@@ -4,7 +4,7 @@
 > hazards (floods, earthquakes, tsunamis, strong wind) with same-seed
 > before/after comparison and AI-assisted interventions.
 
-**Demo video:** *\[YouTube link --- pending\]*
+**Demo video:** *\[https://www.youtube.com/watch?v=zcfY3OEeHbQ]*
 
 ![Simulicity IA overview](assets/MainMenu.png)
 
@@ -211,7 +211,7 @@ The configuration lives in `apps/frontend/vercel.json`.
 
 ## Demo video
 
-*\[YouTube link --- pending\]*
+*\[https://www.youtube.com/watch?v=zcfY3OEeHbQ]*
 
 Suggested demo script:
 
