@@ -1,3 +1,5 @@
+import { mkdirSync } from 'node:fs';
+import { dirname } from 'node:path';
 import Database from 'better-sqlite3';
 import type { UserKeyRepository, StoredUserKey } from './repository';
 
@@ -5,6 +7,7 @@ export class SqliteUserKeyRepository implements UserKeyRepository {
   private db: Database.Database;
 
   constructor(dbPath: string) {
+    mkdirSync(dirname(dbPath), { recursive: true });
     this.db = new Database(dbPath);
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS user_keys (

@@ -1,6 +1,17 @@
 # Simulicity IA
 
-A minimal starting point for a self-paced team project. The repository currently contains an empty frontend, a health-only API and their connection. Product behavior will be designed and implemented by the team, one capability at a time.
+A synthetic city simulator (Three.js) with terrain, water, streets, buildings, services and citizens, deterministic hazards (rain/flood, river overflow, tsunami, earthquake, strong wind) with before/after same-seed comparison, real-district import from OpenStreetMap, and Meta AI features described below.
+
+> Note: parts of this README below still describe the earlier health-only baseline. The current state is summarized here; `AGENTS.md` is the shared engineering contract.
+
+## Meta AI (optional, server-side)
+
+Two features call the Meta Model API (`api.meta.ai/v1`, Muse Spark) from the backend; the browser never receives a key:
+
+- **Create city with AI**: describe a city in the simulator panel; the model proposes a validated generation plan (seed, scale, building/park targets, height, lake and river scales) and the local procedural generator builds it.
+- **Intervention agent**: from measured simulator metrics, the model proposes bounded interventions (up to 12 auto-placed drains, early warning, reinforcement). The app applies them, reruns with the same seed and can iterate up to 3 times, citing only measured numbers.
+
+Set `META_API_KEY` (`LLM_...`) in `apps/backend/.env`, or save a per-user key through the BYOK routes. Without any key the demo still works: both features fall back to deterministic local plans and label themselves "Sin IA (local)". Each model call costs a fraction of a cent at standard rates and takes roughly 15-30 s.
 
 ## Start here
 

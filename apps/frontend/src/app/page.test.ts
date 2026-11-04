@@ -4,12 +4,15 @@ import { describe, expect, it } from 'vitest';
 import Home from './page';
 
 describe('district homepage', () => {
-  it('renders the initial loading state before the client requests a district', () => {
+  it('renders the city creation screen first, before any city is generated', () => {
     const markup = renderToStaticMarkup(createElement(Home));
 
-    // The loading screen blocks the app behind an aria-busy overlay with
-    // the drop-catching mini-game while the first district is requested.
-    expect(markup).toContain('aria-busy="true"');
-    expect(markup).toContain('Generando la ciudad…');
+    // The initial screen only offers the three creation paths; no district
+    // is requested, generated or rendered until the user picks one.
+    expect(markup).toContain('Crear tu ciudad');
+    expect(markup).toContain('Abrir chat con IA');
+    expect(markup).toContain('Generar random');
+    expect(markup).toContain('Abrir el mapa');
+    expect(markup).not.toContain('Generando la ciudad…');
   });
 });

@@ -1,11 +1,19 @@
 import OpenAI from 'openai';
 import { createMetaClient, DEFAULT_MODEL } from './client.js';
+import {
+  parseAiCityPlan,
+  parseInterventionPlan,
+  type AiCityPlan,
+  type InterventionContext,
+  type InterventionPlan,
+} from './ai-plan.js';
 
 export type AiMode = 'auto' | 'guided';
 
 export interface AiServiceDeps {
   userKey: string;
-  fallbackKey?: string | undefined; // 👈 añade | undefined
+  fallbackKey?: string | undefined;
+  model?: string | undefined;
 }
 
 export interface GuidedParams {
@@ -31,7 +39,7 @@ export async function runAi(
   const client = createMetaClient(apiKey);
 
   const params: OpenAI.Chat.ChatCompletionCreateParams = {
-    model: DEFAULT_MODEL,
+    model: deps.model ?? DEFAULT_MODEL,
     messages: [
       { role: 'system', content: SYSTEM_PROMPTS[mode] },
       { role: 'user', content: userPrompt },
@@ -72,5 +80,87 @@ export async function runAi(
     return parsed;
   } catch {
     throw new Error('Model did not return valid JSON in guided mode.');
+  }
+}
+
+async function chatJson(
+  system: string,
+  user: string,
+  deps: AiServiceDeps,
+): Promise<unknown> {
+  const apiKey = deps.userKey || deps.fallbackKey;
+  if (!apiKey) throw new Error('No API key available for this user.');
+  const client = createMetaClient(apiKey);
+  let completion: OpenAI.Chat.ChatCompletion;
+  try {
+    completion = await client.chat.completions.create({
+      model: deps.model ?? DEFAULT_MODEL,
+      response_format: { type: 'json_object' },
+      messages: [
+        { role: 'system', content: system },
+        { role: 'user', content: user },
+      ],
+    });
+  } catch (error) {
+    if (error instanceof OpenAI.APIError) {
+      throw new Error(`Meta API error (${error.status}): ${error.message}`, {
+        cause: error,
+      });
+    }
+    if (error instanceof OpenAI.APIConnectionTimeoutError) {
+      throw new Error('Meta API request timed out.', { cause: error });
+    }
+    throw new Error(`Unexpected error calling Meta API: ${String(error)}`, {
+      cause: error,
+    });
+  }
+  const content = completion.choices[0]?.message?.content ?? '';
+  try {
+    return JSON.parse(content) as unknown;
+  } catch {
+    throw new Error('Model did not return valid JSON.');
+  }
+}
+
+const CITY_PLAN_SYSTEM = `You design fictional cities for a simulator. Reply ONLY with a JSON object, no markdown, with exactly these fields:
+{"name": string (max 80), "summary": string (max 400, neutral Spanish, describe the city), "seed": integer 0..4294967295, "mode": "district"|"city", "profile": {"buildingTarget": integer 110..190, "parkTarget": integer 2..7, "heightScale": number 0.65..1.4 (low-rise ~0.7, tall ~1.3), "lakeScale": number 0.8..1.1, "riverWidthScale": number 0.8..1.15 (wide river ~1.15, no river emphasis ~0.8)}}
+"mode" is "city" only for large-city requests, otherwise "district". Pick a seed yourself when the user gives none. Never exceed the numeric bounds. Invented features outside these fields are impossible: do not promise them.`;
+
+export async function proposeCityPlan(
+  description: string | null,
+  deps: AiServiceDeps,
+): Promise<AiCityPlan> {
+  const raw = await chatJson(
+    CITY_PLAN_SYSTEM,
+    description
+      ? `City request (Spanish or English): ${description}`
+      : 'Invent an interesting small fictional city within the bounds.',
+    deps,
+  );
+  try {
+    return parseAiCityPlan(raw);
+  } catch {
+    throw new Error('Model did not return a valid city plan.');
+  }
+}
+
+const INTERVENTION_SYSTEM = `You are an emergency-planning agent inside a flood simulator. You receive MEASURED metrics from the simulation engine (before = no intervention arm, after = current intervention arm, null on iteration 1). Reply ONLY with a JSON object, no markdown:
+{"drains": integer 0..12 (extra drains placed automatically on the lowest terrain cells), "earlyWarning": boolean (faster citizen reaction), "reinforcement": boolean (structural reinforcement / facade protection), "done": boolean (true when the measured result is good enough or nothing else can improve), "rationale": string (max 600, neutral Spanish, cite ONLY the measured numbers you received; never invent metrics)}
+Rules: maximize evacuated people and minimize trapped people, exposed buildings and blocked roads. Each iteration replaces the previous drains/measure choices. Set done=true when trapped is 0 and no lever plausibly helps more, or on iteration 3. Never propose values outside the bounds.`;
+
+export async function proposeInterventions(
+  context: InterventionContext,
+  deps: AiServiceDeps,
+): Promise<InterventionPlan> {
+  const raw = await chatJson(
+    INTERVENTION_SYSTEM,
+    `Objective: ${context.objective}
+Measured state: ${JSON.stringify(context)}`,
+    deps,
+  );
+  try {
+    return parseInterventionPlan(raw);
+  } catch {
+    throw new Error('Model did not return a valid intervention plan.');
   }
 }

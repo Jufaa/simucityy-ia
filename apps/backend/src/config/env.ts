@@ -39,6 +39,7 @@ const configSchema = z.object({
     .string()
     .regex(/^LLM_[A-Za-z0-9_-]+$/, 'META_API_KEY must start with LLM_')
     .optional(),
+  META_MODEL: z.string().min(1).optional(),
 });
 
 export interface ApiConfig {
@@ -47,7 +48,8 @@ export interface ApiConfig {
   logLevel: z.infer<typeof configSchema>['LOG_LEVEL'];
   corsOrigins: string[];
   byokMasterKey: Buffer;
-  metaApiKey?: string | undefined; // 👈 añade | undefined
+  metaApiKey?: string | undefined;
+  metaModel?: string | undefined;
 }
 
 export function loadConfig(
@@ -67,5 +69,6 @@ export function loadConfig(
     corsOrigins: result.data.CORS_ORIGINS,
     byokMasterKey: Buffer.from(result.data.BYOK_MASTER_KEY, 'hex'),
     metaApiKey: result.data.META_API_KEY,
+    metaModel: result.data.META_MODEL,
   };
 }

@@ -38,7 +38,15 @@ import {
 import { HAZARD_KINDS } from '@simulicity/hazards';
 import { CityTraffic } from './city-traffic-model';
 import { createCityTrafficLayer } from './city-traffic-layer';
-import { createRandomCityProfile } from './random-city-profile';
+import {
+  createRandomCityProfile,
+  type RandomCityProfile,
+} from './random-city-profile';
+import { requestAiCityPlan, type AiCityPlanResult } from './ai-city';
+import { requestInterventions } from './ai-agent';
+import { pickAutoDrainPoints } from './auto-drains';
+import { AgentPanel, AiCityPanel, type AgentHistoryEntry } from './ai-panels';
+import { CityStartScreen } from './city-start-screen';
 import { CityGenerationControls } from './city-generation-controls';
 import { generateCityServices } from './city-services';
 import { FrameMetrics, type FrameMeasurement } from './frame-metrics';
@@ -182,6 +190,14 @@ export default function Scene() {
   const [citySeed, setCitySeed] = useState(123);
   const [randomizedCity, setRandomizedCity] = useState(false);
   const [cityMode, setCityMode] = useState<CityGenerationMode>('district');
+  const [aiProfile, setAiProfile] = useState<RandomCityProfile | null>(null);
+  const [aiPlan, setAiPlan] = useState<AiCityPlanResult | null>(null);
+  const [aiBusy, setAiBusy] = useState(false);
+  const [agentBusy, setAgentBusy] = useState(false);
+  const [agentIteration, setAgentIteration] = useState(0);
+  const [agentDone, setAgentDone] = useState(false);
+  const [agentHistory, setAgentHistory] = useState<AgentHistoryEntry[]>([]);
+  const [started, setStarted] = useState(false);
   // Preloaded real district (OSM + DEM), converted locally; no live API calls.
   const realCity = useMemo(
     () => (layoutMode === 'real' ? createRealCity(eixampleSource).city : null),
@@ -189,21 +205,25 @@ export default function Scene() {
   );
   const city = useMemo(
     () =>
-      (layoutMode === 'imported' ? importedCity : null) ??
-      realCity ??
-      (sourceCity
-        ? layoutMode === 'organic'
-          ? createOrganicCity(sourceCity, citySeed, {
-              relief: reliefMode,
-              mode: cityMode,
-              ...(randomizedCity
-                ? { profile: createRandomCityProfile(citySeed) }
-                : {}),
-            }).city
-          : reliefMode
-            ? createReliefCity(sourceCity)
-            : sourceCity
-        : null),
+      !started
+        ? null
+        : ((layoutMode === 'imported' ? importedCity : null) ??
+          realCity ??
+          (sourceCity
+            ? layoutMode === 'organic'
+              ? createOrganicCity(sourceCity, citySeed, {
+                  relief: reliefMode,
+                  mode: cityMode,
+                  ...(aiProfile
+                    ? { profile: aiProfile }
+                    : randomizedCity
+                      ? { profile: createRandomCityProfile(citySeed) }
+                      : {}),
+                }).city
+              : reliefMode
+                ? createReliefCity(sourceCity)
+                : sourceCity
+            : null)),
     [
       importedCity,
       realCity,
@@ -212,7 +232,9 @@ export default function Scene() {
       layoutMode,
       citySeed,
       randomizedCity,
+      aiProfile,
       cityMode,
+      started,
     ],
   );
   const [worldSeed, setWorldSeed] = useState(123);
@@ -273,8 +295,10 @@ export default function Scene() {
   const worldVisibleRef = useRef(worldVisible);
   const [error, setError] = useState<string | null>(null);
 
-  // 1. Pedir la ciudad al backend
+  // 1. Pedir la ciudad al backend (recien cuando el usuario eligio
+  // como crearla; la pantalla inicial no genera ni renderiza nada)
   useEffect(() => {
+    if (!started || sourceCity) return;
     let cancelled = false;
 
     (async () => {
@@ -316,7 +340,7 @@ export default function Scene() {
     return () => {
       cancelled = true;
     };
-  }, []);
+  }, [started, sourceCity]);
 
   // 2. Dibujar cuando llega la ciudad
   useEffect(() => {
@@ -1229,10 +1253,109 @@ export default function Scene() {
     setFlood(null);
     setComparison(null);
     setAlarmTime(null);
+    setAiProfile(null);
+    setAiPlan(null);
+    setAgentIteration(0);
+    setAgentDone(false);
+    setAgentHistory([]);
     setRandomizedCity(randomProfile);
     setCityMode(mode);
     setLayoutMode('organic');
     setCitySeed(seed);
+  }
+
+  async function planAiCity(description: string): Promise<AiCityPlanResult> {
+    setAiBusy(true);
+    try {
+      return await requestAiCityPlan(
+        description.trim() ? description : null,
+        (citySeed + 1) >>> 0,
+      );
+    } finally {
+      setAiBusy(false);
+    }
+  }
+
+  function applyAiPlan(plan: AiCityPlanResult) {
+    setRunning(false);
+    setFlood(null);
+    setComparison(null);
+    setAlarmTime(null);
+    setAgentIteration(0);
+    setAgentDone(false);
+    setAgentHistory([]);
+    setAiPlan(plan);
+    setAiProfile(plan.profile);
+    setRandomizedCity(true);
+    setCityMode(plan.mode);
+    setLayoutMode('organic');
+    setCitySeed(plan.seed);
+  }
+
+  async function createAiCity(description: string) {
+    applyAiPlan(await planAiCity(description));
+  }
+
+  async function runAgentIteration() {
+    const simulation = simulationRef.current;
+    if (!simulation || !comparison || !city?.terrainGrid) return;
+    const iteration = agentIteration + 1;
+    setAgentBusy(true);
+    try {
+      const plan = await requestInterventions({
+        hazardKind,
+        objective:
+          'Reducir edificios expuestos, personas atrapadas y agua maxima',
+        iteration,
+        before: {
+          evacuated: comparison.before.evacuated,
+          trapped: comparison.before.trapped,
+          exposedBuildings: comparison.before.exposedBuildings,
+          blockedRoadsPeak: comparison.before.peakBlocked,
+          maxWaterDepthInMeters: comparison.before.peakDepth,
+        },
+        after: {
+          evacuated: comparison.after.evacuated,
+          trapped: comparison.after.trapped,
+          exposedBuildings: comparison.after.exposedBuildings,
+          blockedRoadsPeak: comparison.after.peakBlocked,
+          maxWaterDepthInMeters: comparison.after.peakDepth,
+        },
+        vulnerableExposed,
+        vulnerableTotal: vulnerableBuildings.length,
+        shelterOccupancy,
+        shelterCapacity,
+        currentDrains: userDrains.length,
+      });
+      setAgentHistory((history) => [
+        ...history,
+        {
+          iteration,
+          drains: plan.drains,
+          source: plan.source,
+          rationale: plan.rationale,
+        },
+      ]);
+      setAgentIteration(iteration);
+      if (plan.done || iteration >= 3) {
+        setAgentDone(true);
+        return;
+      }
+      const points = pickAutoDrainPoints(city.terrainGrid, plan.drains, 30);
+      setUserDrains(points);
+      simulation.applyExtraDrains(points);
+      simulation.applyMeasure({
+        earlyWarning: plan.earlyWarning,
+        reinforcement: plan.reinforcement,
+      });
+      setRunning(false);
+      setFlood(simulation.snapshot);
+      setComparison(simulation.comparison);
+      setAlarmTime(simulation.alarmTime);
+      setStructural(simulation.structural);
+    } finally {
+      setAgentBusy(false);
+    }
   }
 
   function applyImportedCity(next: CityResponse) {
@@ -1270,6 +1393,30 @@ export default function Scene() {
       finishSimulation();
   }, [flood?.elapsedTimeInSeconds, durationMinutes, running]);
 
+  const startScreen = (
+    <CityStartScreen
+      aiBusy={aiBusy}
+      onAiChat={planAiCity}
+      onBuildAi={(plan) => {
+        applyAiPlan(plan);
+        setStarted(true);
+      }}
+      onRandom={() => {
+        generateRandomCity();
+        setStarted(true);
+      }}
+      onImportZone={() => {
+        setStarted(true);
+        setPanelOpen(false);
+        setImportCardOpen(true);
+      }}
+      onSeed={(seed) => {
+        regenerateCity(seed, true);
+        setStarted(true);
+      }}
+    />
+  );
+
   if (error) {
     return (
       <div style={{ padding: 20, color: 'salmon', fontFamily: 'monospace' }}>
@@ -1277,6 +1424,12 @@ export default function Scene() {
       </div>
     );
   }
+  if (!started)
+    return (
+      <main style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+        {startScreen}
+      </main>
+    );
   if (!city) return <LoadingScreen message="Generando la ciudad…" />;
   const zoneLabel = city?.real
     ? city.real.name
@@ -1513,6 +1666,25 @@ export default function Scene() {
         }}
       >
         🌧 Demo: Eixample + lluvia
+      </button>
+      <button
+        type="button"
+        onClick={() => setStarted(false)}
+        style={{
+          position: 'absolute',
+          top: 200,
+          left: 16,
+          padding: '10px 14px',
+          borderRadius: 10,
+          border: 0,
+          background: '#33424a',
+          color: 'white',
+          font: '600 14px system-ui',
+          cursor: 'pointer',
+          boxShadow: '0 4px 16px #0003',
+        }}
+      >
+        Crear otra ciudad
       </button>
       <output
         aria-label="Rendimiento de la ciudad"
@@ -1975,6 +2147,19 @@ export default function Scene() {
             }
             onGenerate={(seed) => regenerateCity(seed)}
             onRandom={generateRandomCity}
+          />
+          <AiCityPanel busy={aiBusy} plan={aiPlan} onCreate={createAiCity} />
+          <AgentPanel
+            busy={agentBusy}
+            iteration={agentIteration}
+            done={agentDone}
+            history={agentHistory}
+            disabledReason={
+              comparison
+                ? null
+                : 'Iniciá y corré la simulación para medir métricas primero.'
+            }
+            onRun={runAgentIteration}
           />
           {world && !city.real && (
             <WorldControls
