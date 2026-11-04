@@ -1,6 +1,7 @@
 'use client';
 
 import { useEffect, useMemo, useRef, useState } from 'react';
+import { generateCityScenario } from '@simulicity/cities';
 import {
   sameCityGeneration,
   type CityGenerationMode,
@@ -139,7 +140,6 @@ const WATER_HAZARDS: readonly HazardKind[] = [
   'tsunami',
 ];
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL ?? 'http://127.0.0.1:4000';
 const civicLabels: Record<string, { en: string; es: string }> = {
   hospital: { en: 'Health center', es: 'Centro de salud' },
   school: { en: 'School', es: 'Escuela' },
@@ -333,49 +333,31 @@ export default function Scene() {
   const worldVisibleRef = useRef(worldVisible);
   const [error, setError] = useState<string | null>(null);
 
-  // 1. Pedir la ciudad al backend (recien cuando el usuario eligio
+  // 1. Generar la ciudad localmente (recien cuando el usuario eligio
   // como crearla; la pantalla inicial no genera ni renderiza nada)
-  useEffect(() => {
-    // An imported zone is already a complete city: do not request the
-    // synthetic source city behind it.
+ useEffect(() => {
     if (!started || sourceCity || importedCity) return;
     let cancelled = false;
 
-    (async () => {
-      try {
-        const requestCity = (populationCount?: number) =>
-          fetch(`${API_URL}/api/v1/cities/generate`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              layout: 'district',
-              detailLevel: 'urban',
-              config: {
-                widthInMeters: 500,
-                heightInMeters: 500,
-                streetSpacingInMeters: 50,
-                seed: 123,
-                ...(populationCount ? { populationCount } : {}),
-              },
-              terrain: { kind: 'flat', elevationInMeters: 25 },
-              minBuildingHeightInMeters: 4,
-              maxBuildingHeightInMeters: 40,
-            }),
-          });
-        let res = await requestCity(600);
-        // An older backend caps population at 300 and rejects the larger
-        // request; fall back to its default instead of failing the load.
-        if (res.status === 400) res = await requestCity();
-        if (!res.ok) {
-          const text = await res.text();
-          throw new Error(`HTTP ${res.status}: ${text.slice(0, 300)}`);
-        }
-        const data = (await res.json()) as CityResponse;
-        if (!cancelled) setSourceCity(data);
-      } catch (e) {
-        if (!cancelled) setError(e instanceof Error ? e.message : String(e));
-      }
-    })();
+    try {
+      const baseOptions = {
+        layout: 'district' as const,
+        detailLevel: 'urban' as const,
+        config: {
+          widthInMeters: 500,
+          heightInMeters: 500,
+          streetSpacingInMeters: 50,
+          seed: 123,
+        },
+        terrain: { kind: 'flat' as const, elevationInMeters: 25 },
+        minBuildingHeightInMeters: 4,
+        maxBuildingHeightInMeters: 40,
+      };
+      const data = generateCityScenario(baseOptions) as CityResponse;
+      if (!cancelled) setSourceCity(data);
+    } catch (e) {
+      if (!cancelled) setError(e instanceof Error ? e.message : String(e));
+    }
 
     return () => {
       cancelled = true;

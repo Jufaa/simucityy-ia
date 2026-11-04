@@ -4,7 +4,7 @@ import { generateWorld, sampleWorldHeight } from './world-model';
 import { createWorldLayer, worldCameraPose } from './world-layer';
 import type { CityResponse } from './city-types';
 import { DistrictSimulation } from './district-simulation';
-import { generateCityScenario } from '../../../backend/src/modules/cities/city-scenario-generator';
+import { generateCityScenario } from '@simulicity/cities';
 import { createReliefCity } from './terrain-view';
 
 it('renders permanent sea and lake on their own levels, preserves them through flood reset and disposes resources once', () => {

@@ -1,6 +1,6 @@
 import { expect, it } from 'vitest';
 import * as THREE from 'three';
-import { generateCityScenario } from '../../../backend/src/modules/cities/city-scenario-generator';
+import { generateCityScenario } from '@simulicity/cities';
 import { FloodSimulation } from './flood-simulation';
 import type { CityResponse } from './city-types';
 import { createBuildingLayer } from './urban-building-layer';

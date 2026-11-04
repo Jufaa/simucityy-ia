@@ -8,7 +8,11 @@ config({
   quiet: true,
 });
 const nextConfig: NextConfig = {
-  transpilePackages: ['@simulicity/shared', '@simulicity/hazards'],
+  transpilePackages: [
+    '@simulicity/shared',
+    '@simulicity/hazards',
+    '@simulicity/cities',
+  ],
   poweredByHeader: false,
 };
 export default nextConfig;

@@ -1,5 +1,5 @@
 import { expect, it } from 'vitest';
-import { generateCityScenario } from '../../../backend/src/modules/cities/city-scenario-generator';
+import { generateCityScenario } from '@simulicity/cities';
 import type { CityResponse } from './city-types';
 import { createStaticPopulation } from './static-population';
 
