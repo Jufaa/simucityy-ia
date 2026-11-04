@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { WorldCameraView, WorldLayerName } from './world-layer';
+import { pick, useLanguage } from './language';
 
 export function WorldControls({
   seed,
@@ -22,16 +23,18 @@ export function WorldControls({
   onView: (view: WorldCameraView) => void;
   onSeed?: (seed: number) => void;
 }) {
+  const language = useLanguage();
+  const tx = (en: string, es: string) => pick(language, en, es);
   const [draft, setDraft] = useState(String(seed));
   const [error, setError] = useState(false);
   useEffect(() => setDraft(String(seed)), [seed]);
   const names: Record<WorldLayerName, string> = {
-    sea: 'Océano',
-    lake: 'Lago / río',
+    sea: tx('Ocean', 'Océano'),
+    lake: tx('Lake / river', 'Lago / río'),
   };
   return (
     <section
-      aria-label="Generación del mundo"
+      aria-label={tx('World generation', 'Generación del mundo')}
       style={{
         margin: '12px 0',
         padding: 12,
@@ -41,9 +44,15 @@ export function WorldControls({
         fontSize: 12,
       }}
     >
-      <strong>Territorio procedural · sintético</strong>
+      <strong>
+        {tx(
+          'Procedural territory · synthetic',
+          'Territorio procedural · sintético',
+        )}
+      </strong>
       <p>
-        {width} × {height} m · río y lago · costa y océano
+        {width} × {height} m ·{' '}
+        {tx('river and lake · coast and ocean', 'río y lago · costa y océano')}
       </p>
       <form
         onSubmit={(event) => {
@@ -63,9 +72,9 @@ export function WorldControls({
         }}
       >
         <label>
-          Semilla{' '}
+          {tx('Seed', 'Semilla')}{' '}
           <input
-            aria-label="Semilla del mundo"
+            aria-label={tx('World seed', 'Semilla del mundo')}
             type="number"
             min={0}
             max={4294967295}
@@ -78,10 +87,17 @@ export function WorldControls({
           />
         </label>{' '}
         <button type="submit" disabled={!onSeed}>
-          Aplicar
+          {tx('Apply', 'Aplicar')}
         </button>
       </form>
-      {error && <p role="alert">Usa un entero entre 0 y 4294967295.</p>}
+      {error && (
+        <p role="alert">
+          {tx(
+            'Use an integer between 0 and 4294967295.',
+            'Usa un entero entre 0 y 4294967295.',
+          )}
+        </p>
+      )}
       <button
         type="button"
         onClick={onGenerate}
@@ -94,7 +110,7 @@ export function WorldControls({
           borderRadius: 5,
         }}
       >
-        Generar otro entorno
+        {tx('Generate another surroundings', 'Generar otro entorno')}
       </button>
       <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>
         {(Object.keys(names) as WorldLayerName[]).map((name) => (
@@ -114,20 +130,27 @@ export function WorldControls({
           aria-pressed={view === 'world'}
           onClick={() => onView('world')}
         >
-          Vista mundo
+          {tx('World view', 'Vista mundo')}
         </button>
         <button
           type="button"
           aria-pressed={view === 'city'}
           onClick={() => onView('city')}
         >
-          Vista ciudad
+          {tx('City view', 'Vista ciudad')}
         </button>
       </div>
-      <p>Fuera del cuadrado solo se dibujan el río/lago y el océano.</p>
+      <p>
+        {tx(
+          'Outside the square only the river/lake and the ocean are drawn.',
+          'Fuera del cuadrado solo se dibujan el río/lago y el océano.',
+        )}
+      </p>
       <small>
-        Regenerar el entorno reinicia la simulación; conserva la ciudad
-        original. El mar y el lago son permanentes y no alimentan la inundación.
+        {tx(
+          'Regenerating the surroundings restarts the simulation; it keeps the original city. The sea and lake are permanent and do not feed the flooding.',
+          'Regenerar el entorno reinicia la simulación; conserva la ciudad original. El mar y el lago son permanentes y no alimentan la inundación.',
+        )}
       </small>
     </section>
   );

@@ -1,26 +1,24 @@
 import type { CSSProperties } from 'react';
 import type { HazardKind } from '@simulicity/hazards';
 import { HazardSelector } from './hazard-selector';
+import {
+  simGhostButton,
+  simGlassPanel,
+  simPrimaryButton,
+  simSelectedButton,
+  simTheme,
+} from './ui-theme';
+import {
+  LanguageToggle,
+  pick,
+  useLanguage,
+  type AppLanguage,
+} from './language';
 
-const button: CSSProperties = {
-  border: '1px solid #d3dfdf',
-  borderRadius: 9,
-  padding: '8px 12px',
-  background: '#fff',
-  color: '#20353a',
-  cursor: 'pointer',
-  font: 'inherit',
-  fontWeight: 600,
-};
+const button: CSSProperties = { ...simGhostButton, borderRadius: 9 };
 const glass: CSSProperties = {
+  ...simGlassPanel,
   position: 'absolute',
-  background: 'rgba(249,252,250,0.94)',
-  color: '#20353a',
-  border: '1px solid #ffffffaa',
-  borderRadius: 14,
-  boxShadow: '0 8px 30px #193c4320',
-  backdropFilter: 'blur(12px)',
-  fontFamily: 'system-ui, -apple-system, sans-serif',
   fontSize: 12,
 };
 
@@ -37,11 +35,12 @@ export function CityToolbar(props: {
   assetStatus: 'loading' | 'ready' | 'fallback' | 'procedural';
   hazard?: HazardKind;
   onHazard?(kind: HazardKind): void;
-  waveHeightInMeters?: number;
-  earthquakeMagnitude?: number;
+  waveHeightInMeters?: number | undefined;
+  earthquakeMagnitude?: number | undefined;
   timeScale?: 1 | 2 | 4 | 8 | 16 | 32 | 64;
   onTimeScale?(scale: 1 | 2 | 4 | 8 | 16 | 32 | 64): void;
   onPanelToggle(): void;
+  onLanguageChange?(language: AppLanguage): void;
   onRandom?(): void;
   /** Opens the real-zone / plan import card. */
   onImportZone?(): void;
@@ -49,11 +48,20 @@ export function CityToolbar(props: {
   onToggle(): void;
   onReset(): void;
 }) {
+  const language = useLanguage();
   const assetLabel = {
-    loading: 'Cargando modelos locales…',
-    ready: 'Modelos locales CC0',
-    fallback: 'Vista procedural de respaldo',
-    procedural: 'Modelos procedurales',
+    loading: pick(
+      language,
+      'Loading local models…',
+      'Cargando modelos locales…',
+    ),
+    ready: pick(language, 'Local CC0 models', 'Modelos locales CC0'),
+    fallback: pick(
+      language,
+      'Procedural fallback view',
+      'Vista procedural de respaldo',
+    ),
+    procedural: pick(language, 'Procedural models', 'Modelos procedurales'),
   }[props.assetStatus];
   return (
     <>
@@ -72,16 +80,21 @@ export function CityToolbar(props: {
         }}
       >
         <div>
-          <strong style={{ fontSize: 18, letterSpacing: '-0.04em' }}>
+          <strong
+            style={{ fontSize: 18, letterSpacing: '-0.04em', color: '#fff' }}
+          >
             Simucity IA
           </strong>
-          <span style={{ marginLeft: 12, color: '#60787a' }}>
-            {props.organic ? 'Ciudad orgánica' : 'Distrito original'} ·{' '}
-            {assetLabel}
+          <span style={{ marginLeft: 12, color: simTheme.muted }}>
+            {props.organic
+              ? pick(language, 'Organic city', 'Ciudad orgánica')
+              : pick(language, 'Original district', 'Distrito original')}{' '}
+            · {assetLabel}
           </span>
-          <div style={{ marginTop: 3, color: '#60787a' }}>
-            {props.buildings} edificios · {props.people} personas · Semilla{' '}
-            {props.seed}
+          <div style={{ marginTop: 3, color: simTheme.muted }}>
+            {props.buildings} {pick(language, 'buildings', 'edificios')} ·{' '}
+            {props.people} {pick(language, 'people', 'personas')} ·{' '}
+            {pick(language, 'Seed', 'Semilla')} {props.seed}
           </div>
         </div>
         {props.hazard && props.onHazard && (
@@ -95,30 +108,35 @@ export function CityToolbar(props: {
         <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
           {props.onRandom && (
             <button type="button" style={button} onClick={props.onRandom}>
-              Ciudad aleatoria
+              {pick(language, 'Random city', 'Ciudad aleatoria')}
             </button>
           )}
           {props.onImportZone && (
             <button
               type="button"
-              style={{ ...button, background: '#24655e', color: '#fff' }}
+              style={simPrimaryButton}
               onClick={props.onImportZone}
             >
-              Zona real o plano
+              {pick(language, 'Real zone or plan', 'Zona real o plano')}
             </button>
           )}
           <button
             type="button"
-            style={{
-              ...button,
-              background: props.panelOpen ? '#e2eeeb' : '#fff',
-            }}
+            style={
+              props.panelOpen ? { ...button, ...simSelectedButton } : button
+            }
             aria-expanded={props.panelOpen}
             aria-controls="city-settings"
             onClick={props.onPanelToggle}
           >
-            Ajustes
+            {pick(language, 'Settings', 'Ajustes')}
           </button>
+          {props.onLanguageChange && (
+            <LanguageToggle
+              language={language}
+              onChange={props.onLanguageChange}
+            />
+          )}
         </div>
       </header>
       <nav
@@ -141,51 +159,58 @@ export function CityToolbar(props: {
         <button
           type="button"
           aria-pressed={props.view === 'city'}
-          style={{
-            ...button,
-            background: props.view === 'city' ? '#e2eeeb' : '#fff',
-          }}
+          style={
+            props.view === 'city' ? { ...button, ...simSelectedButton } : button
+          }
           onClick={() => props.onView('city')}
         >
-          Ciudad
+          {pick(language, 'City', 'Ciudad')}
         </button>
         <button
           type="button"
           aria-pressed={props.view === 'world'}
-          style={{
-            ...button,
-            background: props.view === 'world' ? '#e2eeeb' : '#fff',
-          }}
+          style={
+            props.view === 'world'
+              ? { ...button, ...simSelectedButton }
+              : button
+          }
           onClick={() => props.onView('world')}
         >
-          Entorno
+          {pick(language, 'Surroundings', 'Entorno')}
         </button>
         <span
-          style={{ padding: '0 8px', color: '#60787a' }}
+          style={{ padding: '0 8px', color: simTheme.muted }}
           role="status"
           aria-live="off"
         >
-          {props.running ? 'Simulación automática' : 'En pausa'} ·{' '}
-          {Math.floor(props.elapsedSeconds / 60)} min
+          {props.running
+            ? pick(language, 'Simulation running', 'Simulación automática')
+            : pick(language, 'Paused', 'En pausa')}{' '}
+          · {Math.floor(props.elapsedSeconds / 60)} min
         </span>
         {props.onTimeScale && (
           <span
             role="group"
-            aria-label="Velocidad del tiempo"
+            aria-label={pick(language, 'Time speed', 'Velocidad del tiempo')}
             style={{ display: 'flex', gap: 4, alignItems: 'center' }}
           >
-            <span style={{ padding: '0 4px', color: '#60787a' }}>Tiempo</span>
+            <span style={{ padding: '0 4px', color: simTheme.muted }}>
+              {pick(language, 'Time', 'Tiempo')}
+            </span>
             {([1, 2, 4, 8, 16, 32, 64] as const).map((scale) => (
               <button
                 key={scale}
                 type="button"
                 aria-pressed={(props.timeScale ?? 1) === scale}
-                style={{
-                  ...button,
-                  padding: '8px 9px',
-                  background:
-                    (props.timeScale ?? 1) === scale ? '#e2eeeb' : '#fff',
-                }}
+                style={
+                  (props.timeScale ?? 1) === scale
+                    ? {
+                        ...button,
+                        ...simSelectedButton,
+                        padding: '8px 9px',
+                      }
+                    : { ...button, padding: '8px 9px' }
+                }
                 onClick={() => props.onTimeScale!(scale)}
               >
                 ×{scale}
@@ -196,18 +221,28 @@ export function CityToolbar(props: {
         <button
           type="button"
           disabled={!props.ready}
-          style={{ ...button, background: '#24655e', color: '#fff' }}
+          style={{
+            ...simPrimaryButton,
+            opacity: props.ready ? 1 : 0.55,
+            cursor: props.ready ? 'pointer' : 'not-allowed',
+          }}
           onClick={props.onToggle}
         >
-          {props.running ? 'Pausar' : 'Continuar'}
+          {props.running
+            ? pick(language, 'Pause', 'Pausar')
+            : pick(language, 'Continue', 'Continuar')}
         </button>
         <button
           type="button"
           disabled={!props.ready}
-          style={button}
+          style={{
+            ...button,
+            opacity: props.ready ? 1 : 0.55,
+            cursor: props.ready ? 'pointer' : 'not-allowed',
+          }}
           onClick={props.onReset}
         >
-          Reiniciar
+          {pick(language, 'Reset', 'Reiniciar')}
         </button>
       </nav>
     </>

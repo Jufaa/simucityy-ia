@@ -3,9 +3,15 @@ import { createMetaClient, DEFAULT_MODEL } from './client.js';
 import {
   parseAiCityPlan,
   parseInterventionPlan,
+  citizenReplySchema,
+  emergencyReportSchema,
   type AiCityPlan,
+  type CitizenContext,
+  type CitizenReply,
+  type EmergencyReport,
   type InterventionContext,
   type InterventionPlan,
+  type ReportContext,
 } from './ai-plan.js';
 
 export type AiMode = 'auto' | 'guided';
@@ -162,5 +168,41 @@ Measured state: ${JSON.stringify(context)}`,
     return parseInterventionPlan(raw);
   } catch {
     throw new Error('Model did not return a valid intervention plan.');
+  }
+}
+
+const CITIZEN_SYSTEM = `You are one fictional citizen inside a city-disaster simulator, speaking in first person in neutral Spanish. Reply ONLY with a JSON object: {"text": string (max 600)}. Narrate ONLY the facts given (your status, the hazard, whether you have an assigned shelter, elapsed minutes). Never invent streets, names, family, injuries or outcomes that are not in the facts. If trapped, say you are waiting for rescue. Keep it human and brief (2-3 sentences).`;
+
+export async function explainCitizen(
+  context: CitizenContext,
+  deps: AiServiceDeps,
+): Promise<CitizenReply> {
+  const raw = await chatJson(
+    CITIZEN_SYSTEM,
+    `Facts: ${JSON.stringify(context)}`,
+    deps,
+  );
+  try {
+    return citizenReplySchema.parse(raw);
+  } catch {
+    throw new Error('Model did not return a valid citizen reply.');
+  }
+}
+
+const REPORT_SYSTEM = `You write emergency-planning reports for a fictional city simulator, in neutral Spanish. Reply ONLY with a JSON object: {"report": string (max 3000)}. Use ONLY the measured numbers and recommendations provided; never invent data. Structure: what happened, measured impact, what improved with the intervention, and the recommended actions. State clearly that coefficients are demonstrative, not calibrated.`;
+
+export async function writeEmergencyReport(
+  context: ReportContext,
+  deps: AiServiceDeps,
+): Promise<EmergencyReport> {
+  const raw = await chatJson(
+    REPORT_SYSTEM,
+    `Measured outcome: ${JSON.stringify(context)}`,
+    deps,
+  );
+  try {
+    return emergencyReportSchema.parse(raw);
+  } catch {
+    throw new Error('Model did not return a valid emergency report.');
   }
 }

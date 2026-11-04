@@ -8,6 +8,7 @@ export interface SavedScenario {
   drains: readonly { x: number; y: number }[];
   createdAt: string;
   resultLine: string;
+  resilienceScore?: number | undefined;
 }
 
 const KEY = 'simulicity-saved-scenarios-v1';

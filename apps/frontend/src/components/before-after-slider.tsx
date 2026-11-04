@@ -106,7 +106,7 @@ export function BeforeAfterSlider(props: {
             width: '100%',
           }}
         >
-          📸 Capturar el “después” ahora
+          Capturar el “después” ahora
         </button>
       )}
       {props.afterImage && (
@@ -124,7 +124,7 @@ export function BeforeAfterSlider(props: {
             width: '100%',
           }}
         >
-          📸 Volver a capturar el “después”
+          Volver a capturar el “después”
         </button>
       )}
     </div>

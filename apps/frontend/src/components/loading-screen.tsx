@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 
-
 /**
  * Full-screen loading screen that blocks all interaction while the game
  * works. Includes a Chrome-style dino runner so long imports stay fun:
@@ -70,21 +69,15 @@ export function LoadingScreen(props: { message: string }) {
       ctx.moveTo(0, groundY);
       ctx.lineTo(width, groundY);
       ctx.stroke();
-      // Emoji glyphs ignore `fillStyle`, so the green is pushed with a
-      // saturation filter plus a green glow, drawn larger than before.
-      ctx.save();
-      try {
-        ctx.filter = 'saturate(2.6) contrast(1.15)';
-      } catch {
-        // Older engines without canvas filters still get size and glow.
-      }
-      ctx.shadowColor = '#22c55e';
-      ctx.shadowBlur = 14;
-      ctx.font = '46px system-ui';
-      ctx.fillText('🦖', 34, groundY - dinoY - 2);
-      ctx.font = '36px system-ui';
-      for (const cactus of cacti) ctx.fillText('🌵', cactus.x, groundY - 2);
-      ctx.restore();
+      // Simple geometric sprites: a runner block and obstacle blocks.
+      ctx.fillStyle = '#22c55e';
+      ctx.fillRect(38, groundY - dinoY - 30, 30, 22);
+      ctx.fillRect(58, groundY - dinoY - 38, 14, 10);
+      ctx.fillStyle = '#eef6f7';
+      ctx.fillRect(62, groundY - dinoY - 34, 4, 4);
+      ctx.fillStyle = '#16a34a';
+      for (const cactus of cacti)
+        ctx.fillRect(cactus.x, groundY - cactus.h, 12, cactus.h);
       ctx.fillStyle = '#eef6f7';
       ctx.font = '12px system-ui';
       ctx.fillText(`Puntos: ${score}`, 10, 18);
@@ -121,13 +114,13 @@ export function LoadingScreen(props: { message: string }) {
     >
       <strong style={{ fontSize: 20 }}>{props.message}</strong>
       <span style={{ fontSize: 13, opacity: 0.85 }}>
-        No toques nada, estamos cocinando la ciudad… 🍳
+        No toques nada, estamos preparando la ciudad…
       </span>
       <canvas
         ref={canvasRef}
         width={420}
         height={220}
-        aria-label="Mini-juego: dino saltando cactus"
+        aria-label="Mini-juego: saltar obstáculos"
         style={{
           width: 'min(420px, 86vw)',
           height: 220,
@@ -138,7 +131,7 @@ export function LoadingScreen(props: { message: string }) {
         }}
       />
       <span style={{ fontSize: 12, opacity: 0.7 }}>
-        🦖 Tocá el juego o apretá espacio para saltar los cactus
+        Tocá el juego o apretá espacio para saltar los obstáculos
       </span>
     </div>
   );

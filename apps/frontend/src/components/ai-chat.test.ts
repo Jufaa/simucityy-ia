@@ -32,7 +32,8 @@ it('shows the conversation, an input to describe the city and a build button onc
   );
   expect(html).toContain('quiero un rio ancho');
   expect(html).toContain('Propongo Ribera Baja');
-  expect(html).toContain('Escribí cómo querés tu ciudad');
-  expect(html).toContain('Construir esta ciudad');
+  expect(html).toContain('Describe your city');
+  expect(html).toContain('Build this city');
   expect(html).toContain('Meta AI');
+  expect(html).toContain('Dictate');
 });

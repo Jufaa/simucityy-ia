@@ -41,7 +41,16 @@ import {
   type RandomCityProfile,
 } from './random-city-profile';
 import { requestAiCityPlan, type AiCityPlanResult } from './ai-city';
-import { requestInterventions } from './ai-agent';
+import { requestEmergencyReport, requestInterventions } from './ai-agent';
+import { requestCitizenVoice, type CitizenVoiceResult } from './citizen-voice';
+import { resilienceGrade, resilienceScore, buildShareText } from './resilience';
+import { buildAlertMessages } from './alerts';
+import {
+  CitizenVoicePanel,
+  NewsTicker,
+  ShareResultButton,
+  WhatsAppPanel,
+} from './extras-panel';
 import { pickAutoDrainPoints } from './auto-drains';
 import { AgentPanel, AiCityPanel, type AgentHistoryEntry } from './ai-panels';
 import { CityStartScreen } from './city-start-screen';
@@ -61,6 +70,9 @@ import { CityToolbar } from './city-toolbar';
 import { createOrganicCity } from './organic-city-model';
 import { createRealCity, type RealCitySource } from './real-city-model';
 import { RealCityImporter } from './real-city-importer';
+import { RealCityImportScreen } from './real-city-import-screen';
+import { simField, simTheme } from './ui-theme';
+import { LanguageContext, pick, type AppLanguage } from './language';
 import eixampleSourceJson from '../data/eixample-source.json';
 
 const eixampleSource = eixampleSourceJson as unknown as RealCitySource;
@@ -197,7 +209,16 @@ export default function Scene() {
   const [agentIteration, setAgentIteration] = useState(0);
   const [agentDone, setAgentDone] = useState(false);
   const [agentHistory, setAgentHistory] = useState<AgentHistoryEntry[]>([]);
-  const [started, setStarted] = useState(false);
+  const [screen, setScreen] = useState<'create' | 'import' | 'sim'>('create');
+  const started = screen === 'sim';
+  const [language, setLanguage] = useState<AppLanguage>('en');
+  const tx = (en: string, es: string) => pick(language, en, es);
+  const [mayorBusy, setMayorBusy] = useState(false);
+  const agentIterationRef = useRef(0);
+  const [citizenBusy, setCitizenBusy] = useState(false);
+  const [citizenAnswer, setCitizenAnswer] = useState<
+    (CitizenVoiceResult & { citizenId: string }) | null
+  >(null);
   // Preloaded real district (OSM + DEM), converted locally; no live API calls.
   const realCity = useMemo(
     () => (layoutMode === 'real' ? createRealCity(eixampleSource).city : null),
@@ -274,6 +295,7 @@ export default function Scene() {
     hazardPreset('tsunami').waveHeightInMeters ?? 2.2,
   );
   const waveHeightRef = useRef(waveHeightInMeters);
+  agentIterationRef.current = agentIteration;
   waveHeightRef.current = waveHeightInMeters;
   const [earthquakeMagnitude, setEarthquakeMagnitude] = useState<number>(
     hazardPreset('earthquake').magnitude ?? 6.8,
@@ -308,7 +330,9 @@ export default function Scene() {
   // 1. Pedir la ciudad al backend (recien cuando el usuario eligio
   // como crearla; la pantalla inicial no genera ni renderiza nada)
   useEffect(() => {
-    if (!started || sourceCity) return;
+    // An imported zone is already a complete city: do not request the
+    // synthetic source city behind it.
+    if (!started || sourceCity || importedCity) return;
     let cancelled = false;
 
     (async () => {
@@ -350,7 +374,7 @@ export default function Scene() {
     return () => {
       cancelled = true;
     };
-  }, [started, sourceCity]);
+  }, [started, sourceCity, importedCity]);
 
   // 2. Dibujar cuando llega la ciudad
   useEffect(() => {
@@ -1317,65 +1341,123 @@ export default function Scene() {
     applyAiPlan(await planAiCity(description));
   }
 
-  async function runAgentIteration() {
+  /**
+   * One agent iteration against the freshest measured comparison.
+   * Returns true when the loop should stop (model done or cap reached).
+   */
+  async function agentStep(): Promise<boolean> {
     const simulation = simulationRef.current;
-    if (!simulation || !comparison || !city?.terrainGrid) return;
-    const iteration = agentIteration + 1;
+    if (!simulation || !city?.terrainGrid) return true;
+    const measured = simulation.comparison;
+    const iteration = agentIterationRef.current + 1;
+    const plan = await requestInterventions({
+      hazardKind,
+      objective:
+        'Reducir edificios expuestos, personas atrapadas y agua maxima',
+      iteration,
+      before: {
+        evacuated: measured.before.evacuated,
+        trapped: measured.before.trapped,
+        exposedBuildings: measured.before.exposedBuildings,
+        blockedRoadsPeak: measured.before.peakBlocked,
+        maxWaterDepthInMeters: measured.before.peakDepth,
+      },
+      after: {
+        evacuated: measured.after.evacuated,
+        trapped: measured.after.trapped,
+        exposedBuildings: measured.after.exposedBuildings,
+        blockedRoadsPeak: measured.after.peakBlocked,
+        maxWaterDepthInMeters: measured.after.peakDepth,
+      },
+      vulnerableExposed,
+      vulnerableTotal: vulnerableBuildings.length,
+      shelterOccupancy,
+      shelterCapacity,
+      currentDrains: userDrains.length,
+    });
+    setAgentHistory((history) => [
+      ...history,
+      {
+        iteration,
+        drains: plan.drains,
+        source: plan.source,
+        rationale: plan.rationale,
+      },
+    ]);
+    setAgentIteration(iteration);
+    agentIterationRef.current = iteration;
+    if (plan.done || iteration >= 3) {
+      setAgentDone(true);
+      return true;
+    }
+    const points = pickAutoDrainPoints(city.terrainGrid, plan.drains, 30);
+    setUserDrains(points);
+    simulation.applyExtraDrains(points);
+    simulation.applyMeasure({
+      earlyWarning: plan.earlyWarning,
+      reinforcement: plan.reinforcement,
+    });
+    setRunning(false);
+    setFlood(simulation.snapshot);
+    setComparison(simulation.comparison);
+    setAlarmTime(simulation.alarmTime);
+    setStructural(simulation.structural);
+    return false;
+  }
+
+  async function runAgentIteration() {
+    if (agentBusy) return;
     setAgentBusy(true);
     try {
-      const plan = await requestInterventions({
-        hazardKind,
-        objective:
-          'Reducir edificios expuestos, personas atrapadas y agua maxima',
-        iteration,
-        before: {
-          evacuated: comparison.before.evacuated,
-          trapped: comparison.before.trapped,
-          exposedBuildings: comparison.before.exposedBuildings,
-          blockedRoadsPeak: comparison.before.peakBlocked,
-          maxWaterDepthInMeters: comparison.before.peakDepth,
-        },
-        after: {
-          evacuated: comparison.after.evacuated,
-          trapped: comparison.after.trapped,
-          exposedBuildings: comparison.after.exposedBuildings,
-          blockedRoadsPeak: comparison.after.peakBlocked,
-          maxWaterDepthInMeters: comparison.after.peakDepth,
-        },
-        vulnerableExposed,
-        vulnerableTotal: vulnerableBuildings.length,
-        shelterOccupancy,
-        shelterCapacity,
-        currentDrains: userDrains.length,
-      });
-      setAgentHistory((history) => [
-        ...history,
-        {
-          iteration,
-          drains: plan.drains,
-          source: plan.source,
-          rationale: plan.rationale,
-        },
-      ]);
-      setAgentIteration(iteration);
-      if (plan.done || iteration >= 3) {
-        setAgentDone(true);
-        return;
-      }
-      const points = pickAutoDrainPoints(city.terrainGrid, plan.drains, 30);
-      setUserDrains(points);
-      simulation.applyExtraDrains(points);
-      simulation.applyMeasure({
-        earlyWarning: plan.earlyWarning,
-        reinforcement: plan.reinforcement,
-      });
-      setRunning(false);
-      setFlood(simulation.snapshot);
-      setComparison(simulation.comparison);
-      setAlarmTime(simulation.alarmTime);
-      setStructural(simulation.structural);
+      await agentStep();
     } finally {
       setAgentBusy(false);
+    }
+  }
+
+  /** Autonomous mayor: iterate, fast-forward the event, measure again. */
+  async function runMayorAgent() {
+    if (mayorBusy || agentBusy) return;
+    setMayorBusy(true);
+    setAgentBusy(true);
+    try {
+      for (let round = 0; round < 3; round += 1) {
+        const done = await agentStep();
+        const simulation = simulationRef.current;
+        if (done || !simulation) break;
+        simulation.start();
+        simulation.advance(20);
+        simulation.pause();
+        setRunning(false);
+        setFlood(simulation.snapshot);
+        setComparison(simulation.comparison);
+        setAlarmTime(simulation.alarmTime);
+        setStructural(simulation.structural);
+        await new Promise((resolve) => setTimeout(resolve, 600));
+      }
+    } finally {
+      setAgentBusy(false);
+      setMayorBusy(false);
+    }
+  }
+
+  async function askCitizen(citizenId: string) {
+    const simulation = simulationRef.current;
+    const citizen = simulation?.evacuation.citizens.find(
+      (item) => item.id === citizenId,
+    );
+    if (!citizen) return;
+    setCitizenBusy(true);
+    try {
+      const answer = await requestCitizenVoice({
+        status: citizen.status,
+        hazardKind,
+        shelterAssigned: citizen.shelterId !== null,
+        elapsedMinutes: (flood?.elapsedTimeInSeconds ?? 0) / 60,
+      });
+      setCitizenAnswer({ ...answer, citizenId });
+    } finally {
+      setCitizenBusy(false);
     }
   }
 
@@ -1416,28 +1498,53 @@ export default function Scene() {
 
   const startScreen = (
     <CityStartScreen
+      onLanguageChange={setLanguage}
       aiBusy={aiBusy}
       onAiChat={planAiCity}
       onBuildAi={(plan) => {
         applyAiPlan(plan);
-        setStarted(true);
+        setScreen('sim');
       }}
       onRandom={() => {
         generateRandomCity();
-        setStarted(true);
+        setScreen('sim');
       }}
       onImportZone={() => {
-        setStarted(true);
+        // Full-screen importer step: entering it must not request,
+        // generate or render the synthetic city behind it.
         setPanelOpen(false);
-        setImportCardOpen(true);
+        setImportCardOpen(false);
+        setScreen('import');
       }}
       onSeed={(seed) => {
         regenerateCity(seed, true);
-        setStarted(true);
+        setScreen('sim');
       }}
     />
   );
 
+  if (screen === 'create')
+    return (
+      <LanguageContext.Provider value={language}>
+        <main style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+          {startScreen}
+        </main>
+      </LanguageContext.Provider>
+    );
+  if (screen === 'import')
+    return (
+      <LanguageContext.Provider value={language}>
+        <RealCityImportScreen
+          onLanguageChange={setLanguage}
+          onBack={() => setScreen('create')}
+          onImported={(next) => {
+            applyImportedCity(next);
+            setImportCardOpen(false);
+            setScreen('sim');
+          }}
+        />
+      </LanguageContext.Provider>
+    );
   if (error) {
     return (
       <div style={{ padding: 20, color: 'salmon', fontFamily: 'monospace' }}>
@@ -1445,12 +1552,6 @@ export default function Scene() {
       </div>
     );
   }
-  if (!started)
-    return (
-      <main style={{ position: 'relative', width: '100vw', height: '100vh' }}>
-        {startScreen}
-      </main>
-    );
   if (!city) return <LoadingScreen message="Generando la ciudad…" />;
   const zoneLabel = city?.real
     ? city.real.name
@@ -1522,7 +1623,22 @@ export default function Scene() {
           shelterCapacity,
         })
       : [];
-  const timelineEvents = buildEventLog(eventSamples);
+  const scoreOf = (
+    metrics: DistrictSimulation['comparison']['before'],
+  ): number =>
+    resilienceScore({
+      totalPeople: city.citizens?.length ?? 0,
+      evacuated: metrics.evacuated,
+      trapped: metrics.trapped,
+      stranded: metrics.stranded,
+      exposedBuildings: metrics.exposedBuildings,
+      totalBuildings: city.buildings.length,
+      blockedRoadsPeak: metrics.peakBlocked,
+      maxWaterDepthInMeters: metrics.peakDepth,
+    });
+  const scoreBefore = comparison ? scoreOf(comparison.before) : null;
+  const scoreAfter = comparison ? scoreOf(comparison.after) : null;
+  const timelineEvents = buildEventLog(eventSamples, language);
   const inspectedBuilding = inspectedId
     ? (city?.buildings.find((building) => building.id === inspectedId) ?? null)
     : null;
@@ -1577,19 +1693,40 @@ export default function Scene() {
     refreshHazardEffectsRef.current?.();
   };
 
-  const downloadCurrentReport = () => {
+  const emergencyReportLines = async (): Promise<string[]> => {
+    if (!comparison) return [];
+    const result = await requestEmergencyReport({
+      zoneLabel,
+      hazardLabel: hazardPreset(hazardKind).label,
+      score: scoreAfter ?? 0,
+      evacuated: comparison.after.evacuated,
+      totalPeople: city.citizens?.length ?? 0,
+      trapped: comparison.after.trapped,
+      exposedBuildings: comparison.after.exposedBuildings,
+      damagedBuildings: comparison.after.damagedBuildings,
+      maxWaterDepthInMeters: comparison.after.peakDepth,
+      recommendations: recommendationLines,
+    });
+    return [
+      `Informe de emergencia (${result.source === 'meta' ? 'Meta AI' : 'Sin IA, local'}):`,
+      result.report,
+    ];
+  };
+
+  const downloadCurrentReport = async () => {
     if (!impactSummary) return;
     downloadReport(
       buildReport({
         zoneLabel,
         hazardLabel: hazardPreset(hazardKind).label,
         summary: impactSummary,
-        narrative: impactNarrative,
+        narrative: [...impactNarrative, ...(await emergencyReportLines())],
         comparisonLines: comparison
           ? [
               `Evacuadas: ${comparison.before.evacuated} → ${comparison.after.evacuated}`,
               `Edificios expuestos: ${comparison.before.exposedBuildings} → ${comparison.after.exposedBuildings}`,
               `Tramos bloqueados (pico): ${comparison.before.peakBlocked} → ${comparison.after.peakBlocked}`,
+              `Resiliencia: ${scoreBefore}/100 → ${scoreAfter}/100`,
             ]
           : [],
       }),
@@ -1598,868 +1735,333 @@ export default function Scene() {
   };
 
   return (
-    <main style={{ position: 'relative', width: '100vw', height: '100vh' }}>
-      <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
-      <CityToolbar
-        buildings={city.buildings.length}
-        people={city.citizens?.length ?? 0}
-        seed={city.config.seed ?? 1}
-        organic={!!city.organic}
-        running={running}
-        ready={!!flood && !floodError}
-        panelOpen={panelOpen}
-        view={worldView}
-        elapsedSeconds={flood?.elapsedTimeInSeconds ?? 0}
-        assetStatus={assetStatus}
-        hazard={hazardKind}
-        onHazard={applyHazard}
-        waveHeightInMeters={waveHeightInMeters}
-        earthquakeMagnitude={earthquakeMagnitude}
-        timeScale={timeScale}
-        onTimeScale={(scale) => {
-          timeScaleRef.current = scale;
-          setTimeScale(scale);
-        }}
-        onPanelToggle={() => {
-          setImportCardOpen(false);
-          setPanelOpen((open) => !open);
-        }}
-        onImportZone={() => {
-          setPanelOpen(false);
-          setImportCardOpen(true);
-        }}
-        onRandom={generateRandomCity}
-        onView={(view) => {
-          cameraViewRef.current = view;
-          setWorldView(view);
-          focusViewRef.current?.(view);
-        }}
-        onToggle={toggleFlood}
-        onReset={resetFlood}
-      />
-      <button
-        type="button"
-        onClick={() => {
-          setPanelOpen(true);
-          applyDemoStep(0);
-        }}
-        style={{
-          position: 'absolute',
-          top: 104,
-          left: 16,
-          padding: '10px 14px',
-          borderRadius: 10,
-          border: 0,
-          background: '#1d6f5c',
-          color: 'white',
-          font: '600 14px system-ui',
-          cursor: 'pointer',
-          boxShadow: '0 4px 16px #0003',
-        }}
-      >
-        ▶ Demo guiada
-      </button>
-      <button
-        type="button"
-        onClick={() => {
-          setRunning(false);
-          setFlood(null);
-          setComparison(null);
-          setAlarmTime(null);
-          setStructural(null);
-          setImportedCity(null);
-          setHazardKind('rain');
-          cameraViewRef.current = 'city';
-          setWorldView('city');
-          setLayoutMode('real');
-        }}
-        style={{
-          position: 'absolute',
-          top: 152,
-          left: 16,
-          padding: '10px 14px',
-          borderRadius: 10,
-          border: 0,
-          background: '#2456a6',
-          color: 'white',
-          font: '600 14px system-ui',
-          cursor: 'pointer',
-          boxShadow: '0 4px 16px #0003',
-        }}
-      >
-        🌧 Demo: Eixample + lluvia
-      </button>
-      <button
-        type="button"
-        onClick={() => setStarted(false)}
-        style={{
-          position: 'absolute',
-          top: 200,
-          left: 16,
-          padding: '10px 14px',
-          borderRadius: 10,
-          border: 0,
-          background: '#33424a',
-          color: 'white',
-          font: '600 14px system-ui',
-          cursor: 'pointer',
-          boxShadow: '0 4px 16px #0003',
-        }}
-      >
-        Crear otra ciudad
-      </button>
-      <output
-        aria-label="Rendimiento de la ciudad"
-        style={{
-          position: 'absolute',
-          top: 104,
-          right: 16,
-          padding: '8px 12px',
-          borderRadius: 10,
-          background: '#f9fcfaf0',
-          color: '#20353a',
-          font: '12px system-ui',
-          pointerEvents: 'none',
-        }}
-      >
-        {measurement ? (
-          <>
-            {measurement.fps.toFixed(0)} FPS ·{' '}
-            {measurement.frameMilliseconds.toFixed(1)} ms/cuadro
-            <br />
-            CPU render: {measurement.renderMilliseconds.toFixed(1)} ms ·{' '}
-            {measurement.drawCalls} draw calls
-            <br />
-            {measurement.triangles.toLocaleString('es')} triángulos ·{' '}
-            {trafficCount} vehículos
-          </>
-        ) : (
-          'Midiendo rendimiento…'
-        )}
-      </output>
-      {flood && !floodError && (
-        <aside
-          aria-label="Configurar y lanzar la simulación"
+    <LanguageContext.Provider value={language}>
+      <main style={{ position: 'relative', width: '100vw', height: '100vh' }}>
+        <div ref={mountRef} style={{ width: '100%', height: '100%' }} />
+        <CityToolbar
+          buildings={city.buildings.length}
+          people={city.citizens?.length ?? 0}
+          seed={city.config.seed ?? 1}
+          organic={!!city.organic}
+          running={running}
+          ready={!!flood && !floodError}
+          panelOpen={panelOpen}
+          view={worldView}
+          elapsedSeconds={flood?.elapsedTimeInSeconds ?? 0}
+          assetStatus={assetStatus}
+          hazard={hazardKind}
+          onHazard={applyHazard}
+          waveHeightInMeters={waveHeightInMeters}
+          earthquakeMagnitude={earthquakeMagnitude}
+          timeScale={timeScale}
+          onTimeScale={(scale) => {
+            timeScaleRef.current = scale;
+            setTimeScale(scale);
+          }}
+          onPanelToggle={() => {
+            setImportCardOpen(false);
+            setPanelOpen((open) => !open);
+          }}
+          onImportZone={() => {
+            setPanelOpen(false);
+            setImportCardOpen(true);
+          }}
+          onRandom={generateRandomCity}
+          onView={(view) => {
+            cameraViewRef.current = view;
+            setWorldView(view);
+            focusViewRef.current?.(view);
+          }}
+          onToggle={toggleFlood}
+          onReset={resetFlood}
+          onLanguageChange={setLanguage}
+        />
+        <button
+          type="button"
+          onClick={() => {
+            setPanelOpen(true);
+            applyDemoStep(0);
+          }}
           style={{
             position: 'absolute',
-            top: 168,
-            right: 16,
-            width: 248,
-            padding: 14,
-            borderRadius: 12,
-            background: 'rgba(255,255,255,0.96)',
-            color: '#17252a',
-            fontFamily: 'system-ui, sans-serif',
-            boxShadow: '0 4px 24px #0002',
-            zIndex: 5,
+            top: 104,
+            left: 16,
+            padding: '10px 14px',
+            borderRadius: 10,
+            border: 0,
+            background: simTheme.primaryBackground,
+            color: 'white',
+            font: '600 14px system-ui',
+            cursor: 'pointer',
+            boxShadow: '0 10px 28px rgba(0,0,0,0.45)',
           }}
         >
-          <strong style={{ fontSize: 14 }}>⏱ Simulación</strong>
-          <p style={{ fontSize: 11, margin: '6px 0 0', color: '#425466' }}>
-            La catástrofe se elige en la barra superior y la velocidad con los
-            botones ×1…×64 de abajo; acá queda solo lo propio de esta corrida.
-          </p>
-          {(hazardKind === 'rain' || hazardKind === 'river-overflow') && (
-            <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
-              Intensidad de lluvia: {rainIntensity} mm/h
-              <input
-                aria-label="Intensidad de lluvia"
-                type="range"
-                min={20}
-                max={200}
-                step={5}
-                value={rainIntensity}
-                disabled={!!simulationRef.current?.started}
-                onChange={(event) => {
-                  setRainIntensity(Number(event.target.value));
-                  rainIntensityRef.current = Number(event.target.value);
-                  if (!simulationRef.current?.started)
-                    simulationRef.current?.applyRainIntensity(
-                      Number(event.target.value),
-                    );
-                }}
-                style={{ width: '100%', marginTop: 3 }}
-              />
-              {simulationRef.current?.started
-                ? 'Se ajusta antes de iniciar (o al reiniciar).'
-                : 'Aplica al iniciar la simulación.'}
-            </label>
+          {tx('Guided demo', 'Demo guiada')}
+        </button>
+        <button
+          type="button"
+          onClick={() => {
+            setRunning(false);
+            setFlood(null);
+            setComparison(null);
+            setAlarmTime(null);
+            setStructural(null);
+            setImportedCity(null);
+            setHazardKind('rain');
+            cameraViewRef.current = 'city';
+            setWorldView('city');
+            setLayoutMode('real');
+          }}
+          style={{
+            position: 'absolute',
+            top: 152,
+            left: 16,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: simTheme.panel,
+            border: `1px solid ${simTheme.border}`,
+            backdropFilter: 'blur(12px)',
+            color: simTheme.ink,
+            font: '600 14px system-ui',
+            cursor: 'pointer',
+            boxShadow: '0 10px 28px rgba(0,0,0,0.45)',
+          }}
+        >
+          {tx('Real Eixample + rain', 'Eixample real + lluvia')}
+        </button>
+        <button
+          type="button"
+          onClick={() => setScreen('create')}
+          style={{
+            position: 'absolute',
+            top: 200,
+            left: 16,
+            padding: '10px 14px',
+            borderRadius: 10,
+            background: simTheme.panel,
+            border: `1px solid ${simTheme.border}`,
+            backdropFilter: 'blur(12px)',
+            color: simTheme.ink,
+            font: '600 14px system-ui',
+            cursor: 'pointer',
+            boxShadow: '0 10px 28px rgba(0,0,0,0.45)',
+          }}
+        >
+          {tx('Create another city', 'Crear otra ciudad')}
+        </button>
+        <output
+          aria-label="Rendimiento de la ciudad"
+          style={{
+            position: 'absolute',
+            top: 104,
+            right: 16,
+            padding: '8px 12px',
+            borderRadius: 10,
+            background: simTheme.panel,
+            border: `1px solid ${simTheme.border}`,
+            backdropFilter: 'blur(12px)',
+            color: simTheme.ink,
+            font: '12px system-ui',
+            pointerEvents: 'none',
+          }}
+        >
+          {measurement ? (
+            <>
+              {measurement.fps.toFixed(0)} FPS ·{' '}
+              {measurement.frameMilliseconds.toFixed(1)} ms/cuadro
+              <br />
+              CPU render: {measurement.renderMilliseconds.toFixed(1)} ms ·{' '}
+              {measurement.drawCalls} draw calls
+              <br />
+              {measurement.triangles.toLocaleString('es')} triángulos ·{' '}
+              {trafficCount} vehículos
+            </>
+          ) : (
+            'Midiendo rendimiento…'
           )}
-          {hazardKind === 'tsunami' && (
-            <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
-              Altura de la ola: {waveHeightInMeters} m
-              <input
-                aria-label="Altura de la ola del tsunami"
-                type="range"
-                min={TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS.min}
-                max={TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS.max}
-                step={0.5}
-                value={waveHeightInMeters}
-                disabled={!!simulationRef.current?.started}
-                onChange={(event) => {
-                  setWaveHeightInMeters(Number(event.target.value));
-                  waveHeightRef.current = Number(event.target.value);
-                  if (!simulationRef.current?.started)
-                    simulationRef.current?.applyWaveHeightInMeters(
-                      Number(event.target.value),
-                    );
-                }}
-                style={{ width: '100%', marginTop: 3 }}
-              />
-              La mayoría de los tsunamis llega con menos de 3 m; Japón 2011
-              rondó los 10 m en la costa. Máximo ofrecido: 20 m.
-              {simulationRef.current?.started
-                ? ' Se ajusta antes de iniciar (o al reiniciar).'
-                : ''}
-            </label>
-          )}
-          {hazardKind === 'earthquake' && (
-            <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
-              Magnitud: {earthquakeMagnitude.toFixed(1)}
-              <input
-                aria-label="Magnitud del terremoto"
-                type="range"
-                min={EARTHQUAKE_MAGNITUDE_LIMITS.min}
-                max={EARTHQUAKE_MAGNITUDE_LIMITS.max}
-                step={0.1}
-                value={earthquakeMagnitude}
-                disabled={!!simulationRef.current?.started}
-                onChange={(event) => {
-                  setEarthquakeMagnitude(Number(event.target.value));
-                  earthquakeMagnitudeRef.current = Number(event.target.value);
-                  if (!simulationRef.current?.started)
-                    simulationRef.current?.applyEarthquakeMagnitude(
-                      Number(event.target.value),
-                    );
-                }}
-                style={{ width: '100%', marginTop: 3 }}
-              />
-              El daño empieza cerca de 5; el mayor registrado es 9,5 (Chile,
-              1960) y la escala no pasa de ahí.
-              {simulationRef.current?.started
-                ? ' Se ajusta antes de iniciar (o al reiniciar).'
-                : ''}
-            </label>
-          )}
-          <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
-            ¿Cuánto tiempo simular? Escribí los minutos del mundo simulado
-            que quieras; si lo dejás vacío, no termina sola y la cortás vos
-            con “Terminar y ver resumen”.
-            <input
-              aria-label="Duración de la simulación en minutos"
-              type="number"
-              min={1}
-              step={1}
-              inputMode="numeric"
-              placeholder="Sin límite"
-              value={durationMinutes > 0 ? durationMinutes : ''}
-              onChange={(event) => {
-                const raw = event.target.value;
-                if (raw === '') {
-                  setDurationMinutes(0);
-                  return;
-                }
-                const value = Number(raw);
-                if (Number.isFinite(value) && value >= 0)
-                  setDurationMinutes(Math.floor(value));
-              }}
-              style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
-            />
-          </label>
-          <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
-            Comparación de la mejora
-            <select
-              aria-label="Comparación de la mejora"
-              value={arm}
-              onChange={(event) => {
-                const selected = event.target.value as ComparisonArm;
-                armRef.current = selected;
-                setArm(selected);
-                const simulation = simulationRef.current;
-                if (simulation) {
-                  simulation.selectArm(selected);
-                  setFlood(simulation.snapshot);
-                  setComparison(simulation.comparison);
-                  setStructural(simulation.structural);
-                  refreshHazardEffectsRef.current?.();
-                }
-              }}
-              style={{ width: '100%', marginTop: 3, padding: '6px 8px' }}
-            >
-              <option value="before">Sin mejora · ciudad original</option>
-              <option value="after">Con mejora · ciudad protegida</option>
-            </select>
-            <span
-              style={{
-                display: 'block',
-                marginTop: 4,
-                fontSize: 11,
-                color: '#425466',
-              }}
-            >
-              La misma catástrofe se corre dos veces: sin tocar la ciudad y
-              con la mejora activada (drenajes en lluvia, alerta en tsunami,
-              refuerzo en terremoto/viento). Esto solo cambia cuál de las dos
-              versiones estás mirando, para comparar el daño.
-            </span>
-          </label>
-          <div
-            aria-label="Progreso de la simulación"
+        </output>
+        {flood && timelineEvents.length > 0 && (
+          <NewsTicker
+            headline={timelineEvents[timelineEvents.length - 1]?.text ?? ''}
+            detail={`${tx('Evacuated', 'Evacuados')} ${comparison?.[arm].evacuated ?? 0}/${city.citizens?.length ?? 0} · ${tx('Resilience', 'Resiliencia')} ${scoreAfter ?? '—'}/100`}
+          />
+        )}
+        {flood && !floodError && (
+          <aside
+            aria-label="Configurar y lanzar la simulación"
             style={{
-              height: 8,
-              borderRadius: 4,
-              background: '#dbe4e6',
-              marginTop: 12,
-              overflow: 'hidden',
+              position: 'absolute',
+              top: 168,
+              right: 16,
+              width: 248,
+              padding: 14,
+              borderRadius: 16,
+              background: simTheme.panelStrong,
+              border: `1px solid ${simTheme.border}`,
+              backdropFilter: 'blur(12px)',
+              color: simTheme.ink,
+              fontFamily: 'system-ui, sans-serif',
+              boxShadow: '0 18px 50px rgba(0,0,0,0.45)',
+              zIndex: 5,
             }}
           >
-            <div
-              style={{
-                height: '100%',
-                width: `${Math.round(simulationProgress(flood.elapsedTimeInSeconds, durationMinutes) * 100)}%`,
-                background: '#24655e',
-                transition: 'width 0.3s',
-              }}
-            />
-          </div>
-          <p style={{ fontSize: 11, margin: '5px 0 0', color: '#425466' }}>
-            {durationMinutes > 0
-              ? `${Math.floor(flood.elapsedTimeInSeconds / 60)} / ${durationMinutes} min`
-              : `${Math.floor(flood.elapsedTimeInSeconds / 60)} min · sin límite`}{' '}
-            ·{' '}
-            {running
-              ? 'En marcha'
-              : simulationRef.current?.started
-                ? 'En pausa'
-                : 'Lista para iniciar'}
-          </p>
-          {(hazardKind === 'rain' || hazardKind === 'river-overflow') && (
-            <>
-              <button
-                type="button"
-                onClick={() => setDrainMode((mode) => !mode)}
-                style={{
-                  width: '100%',
-                  marginTop: 10,
-                  padding: '9px 12px',
-                  borderRadius: 10,
-                  border: drainMode ? '2px solid #1d7fd4' : '1px solid #b6c4c9',
-                  background: drainMode ? '#e3f0fb' : '#fff',
-                  color: '#20353a',
-                  font: '600 13px system-ui',
-                  cursor: 'pointer',
-                }}
-              >
-                {drainMode
-                  ? '📍 Tocá el mapa para sumar drenajes…'
-                  : `📍 Colocar drenajes (${userDrains.length})`}
-              </button>
-              {userDrains.length > 0 && (
-                <button
-                  type="button"
-                  onClick={() => {
-                    setUserDrains([]);
-                    simulationRef.current?.applyExtraDrains([]);
+            <strong style={{ fontSize: 14, color: '#fff' }}>
+              {tx('Simulation', 'Simulación')}
+            </strong>
+            <p
+              style={{ fontSize: 11, margin: '6px 0 0', color: simTheme.muted }}
+            >
+              {tx(
+                'The hazard is chosen in the top bar and the speed with the ×1…×64 buttons below; this panel only holds settings for this run.',
+                'La catástrofe se elige en la barra superior y la velocidad con los botones ×1…×64 de abajo; acá queda solo lo propio de esta corrida.',
+              )}
+            </p>
+            {(hazardKind === 'rain' || hazardKind === 'river-overflow') && (
+              <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+                {tx('Rain intensity', 'Intensidad de lluvia')}: {rainIntensity}{' '}
+                mm/h
+                <input
+                  aria-label="Intensidad de lluvia"
+                  type="range"
+                  min={20}
+                  max={200}
+                  step={5}
+                  value={rainIntensity}
+                  disabled={!!simulationRef.current?.started}
+                  onChange={(event) => {
+                    setRainIntensity(Number(event.target.value));
+                    rainIntensityRef.current = Number(event.target.value);
+                    if (!simulationRef.current?.started)
+                      simulationRef.current?.applyRainIntensity(
+                        Number(event.target.value),
+                      );
                   }}
                   style={{
                     width: '100%',
-                    marginTop: 6,
-                    padding: '7px 10px',
-                    borderRadius: 10,
-                    border: '1px solid #b6c4c9',
-                    background: '#fff',
-                    color: '#20353a',
-                    font: '600 12px system-ui',
-                    cursor: 'pointer',
+                    marginTop: 3,
+                    accentColor: simTheme.accent,
                   }}
-                >
-                  Quitar drenajes colocados
-                </button>
+                />
+                {simulationRef.current?.started
+                  ? tx(
+                      'Set it before starting (or on restart).',
+                      'Se ajusta antes de iniciar (o al reiniciar).',
+                    )
+                  : tx(
+                      'Applies when the simulation starts.',
+                      'Aplica al iniciar la simulación.',
+                    )}
+              </label>
+            )}
+            {hazardKind === 'tsunami' && (
+              <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+                {tx('Wave height', 'Altura de la ola')}: {waveHeightInMeters} m
+                <input
+                  aria-label="Altura de la ola del tsunami"
+                  type="range"
+                  min={TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS.min}
+                  max={TSUNAMI_WAVE_HEIGHT_LIMITS_IN_METERS.max}
+                  step={0.5}
+                  value={waveHeightInMeters}
+                  disabled={!!simulationRef.current?.started}
+                  onChange={(event) => {
+                    setWaveHeightInMeters(Number(event.target.value));
+                    waveHeightRef.current = Number(event.target.value);
+                    if (!simulationRef.current?.started)
+                      simulationRef.current?.applyWaveHeightInMeters(
+                        Number(event.target.value),
+                      );
+                  }}
+                  style={{
+                    width: '100%',
+                    marginTop: 3,
+                    accentColor: simTheme.accent,
+                  }}
+                />
+                {tx(
+                  'Most tsunamis arrive under 3 m; Japan 2011 reached about 10 m at the coast. Maximum offered: 20 m.',
+                  'La mayoría de los tsunamis llega con menos de 3 m; Japón 2011 rondó los 10 m en la costa. Máximo ofrecido: 20 m.',
+                )}
+                {simulationRef.current?.started
+                  ? tx(
+                      ' Set it before starting (or on restart).',
+                      ' Se ajusta antes de iniciar (o al reiniciar).',
+                    )
+                  : ''}
+              </label>
+            )}
+            {hazardKind === 'earthquake' && (
+              <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+                {tx('Magnitude', 'Magnitud')}: {earthquakeMagnitude.toFixed(1)}
+                <input
+                  aria-label="Magnitud del terremoto"
+                  type="range"
+                  min={EARTHQUAKE_MAGNITUDE_LIMITS.min}
+                  max={EARTHQUAKE_MAGNITUDE_LIMITS.max}
+                  step={0.1}
+                  value={earthquakeMagnitude}
+                  disabled={!!simulationRef.current?.started}
+                  onChange={(event) => {
+                    setEarthquakeMagnitude(Number(event.target.value));
+                    earthquakeMagnitudeRef.current = Number(event.target.value);
+                    if (!simulationRef.current?.started)
+                      simulationRef.current?.applyEarthquakeMagnitude(
+                        Number(event.target.value),
+                      );
+                  }}
+                  style={{
+                    width: '100%',
+                    marginTop: 3,
+                    accentColor: simTheme.accent,
+                  }}
+                />
+                {tx(
+                  'Damage starts near 5; the largest recorded is 9.5 (Chile, 1960) and the scale does not go beyond that.',
+                  'El daño empieza cerca de 5; el mayor registrado es 9,5 (Chile, 1960) y la escala no pasa de ahí.',
+                )}
+                {simulationRef.current?.started
+                  ? tx(
+                      ' Set it before starting (or on restart).',
+                      ' Se ajusta antes de iniciar (o al reiniciar).',
+                    )
+                  : ''}
+              </label>
+            )}
+            <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+              {tx(
+                'How long to simulate? Enter the simulated minutes you want; leave it empty and it will not end on its own — you stop it with “Finish and view summary”.',
+                '¿Cuánto tiempo simular? Escribí los minutos del mundo simulado que quieras; si lo dejás vacío, no termina sola y la cortás vos con “Terminar y ver resumen”.',
               )}
-            </>
-          )}
-          {(hazardKind === 'tsunami' ||
-            hazardKind === 'earthquake' ||
-            hazardKind === 'strong-wind') && (
-            <button
-              type="button"
-              onClick={() => {
-                const next = !hazardMeasure;
-                setHazardMeasure(next);
-                hazardMeasureRef.current = next;
-                simulationRef.current?.applyMeasure({
-                  earlyWarning: hazardKind === 'tsunami' && next,
-                  reinforcement: next,
-                });
-              }}
-              style={{
-                width: '100%',
-                marginTop: 10,
-                padding: '9px 12px',
-                borderRadius: 10,
-                border: hazardMeasure
-                  ? '2px solid #1d7fd4'
-                  : '1px solid #b6c4c9',
-                background: hazardMeasure ? '#e3f0fb' : '#fff',
-                color: '#20353a',
-                font: '600 13px system-ui',
-                cursor: 'pointer',
-              }}
-            >
-              {hazardKind === 'tsunami'
-                ? hazardMeasure
-                  ? '📢 Alerta temprana activada (mejora)'
-                  : '📢 Activar alerta temprana'
-                : hazardKind === 'earthquake'
-                  ? hazardMeasure
-                    ? '🏗 Refuerzo estructural activado (mejora)'
-                    : '🏗 Activar refuerzo estructural'
-                  : hazardMeasure
-                    ? '🪟 Protección de fachadas activada (mejora)'
-                    : '🪟 Activar protección de fachadas'}
-            </button>
-          )}
-          {timelineEvents.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <strong style={{ fontSize: 12 }}>🕐 Línea de tiempo</strong>
-              <ul
-                style={{
-                  margin: '6px 0 0',
-                  paddingLeft: 16,
-                  fontSize: 11,
-                  color: '#425466',
-                }}
-              >
-                {timelineEvents.map((event) => (
-                  <li key={event.text}>{event.text}</li>
-                ))}
-              </ul>
-            </div>
-          )}
-          {savedScenarios.length > 0 && (
-            <div style={{ marginTop: 12 }}>
-              <strong style={{ fontSize: 12 }}>💾 Escenarios guardados</strong>
-              <ul
-                style={{
-                  margin: '6px 0 0',
-                  paddingLeft: 16,
-                  fontSize: 11,
-                  color: '#425466',
-                }}
-              >
-                {savedScenarios.map((scenario) => (
-                  <li key={scenario.id}>
-                    {scenario.name}{' '}
-                    <button
-                      type="button"
-                      aria-label={`Borrar ${scenario.name}`}
-                      onClick={() =>
-                        setSavedScenarios(deleteSavedScenario(scenario.id))
-                      }
-                      style={{
-                        border: 0,
-                        background: 'none',
-                        cursor: 'pointer',
-                      }}
-                    >
-                      ✕
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          )}
-          <button
-            type="button"
-            onClick={() => {
-              setShowFinalSummary(false);
-              toggleFlood();
-            }}
-            style={{
-              width: '100%',
-              marginTop: 10,
-              padding: '11px 14px',
-              borderRadius: 10,
-              border: 0,
-              background: running ? '#8a5a12' : '#1d6f5c',
-              color: '#fff',
-              font: '700 14px system-ui',
-              cursor: 'pointer',
-            }}
-          >
-            {running
-              ? '⏸ Pausar'
-              : simulationRef.current?.started
-                ? '▶ Reanudar simulación'
-                : '▶ Iniciar simulación'}
-          </button>
-          {simulationRef.current?.started && !running && (
-            <button
-              type="button"
-              onClick={finishSimulation}
-              style={{
-                width: '100%',
-                marginTop: 7,
-                padding: '9px 12px',
-                borderRadius: 10,
-                border: '1px solid #b6c4c9',
-                background: '#fff',
-                color: '#20353a',
-                font: '600 13px system-ui',
-                cursor: 'pointer',
-              }}
-            >
-              🏁 Terminar y ver resumen
-            </button>
-          )}
-          {simulationRef.current?.started && (
-            <button
-              type="button"
-              onClick={restartSimulation}
-              style={{
-                width: '100%',
-                marginTop: 7,
-                padding: '9px 12px',
-                borderRadius: 10,
-                border: '1px solid #b6c4c9',
-                background: '#fff',
-                color: '#20353a',
-                font: '600 13px system-ui',
-                cursor: 'pointer',
-              }}
-            >
-              ↺ Reiniciar
-            </button>
-          )}
-        </aside>
-      )}
-      {importCardOpen && (
-        <aside
-          aria-label="Importar zona real o plano"
-          style={{
-            position: 'absolute',
-            top: 100,
-            left: 16,
-            width: 400,
-            maxWidth: 'calc(100vw - 32px)',
-            maxHeight: 'calc(100vh - 190px)',
-            overflowY: 'auto',
-            padding: 16,
-            borderRadius: 12,
-            background: 'rgba(255,255,255,0.96)',
-            color: '#17252a',
-            fontFamily: 'sans-serif',
-            boxShadow: '0 4px 24px #0002',
-            zIndex: 5,
-          }}
-        >
-          <div
-            style={{
-              display: 'flex',
-              justifyContent: 'space-between',
-              alignItems: 'center',
-              marginBottom: 8,
-            }}
-          >
-            <strong>Importar zona real o plano</strong>
-            <button
-              type="button"
-              onClick={() => setImportCardOpen(false)}
-              style={{
-                border: '1px solid #b6c4c9',
-                borderRadius: 8,
-                background: '#fff',
-                padding: '5px 10px',
-                cursor: 'pointer',
-                font: 'inherit',
-                fontWeight: 600,
-              }}
-            >
-              Cerrar
-            </button>
-          </div>
-          <RealCityImporter
-            onImported={(next) => {
-              applyImportedCity(next);
-              setImportCardOpen(false);
-            }}
-          />
-        </aside>
-      )}
-      {panelOpen && (
-        <aside
-          id="city-settings"
-          aria-label="Información del distrito"
-          style={{
-            position: 'absolute',
-            top: 100,
-            left: 16,
-            width: 300,
-            maxWidth: 'calc(100vw - 32px)',
-            maxHeight: 'calc(100vh - 190px)',
-            overflowY: 'auto',
-            padding: 16,
-            borderRadius: 12,
-            background: 'rgba(255,255,255,0.94)',
-            color: '#17252a',
-            fontFamily: 'sans-serif',
-            boxShadow: '0 4px 24px #0002',
-          }}
-        >
-          <strong>Opciones del simulador</strong>
-          <CityGenerationControls
-            key={`${citySeed}:${randomizedCity}:${cityMode}`}
-            seed={citySeed}
-            randomized={randomizedCity}
-            mode={cityMode}
-            onModeChange={(mode) =>
-              regenerateCity(citySeed, randomizedCity, mode)
-            }
-            onGenerate={(seed) => regenerateCity(seed)}
-            onRandom={generateRandomCity}
-          />
-          <AiCityPanel busy={aiBusy} plan={aiPlan} onCreate={createAiCity} />
-          <AgentPanel
-            busy={agentBusy}
-            iteration={agentIteration}
-            done={agentDone}
-            history={agentHistory}
-            disabledReason={
-              comparison
-                ? null
-                : 'Iniciá y corré la simulación para medir métricas primero.'
-            }
-            onRun={runAgentIteration}
-          />
-          {world && !city.real && (
-            <WorldControls
-              seed={worldSeed}
-              width={world.bounds.maxX - world.bounds.minX}
-              height={world.bounds.maxZ - world.bounds.minZ}
-              visible={worldVisible}
-              view={worldView}
-              onSeed={applyWorldSeed}
-              onGenerate={() => applyWorldSeed((worldSeed + 1) >>> 0)}
-              onLayer={(layer, visible) => {
-                worldVisibleRef.current = {
-                  ...worldVisibleRef.current,
-                  [layer]: visible,
-                };
-                setWorldVisible(worldVisibleRef.current);
-                const current = worldLayerRef.current;
-                if (current) current.layers[layer].visible = visible;
-                if (layer === 'lake') {
-                  const water =
-                    organicLayerRef.current?.group.getObjectByName(
-                      'organic-water',
-                    );
-                  if (water) water.visible = visible;
-                }
-              }}
-              onView={(view) => {
-                cameraViewRef.current = view;
-                setWorldView(view);
-                focusViewRef.current?.(view);
-              }}
-            />
-          )}
-          <p style={{ margin: '8px 0' }}>
-            Ciudad: {city.config.widthInMeters} × {city.config.heightInMeters} m
-            · {city.buildings.length} edificios · Semilla {city.config.seed}
-          </p>
-          <div
-            style={{
-              display: 'flex',
-              gap: 8,
-              flexWrap: 'wrap',
-              alignItems: 'center',
-              fontSize: 12,
-            }}
-          >
-            <label>
-              Trazado{' '}
-              <select
-                aria-label="Trazado de ciudad"
-                value={layoutMode}
+              <input
+                aria-label="Duración de la simulación en minutos"
+                type="number"
+                min={1}
+                step={1}
+                inputMode="numeric"
+                placeholder={tx('No limit', 'Sin límite')}
+                value={durationMinutes > 0 ? durationMinutes : ''}
                 onChange={(event) => {
-                  setRunning(false);
-                  setFlood(null);
-                  setComparison(null);
-                  setAlarmTime(null);
-                  setLayoutMode(
-                    event.target.value as
-                      'organic' | 'grid' | 'real' | 'imported',
-                  );
+                  const raw = event.target.value;
+                  if (raw === '') {
+                    setDurationMinutes(0);
+                    return;
+                  }
+                  const value = Number(raw);
+                  if (Number.isFinite(value) && value >= 0)
+                    setDurationMinutes(Math.floor(value));
                 }}
-              >
-                <option value="organic">Orgánico · lago y puente</option>
-                <option value="grid">Grilla original</option>
-                <option value="real">Barrio real · Eixample (OSM)</option>
-                <option value="imported" disabled={!importedCity}>
-                  Zona importada
-                  {importedCity?.real ? ` · ${importedCity.real.name}` : ''}
-                </option>
-              </select>
+                style={{
+                  width: '100%',
+                  marginTop: 3,
+                  padding: '6px 8px',
+                  ...simField,
+                }}
+              />
             </label>
-            <button
-              type="button"
-              disabled={layoutMode !== 'organic'}
-              onClick={() => {
-                setRunning(false);
-                setFlood(null);
-                setComparison(null);
-                setAlarmTime(null);
-                setCitySeed((seed) => (seed + 1) >>> 0);
-              }}
-            >
-              Generar otra ciudad
-            </button>
-          </div>
-          {city.organic && (
-            <p style={{ fontSize: 12 }}>
-              Barrios: centro, residencial y comercial · Lago y canal integrados
-              · {city.organic.bridges.length} puente conectado a las calles. Las
-              zonas urbanizadas siguen las orillas; la grilla de cálculo sigue
-              siendo rectangular.
-            </p>
-          )}
-          {city.real && (
-            <p style={{ fontSize: 12 }}>
-              Zona real: {city.real.name} · {city.buildings.length} edificios y{' '}
-              {city.roads.length} tramos de calle reales sobre{' '}
-              {city.real.demSource === 'plan-flat-elevation-0'
-                ? 'terreno plano a cota 0 (plano sin relieve)'
-                : `DEM de ${city.real.demCellSizeInMeters} m`}
-              . Alturas de la fuente: {city.real.measuredBuildingHeights}{' '}
-              medidas y {city.real.estimatedBuildingHeights} estimadas (marcadas
-              como inferidas, no oficiales).
-              {city.real.syntheticBuildings > 0 &&
-                ` Más ${city.real.syntheticBuildings} casas sintéticas de relleno (no reales).`}{' '}
-              Población y refugios sintéticos sobre la red real.{' '}
-              {city.real.attribution}. Simulación experimental, no pronóstico de
-              inundación real.
-            </p>
-          )}
-          <p style={{ margin: '8px 0' }}>
-            Plazas: {city.district?.parks.length ?? 0} · Refugios:{' '}
-            {city.shelters?.length ?? 0}
-          </p>
-          <small>
-            Casas con techo · Departamentos con balcones · Comercios con
-            vidriera
-          </small>
-          <details style={{ marginTop: 10, fontSize: 12 }}>
-            <summary>Servicios y movilidad urbana</summary>
-            <p>
-              {civicLandmarks?.assignments
-                .map((item) => civicLabels[item.role])
-                .join(' · ') || 'Sin edificios aptos para servicios visuales'}
-            </p>
-            <p>
-              Vehículos en tránsito: {trafficCount} · Estacionados:{' '}
-              {trafficCount
-                ? 0
-                : (cityLife?.items.filter((item) =>
-                    ['car', 'taxi', 'van', 'bus'].includes(item.kind),
-                  ).length ?? 0)}{' '}
-              · Paradas:{' '}
-              {cityLife?.items.filter((item) => item.kind === 'bus-stop')
-                .length ?? 0}{' '}
-              · Semáforos:{' '}
-              {cityLife?.items.filter((item) => item.kind === 'traffic-light')
-                .length ?? 0}
-            </p>
-            <p>
-              Tránsito cinemático con aceleración, frenado, separación y turnos
-              en cruces. Respeta cierres por agua y escombros. No incluye
-              impactos de cuerpos rígidos ni colisiones con peatones.
-            </p>
-            <strong>Acceso sintético por la red vial</strong>
-            {services?.roles.map((service) => (
-              <p key={service.role}>
-                {civicLabels[service.role]}: {service.facilityCount} sede ·{' '}
-                {service.reachableBuildingCount}/
-                {services.residentialBuildingCount} viviendas conectadas
-                {service.meanDistanceInMeters !== null &&
-                  ` · recorrido medio ${Math.round(service.meanDistanceInMeters)} m`}
-              </p>
-            ))}
-            <p>
-              Accesos estimados al nodo vial más cercano; no se modelan
-              entradas, capacidad, despachos ni seguridad durante la catástrofe.
-              No es cobertura real de servicios.
-            </p>
-          </details>
-          <p style={{ margin: '8px 0 0', fontSize: 12 }}>
-            Arrastra para girar · Arrastra con botón derecho para desplazarte ·
-            Rueda para acercar donde apunta el cursor · WASD/flechas para
-            moverte, Q/E para bajar/subir, Shift para ir más rápido. Terreno y
-            población sintéticos; simulación demostrativa, no predicción real.
-          </p>
-          <hr style={{ margin: '12px 0', borderColor: '#ddd' }} />
-          <strong>Catástrofe: {hazardPreset(hazardKind).label}</strong>
-          <p style={{ margin: '8px 0', fontSize: 12, color: '#425466' }}>
-            {hazardPreset(hazardKind).description} Cambiar de catástrofe en la
-            barra superior reinicia el evento con la misma ciudad.
-          </p>
-          <label style={{ display: 'block', margin: '8px 0', fontSize: 13 }}>
-            Terreno{' '}
-            <select
-              aria-label="Tipo de terreno"
-              value={reliefMode ? 'basin' : 'flat'}
-              disabled={!!city.real || !sourceCity?.terrainGrid}
-              onChange={(event) => {
-                setRunning(false);
-                setFlood(null);
-                setReliefMode(event.target.value === 'basin');
-              }}
-            >
-              <option value="basin">
-                {city.organic
-                  ? 'Relieve y cuencas'
-                  : 'Relieve con zona baja · demo'}
-              </option>
-              <option value="flat">
-                {city.organic ? 'Llanura con cuencas' : 'Plano · original'}
-              </option>
-            </select>
-          </label>
-          <p style={{ margin: '8px 0', fontSize: 12 }}>
-            {hazardKind === 'earthquake' &&
-              `Magnitud ${earthquakeMagnitude.toFixed(1)} · daño estructural y escombros. `}
-            {hazardKind === 'strong-wind' &&
-              `Rachas de ${hazardPreset(hazardKind).windSpeedKmh} km/h · daño en edificios altos. `}
-            {hazardKind === 'tsunami' &&
-              `Ola de ${waveHeightInMeters} m entrando desde el oeste. `}
-            {WATER_HAZARDS.includes(hazardKind) &&
-              hazardKind !== 'tsunami' &&
-              `Agua animada · Lluvia: ${hazardPreset(hazardKind).rainIntensityMmPerHour} mm/h · Drenaje: ${hazardPreset(hazardKind).drainRateMmPerHour} mm/h. `}
-            Tiempo acelerado: 1 segundo = {(speed * timeScale) / 60} minutos
-            simulados (ritmo base ×{timeScale}).
-          </p>
-          <p style={{ fontSize: 12, color: '#425466' }}>
-            {city.real
-              ? 'Relieve real importado (DEM Terrarium remuestreado a 20 m) y calles/edificios de OpenStreetMap convertidos al grafo de simulación. Las huellas se aproximan con rectángulos rotados que las contienen.'
-              : city.organic
-                ? 'Geografía local con cauce excavado, lago y barrios irregulares. El puente conserva su tablero por encima del agua; las rutas usan su altura.'
-                : city.terrainProfile === 'basin'
-                  ? 'Relieve local sintético con pendiente y depresión central; grilla de 10 m. El agua se acumula primero en zonas bajas.'
-                  : 'Terreno plano original con edificios como barreras y absorción diferenciada.'}{' '}
-            El evento comienza automáticamente. Cambiar el terreno reinicia la
-            simulación.
-          </p>
-          <div
-            style={{
-              display: 'flex',
-              gap: 8,
-              flexWrap: 'wrap',
-              marginBottom: 10,
-            }}
-          >
-            <label style={{ fontSize: 12 }}>
-              Vista{' '}
+            <label style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+              {tx('Improvement comparison', 'Comparación de la mejora')}
               <select
-                aria-label="Escenario visible"
+                aria-label="Comparación de la mejora"
                 value={arm}
                 onChange={(event) => {
                   const selected = event.target.value as ComparisonArm;
@@ -2474,270 +2076,960 @@ export default function Scene() {
                     refreshHazardEffectsRef.current?.();
                   }
                 }}
-              >
-                <option value="before">Sin mejora</option>
-                <option value="after">Con mejora</option>
-              </select>
-            </label>
-            <label style={{ fontSize: 12 }}>
-              Velocidad{' '}
-              <select
-                aria-label="Velocidad de simulación"
-                value={speed}
-                onChange={(event) => {
-                  const value = Number(event.target.value) as 3 | 30 | 300;
-                  speedRef.current = value;
-                  setSpeed(value);
-                  simulationRef.current?.setSpeed(value);
+                style={{
+                  width: '100%',
+                  marginTop: 3,
+                  padding: '6px 8px',
+                  ...simField,
                 }}
               >
-                <option value={3}>3× · caminar</option>
-                <option value={300}>300× · evento</option>
-                <option value={30}>30× · detalle</option>
+                <option value="before">
+                  {tx(
+                    'No improvement · original city',
+                    'Sin mejora · ciudad original',
+                  )}
+                </option>
+                <option value="after">
+                  {tx(
+                    'With improvement · protected city',
+                    'Con mejora · ciudad protegida',
+                  )}
+                </option>
               </select>
+              <span
+                style={{
+                  display: 'block',
+                  marginTop: 4,
+                  fontSize: 11,
+                  color: simTheme.muted,
+                }}
+              >
+                {tx(
+                  'The same hazard runs twice: with the city untouched and with the improvement on (drains in rain, early warning in tsunami, reinforcement in earthquake/wind). This only switches which version you are viewing, to compare damage.',
+                  'La misma catástrofe se corre dos veces: sin tocar la ciudad y con la mejora activada (drenajes en lluvia, alerta en tsunami, refuerzo en terremoto/viento). Esto solo cambia cuál de las dos versiones estás mirando, para comparar el daño.',
+                )}
+              </span>
             </label>
-          </div>
-          <p style={{ fontSize: 12 }}>
-            {hazardKind === 'earthquake' &&
-              'Mejora: refuerzo sísmico; reduce la severidad del daño estructural.'}
-            {hazardKind === 'strong-wind' &&
-              'Mejora: techos asegurados; reduce la severidad del daño por viento.'}
-            {WATER_HAZARDS.includes(hazardKind) &&
-              `Mejora: ${drainCount} sumideros de 0.15 m³/s y absorción adicional de plazas de 60 mm/h en lugar de 15 mm/h.`}
-          </p>
-          {floodError && <p role="alert">{floodError}</p>}
-          {flood && (
-            <div role="status" aria-live="off" style={{ fontSize: 13 }}>
-              <p>
-                {running
-                  ? 'En marcha'
-                  : simulationRef.current?.started
-                    ? 'En pausa'
-                    : 'Lista para iniciar'}{' '}
-                · {Math.floor(flood.elapsedTimeInSeconds / 60)} min simulados
-              </p>
-              {WATER_HAZARDS.includes(hazardKind) && (
-                <p>
-                  Agua máxima: {(flood.maxWaterDepthInMeters * 100).toFixed(1)}{' '}
-                  cm
-                </p>
-              )}
-              {comparison && comparison[arm].damagedBuildings > 0 && (
-                <p>
-                  Edificios dañados: {comparison[arm].damagedBuildings} ·
-                  Derrumbados: {comparison[arm].collapsedBuildings}
-                  {structural &&
-                    ` · Severidad máxima: ${(structural.maxSeverity * 100).toFixed(0)}%`}
-                </p>
-              )}
-              {comparison && comparison[arm].trapped > 0 && (
-                <p>
-                  Personas atrapadas en derrumbes: {comparison[arm].trapped} ·
-                  Evacuadas: {comparison[arm].evacuated}
-                </p>
-              )}
-              <p>
-                Tramos bloqueados:{' '}
-                {
-                  new Set([
-                    ...flood.blockedRoadEdgeIds,
-                    ...(simulationRef.current
-                      ?.selectedCollapsedBlockedRoadEdgeIds ?? []),
-                  ]).size
-                }{' '}
-                · Edificios expuestos: {flood.exposedBuildingIds.length}
-              </p>
-            </div>
-          )}
-          <small>
-            Azul: agua · Rojo: tramo bloqueado · Naranja/rojo con rejilla:
-            edificio expuesto o dañado · Gris: escombros de derrumbes · Violeta:
-            persona atrapada.
-          </small>
-          <p style={{ fontSize: 12 }}>
-            Personas: {city.citizens?.length ?? 0}. La simulación comienza al
-            cargar. Al detectar calles bloqueadas o edificios expuestos, la
-            alarma activa la evacuación automática hacia los refugios. La alarma
-            reduce la velocidad a 3× para observar la caminata. Sin IA
-            conectada. Sumideros: cian.
-          </p>
-          <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-            <button
-              type="button"
-              onClick={() => applyDemoStep(0)}
+            <div
+              aria-label="Progreso de la simulación"
               style={{
-                padding: '6px 10px',
-                background: '#1d6f5c',
-                color: 'white',
-                border: 0,
-                borderRadius: 5,
+                height: 8,
+                borderRadius: 4,
+                background: 'rgba(233,242,240,0.14)',
+                marginTop: 12,
+                overflow: 'hidden',
               }}
             >
-              Demo guiada
-            </button>
-            <button
-              type="button"
-              disabled={!impactSummary}
-              onClick={downloadCurrentReport}
-              style={{ padding: '6px 10px', borderRadius: 5 }}
-            >
-              Descargar reporte
-            </button>
-          </div>
-          {demoStep !== null && (
-            <DemoTourPanel
-              steps={demoSteps}
-              step={demoStep}
-              onStep={applyDemoStep}
-              onExit={() => setDemoStep(null)}
-            />
-          )}
-          {impactSummary && (
-            <ImpactPanel summary={impactSummary} narrative={impactNarrative} />
-          )}
-          {comparison && (
-            <ComparisonPanel
-              comparison={comparison}
-              alarmTime={alarmTime}
-              total={city.citizens?.length ?? 0}
-              hazardLabel={hazardPreset(hazardKind).label.toLowerCase()}
-              improvementLabel={
-                hazardKind === 'earthquake'
-                  ? 'cambia el refuerzo sísmico'
-                  : hazardKind === 'strong-wind'
-                    ? 'cambian los techos asegurados'
-                    : 'cambia el drenaje'
-              }
-            />
-          )}
-          {beforeImage && (
-            <div style={{ marginTop: 10 }}>
-              <strong style={{ fontSize: 13 }}>
-                Antes / después (fotos reales de la escena)
-              </strong>
-              <BeforeAfterSlider
-                beforeImage={beforeImage}
-                afterImage={afterImage}
-                wipePercent={wipePercent}
-                onWipeChange={setWipePercent}
-                onCaptureAfter={() => {
-                  const shot = captureViewRef.current?.();
-                  if (shot) setAfterImage(shot);
+              <div
+                style={{
+                  height: '100%',
+                  width: `${Math.round(simulationProgress(flood.elapsedTimeInSeconds, durationMinutes) * 100)}%`,
+                  background: simTheme.accent,
+                  transition: 'width 0.3s',
                 }}
               />
             </div>
-          )}
-          <p style={{ fontSize: 11 }}>
-            Grilla aproximada: barreras por centro de celda, sin escorrentía de
-            techos ni seguridad real de refugios.
-          </p>
-        </aside>
-      )}
-      {inspectedBuilding && (
-        <aside
-          aria-label="Edificio inspeccionado"
-          style={{
-            position: 'absolute',
-            bottom: 16,
-            left: 16,
-            width: 260,
-            padding: 14,
-            borderRadius: 12,
-            background: 'rgba(255,255,255,0.96)',
-            color: '#17252a',
-            fontFamily: 'system-ui, sans-serif',
-            boxShadow: '0 4px 24px #0002',
-            zIndex: 5,
-            fontSize: 13,
-          }}
-        >
-          <strong>🏢 Edificio inspeccionado</strong>
-          <button
-            type="button"
-            aria-label="Cerrar inspector"
-            onClick={() => setInspectedId(null)}
+            <p
+              style={{ fontSize: 11, margin: '5px 0 0', color: simTheme.muted }}
+            >
+              {durationMinutes > 0
+                ? `${Math.floor(flood.elapsedTimeInSeconds / 60)} / ${durationMinutes} min`
+                : `${Math.floor(flood.elapsedTimeInSeconds / 60)} min · ${tx('no limit', 'sin límite')}`}{' '}
+              ·{' '}
+              {running
+                ? tx('Running', 'En marcha')
+                : simulationRef.current?.started
+                  ? tx('Paused', 'En pausa')
+                  : tx('Ready to start', 'Lista para iniciar')}
+            </p>
+            {(hazardKind === 'rain' || hazardKind === 'river-overflow') && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => setDrainMode((mode) => !mode)}
+                  style={{
+                    width: '100%',
+                    marginTop: 10,
+                    padding: '9px 12px',
+                    borderRadius: 10,
+                    border: drainMode
+                      ? `1px solid ${simTheme.accent}`
+                      : `1px solid ${simTheme.border}`,
+                    background: drainMode
+                      ? 'rgba(45,212,191,0.16)'
+                      : simTheme.fieldBackground,
+                    color: simTheme.ink,
+                    font: '600 13px system-ui',
+                    cursor: 'pointer',
+                  }}
+                >
+                  {drainMode
+                    ? tx(
+                        'Tap the map to add drains…',
+                        'Tocá el mapa para sumar drenajes…',
+                      )
+                    : `${tx('Place drains', 'Colocar drenajes')} (${userDrains.length})`}
+                </button>
+                {userDrains.length > 0 && (
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setUserDrains([]);
+                      simulationRef.current?.applyExtraDrains([]);
+                    }}
+                    style={{
+                      width: '100%',
+                      marginTop: 6,
+                      padding: '7px 10px',
+                      borderRadius: 10,
+                      border: `1px solid ${simTheme.border}`,
+                      background: simTheme.fieldBackground,
+                      color: simTheme.ink,
+                      font: '600 12px system-ui',
+                      cursor: 'pointer',
+                    }}
+                  >
+                    {tx('Remove placed drains', 'Quitar drenajes colocados')}
+                  </button>
+                )}
+              </>
+            )}
+            {(hazardKind === 'tsunami' ||
+              hazardKind === 'earthquake' ||
+              hazardKind === 'strong-wind') && (
+              <button
+                type="button"
+                onClick={() => {
+                  const next = !hazardMeasure;
+                  setHazardMeasure(next);
+                  hazardMeasureRef.current = next;
+                  simulationRef.current?.applyMeasure({
+                    earlyWarning: hazardKind === 'tsunami' && next,
+                    reinforcement: next,
+                  });
+                }}
+                style={{
+                  width: '100%',
+                  marginTop: 10,
+                  padding: '9px 12px',
+                  borderRadius: 10,
+                  border: hazardMeasure
+                    ? `1px solid ${simTheme.accent}`
+                    : `1px solid ${simTheme.border}`,
+                  background: hazardMeasure
+                    ? 'rgba(45,212,191,0.16)'
+                    : simTheme.fieldBackground,
+                  color: simTheme.ink,
+                  font: '600 13px system-ui',
+                  cursor: 'pointer',
+                }}
+              >
+                {hazardKind === 'tsunami'
+                  ? hazardMeasure
+                    ? tx(
+                        'Early warning on (improvement)',
+                        'Alerta temprana activada (mejora)',
+                      )
+                    : tx('Activate early warning', 'Activar alerta temprana')
+                  : hazardKind === 'earthquake'
+                    ? hazardMeasure
+                      ? tx(
+                          'Structural reinforcement on (improvement)',
+                          'Refuerzo estructural activado (mejora)',
+                        )
+                      : tx(
+                          'Activate structural reinforcement',
+                          'Activar refuerzo estructural',
+                        )
+                    : hazardMeasure
+                      ? tx(
+                          'Facade protection on (improvement)',
+                          'Protección de fachadas activada (mejora)',
+                        )
+                      : tx(
+                          'Activate facade protection',
+                          'Activar protección de fachadas',
+                        )}
+              </button>
+            )}
+            {timelineEvents.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <strong style={{ fontSize: 12, color: '#fff' }}>
+                  {tx('Timeline', 'Línea de tiempo')}
+                </strong>
+                <ul
+                  style={{
+                    margin: '6px 0 0',
+                    paddingLeft: 16,
+                    fontSize: 11,
+                    color: simTheme.muted,
+                  }}
+                >
+                  {timelineEvents.map((event) => (
+                    <li key={event.text}>{event.text}</li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {savedScenarios.length > 0 && (
+              <div style={{ marginTop: 12 }}>
+                <strong style={{ fontSize: 12, color: '#fff' }}>
+                  {tx('Saved scenarios', 'Escenarios guardados')}
+                </strong>
+                <ul
+                  style={{
+                    margin: '6px 0 0',
+                    paddingLeft: 16,
+                    fontSize: 11,
+                    color: simTheme.muted,
+                  }}
+                >
+                  {[...savedScenarios]
+                    .sort(
+                      (a, b) =>
+                        (b.resilienceScore ?? -1) - (a.resilienceScore ?? -1),
+                    )
+                    .map((scenario) => (
+                      <li key={scenario.id}>
+                        {scenario.name}
+                        {scenario.resilienceScore !== undefined
+                          ? ` · ${scenario.resilienceScore}/100`
+                          : ''}{' '}
+                        <button
+                          type="button"
+                          aria-label={`Borrar ${scenario.name}`}
+                          onClick={() =>
+                            setSavedScenarios(deleteSavedScenario(scenario.id))
+                          }
+                          style={{
+                            border: 0,
+                            background: 'none',
+                            cursor: 'pointer',
+                          }}
+                        >
+                          {tx('Delete', 'Eliminar')}
+                        </button>
+                      </li>
+                    ))}
+                </ul>
+              </div>
+            )}
+            <button
+              type="button"
+              onClick={() => {
+                setShowFinalSummary(false);
+                toggleFlood();
+              }}
+              style={{
+                width: '100%',
+                marginTop: 10,
+                padding: '11px 14px',
+                borderRadius: 10,
+                border: 0,
+                background: running ? '#b45309' : simTheme.primaryBackground,
+                color: '#fff',
+                font: '700 14px system-ui',
+                cursor: 'pointer',
+              }}
+            >
+              {running
+                ? tx('Pause', 'Pausar')
+                : simulationRef.current?.started
+                  ? tx('Resume simulation', 'Reanudar simulación')
+                  : tx('Start simulation', 'Iniciar simulación')}
+            </button>
+            {simulationRef.current?.started && !running && (
+              <button
+                type="button"
+                onClick={finishSimulation}
+                style={{
+                  width: '100%',
+                  marginTop: 7,
+                  padding: '9px 12px',
+                  borderRadius: 10,
+                  border: `1px solid ${simTheme.border}`,
+                  background: simTheme.fieldBackground,
+                  color: simTheme.ink,
+                  font: '600 13px system-ui',
+                  cursor: 'pointer',
+                }}
+              >
+                {tx('Finish and view summary', 'Terminar y ver resumen')}
+              </button>
+            )}
+            {simulationRef.current?.started && (
+              <button
+                type="button"
+                onClick={restartSimulation}
+                style={{
+                  width: '100%',
+                  marginTop: 7,
+                  padding: '9px 12px',
+                  borderRadius: 10,
+                  border: `1px solid ${simTheme.border}`,
+                  background: simTheme.fieldBackground,
+                  color: simTheme.ink,
+                  font: '600 13px system-ui',
+                  cursor: 'pointer',
+                }}
+              >
+                {tx('Restart', 'Reiniciar')}
+              </button>
+            )}
+          </aside>
+        )}
+        {importCardOpen && (
+          <aside
+            aria-label="Importar zona real o plano"
             style={{
-              float: 'right',
-              border: 0,
-              background: 'none',
-              cursor: 'pointer',
+              position: 'absolute',
+              top: 100,
+              left: 16,
+              width: 400,
+              maxWidth: 'calc(100vw - 32px)',
+              maxHeight: 'calc(100vh - 190px)',
+              overflowY: 'auto',
+              padding: 16,
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.96)',
+              color: '#17252a',
+              fontFamily: 'sans-serif',
+              boxShadow: '0 4px 24px #0002',
+              zIndex: 5,
             }}
           >
-            ✕
-          </button>
-          <p style={{ margin: '8px 0 0' }}>
-            Uso:{' '}
-            {inspectedBuilding.use === 'commercial'
-              ? 'Comercial'
-              : 'Residencial'}
-            {inspectedBuilding.vulnerable
-              ? ` · ⚠ Vulnerable (${inspectedBuilding.vulnerable === 'school' ? 'escuela' : inspectedBuilding.vulnerable === 'hospital' ? 'hospital' : 'residencia de mayores'})`
-              : ''}
-          </p>
-          <p style={{ margin: '4px 0 0' }}>
-            Altura: {inspectedBuilding.heightInMeters.toFixed(0)} m · Personas
-            en casa:{' '}
-            {city?.citizens?.filter(
-              (c) => c.homeBuildingId === inspectedBuilding.id,
-            ).length ?? 0}
-          </p>
-          <p style={{ margin: '4px 0 0' }}>
-            Estado:{' '}
-            {flood?.exposedBuildingIds.includes(inspectedBuilding.id)
-              ? '🌊 Expuesto al agua'
-              : 'Sin exposición por ahora'}
-          </p>
-        </aside>
-      )}
-      {showFinalSummary && impactSummary && (
-        <FinalSummary
-          title={`${hazardPreset(hazardKind).label} en ${zoneLabel}`}
-          input={{
-            elapsedSeconds: flood?.elapsedTimeInSeconds ?? 0,
-            evacuated: comparison?.[arm].evacuated ?? 0,
-            totalCitizens: city.citizens?.length ?? 0,
-            trapped: comparison?.[arm].trapped ?? 0,
-            exposedBuildings: impactSummary.exposedBuildings,
-            damagedBuildings: comparison?.[arm].damagedBuildings ?? 0,
-            collapsedBuildings: comparison?.[arm].collapsedBuildings ?? 0,
-            totalBuildings: city.buildings.length,
-            blockedRoads: impactSummary.blockedRoads,
-            maxWaterDepthInMeters: impactSummary.maxWaterDepthInMeters,
-            withoutShelter: Math.max(
-              0,
-              (city.citizens?.length ?? 0) -
-                (comparison?.[arm].evacuated ?? 0) -
-                (comparison?.[arm].trapped ?? 0),
-            ),
-            shelterOccupancy,
-            shelterCapacity,
-            vulnerableExposed,
-            vulnerableTotal: vulnerableBuildings.length,
-          }}
-          narrative={[...impactNarrative, ...recommendationLines]}
-          onSaveScenario={() => {
-            setSavedScenarios(
-              saveScenario({
-                id: `scenario-${Date.now()}`,
-                name: `${hazardPreset(hazardKind).label} en ${zoneLabel}`,
-                hazard: hazardKind,
-                zoneLabel,
-                durationInMinutes: durationMinutes,
-                rainIntensityMmPerHour:
-                  hazardKind === 'rain' || hazardKind === 'river-overflow'
-                    ? rainIntensity
-                    : null,
-                drains: userDrains,
-                createdAt: new Date().toISOString(),
-                resultLine: impactNarrative[0] ?? '',
-              }),
-            );
-          }}
-          onDownloadReport={downloadCurrentReport}
-          onRestart={restartSimulation}
-          onClose={() => setShowFinalSummary(false)}
-        />
-      )}
-    </main>
+            <div
+              style={{
+                display: 'flex',
+                justifyContent: 'space-between',
+                alignItems: 'center',
+                marginBottom: 8,
+              }}
+            >
+              <strong>Importar zona real o plano</strong>
+              <button
+                type="button"
+                onClick={() => setImportCardOpen(false)}
+                style={{
+                  border: '1px solid #b6c4c9',
+                  borderRadius: 8,
+                  background: '#fff',
+                  padding: '5px 10px',
+                  cursor: 'pointer',
+                  font: 'inherit',
+                  fontWeight: 600,
+                }}
+              >
+                Cerrar
+              </button>
+            </div>
+            <RealCityImporter
+              onImported={(next) => {
+                applyImportedCity(next);
+                setImportCardOpen(false);
+              }}
+            />
+          </aside>
+        )}
+        {panelOpen && (
+          <aside
+            id="city-settings"
+            aria-label="Información del distrito"
+            style={{
+              position: 'absolute',
+              top: 100,
+              left: 16,
+              width: 300,
+              maxWidth: 'calc(100vw - 32px)',
+              maxHeight: 'calc(100vh - 190px)',
+              overflowY: 'auto',
+              padding: 16,
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.94)',
+              color: '#17252a',
+              fontFamily: 'sans-serif',
+              boxShadow: '0 4px 24px #0002',
+            }}
+          >
+            <strong>Opciones del simulador</strong>
+            <CityGenerationControls
+              key={`${citySeed}:${randomizedCity}:${cityMode}`}
+              seed={citySeed}
+              randomized={randomizedCity}
+              mode={cityMode}
+              onModeChange={(mode) =>
+                regenerateCity(citySeed, randomizedCity, mode)
+              }
+              onGenerate={(seed) => regenerateCity(seed)}
+              onRandom={generateRandomCity}
+            />
+            <AiCityPanel busy={aiBusy} plan={aiPlan} onCreate={createAiCity} />
+            <AgentPanel
+              busy={agentBusy}
+              iteration={agentIteration}
+              done={agentDone}
+              history={agentHistory}
+              disabledReason={
+                comparison
+                  ? null
+                  : 'Iniciá y corré la simulación para medir métricas primero.'
+              }
+              onRun={runAgentIteration}
+              mayorBusy={mayorBusy}
+              onMayor={runMayorAgent}
+            />
+            <CitizenVoicePanel
+              citizens={
+                simulationRef.current?.evacuation.citizens.map((citizen) => ({
+                  id: citizen.id,
+                  status: citizen.status,
+                })) ?? []
+              }
+              busy={citizenBusy}
+              answer={citizenAnswer}
+              onAsk={askCitizen}
+            />
+            {world && !city.real && (
+              <WorldControls
+                seed={worldSeed}
+                width={world.bounds.maxX - world.bounds.minX}
+                height={world.bounds.maxZ - world.bounds.minZ}
+                visible={worldVisible}
+                view={worldView}
+                onSeed={applyWorldSeed}
+                onGenerate={() => applyWorldSeed((worldSeed + 1) >>> 0)}
+                onLayer={(layer, visible) => {
+                  worldVisibleRef.current = {
+                    ...worldVisibleRef.current,
+                    [layer]: visible,
+                  };
+                  setWorldVisible(worldVisibleRef.current);
+                  const current = worldLayerRef.current;
+                  if (current) current.layers[layer].visible = visible;
+                  if (layer === 'lake') {
+                    const water =
+                      organicLayerRef.current?.group.getObjectByName(
+                        'organic-water',
+                      );
+                    if (water) water.visible = visible;
+                  }
+                }}
+                onView={(view) => {
+                  cameraViewRef.current = view;
+                  setWorldView(view);
+                  focusViewRef.current?.(view);
+                }}
+              />
+            )}
+            <p style={{ margin: '8px 0' }}>
+              Ciudad: {city.config.widthInMeters} × {city.config.heightInMeters}{' '}
+              m · {city.buildings.length} edificios · Semilla {city.config.seed}
+            </p>
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                fontSize: 12,
+              }}
+            >
+              <label>
+                Trazado{' '}
+                <select
+                  aria-label="Trazado de ciudad"
+                  value={layoutMode}
+                  onChange={(event) => {
+                    setRunning(false);
+                    setFlood(null);
+                    setComparison(null);
+                    setAlarmTime(null);
+                    setLayoutMode(
+                      event.target.value as
+                        'organic' | 'grid' | 'real' | 'imported',
+                    );
+                  }}
+                >
+                  <option value="organic">Orgánico · lago y puente</option>
+                  <option value="grid">Grilla original</option>
+                  <option value="real">Barrio real · Eixample (OSM)</option>
+                  <option value="imported" disabled={!importedCity}>
+                    Zona importada
+                    {importedCity?.real ? ` · ${importedCity.real.name}` : ''}
+                  </option>
+                </select>
+              </label>
+              <button
+                type="button"
+                disabled={layoutMode !== 'organic'}
+                onClick={() => {
+                  setRunning(false);
+                  setFlood(null);
+                  setComparison(null);
+                  setAlarmTime(null);
+                  setCitySeed((seed) => (seed + 1) >>> 0);
+                }}
+              >
+                Generar otra ciudad
+              </button>
+            </div>
+            {city.organic && (
+              <p style={{ fontSize: 12 }}>
+                Barrios: centro, residencial y comercial · Lago y canal
+                integrados · {city.organic.bridges.length} puente conectado a
+                las calles. Las zonas urbanizadas siguen las orillas; la grilla
+                de cálculo sigue siendo rectangular.
+              </p>
+            )}
+            {city.real && (
+              <p style={{ fontSize: 12 }}>
+                Zona real: {city.real.name} · {city.buildings.length} edificios
+                y {city.roads.length} tramos de calle reales sobre{' '}
+                {city.real.demSource === 'plan-flat-elevation-0'
+                  ? 'terreno plano a cota 0 (plano sin relieve)'
+                  : `DEM de ${city.real.demCellSizeInMeters} m`}
+                . Alturas de la fuente: {city.real.measuredBuildingHeights}{' '}
+                medidas y {city.real.estimatedBuildingHeights} estimadas
+                (marcadas como inferidas, no oficiales).
+                {city.real.syntheticBuildings > 0 &&
+                  ` Más ${city.real.syntheticBuildings} casas sintéticas de relleno (no reales).`}{' '}
+                Población y refugios sintéticos sobre la red real.{' '}
+                {city.real.attribution}. Simulación experimental, no pronóstico
+                de inundación real.
+              </p>
+            )}
+            <p style={{ margin: '8px 0' }}>
+              Plazas: {city.district?.parks.length ?? 0} · Refugios:{' '}
+              {city.shelters?.length ?? 0}
+            </p>
+            <small>
+              Casas con techo · Departamentos con balcones · Comercios con
+              vidriera
+            </small>
+            <details style={{ marginTop: 10, fontSize: 12 }}>
+              <summary>Servicios y movilidad urbana</summary>
+              <p>
+                {civicLandmarks?.assignments
+                  .map((item) => civicLabels[item.role])
+                  .join(' · ') || 'Sin edificios aptos para servicios visuales'}
+              </p>
+              <p>
+                Vehículos en tránsito: {trafficCount} · Estacionados:{' '}
+                {trafficCount
+                  ? 0
+                  : (cityLife?.items.filter((item) =>
+                      ['car', 'taxi', 'van', 'bus'].includes(item.kind),
+                    ).length ?? 0)}{' '}
+                · Paradas:{' '}
+                {cityLife?.items.filter((item) => item.kind === 'bus-stop')
+                  .length ?? 0}{' '}
+                · Semáforos:{' '}
+                {cityLife?.items.filter((item) => item.kind === 'traffic-light')
+                  .length ?? 0}
+              </p>
+              <p>
+                Tránsito cinemático con aceleración, frenado, separación y
+                turnos en cruces. Respeta cierres por agua y escombros. No
+                incluye impactos de cuerpos rígidos ni colisiones con peatones.
+              </p>
+              <strong>Acceso sintético por la red vial</strong>
+              {services?.roles.map((service) => (
+                <p key={service.role}>
+                  {civicLabels[service.role]}: {service.facilityCount} sede ·{' '}
+                  {service.reachableBuildingCount}/
+                  {services.residentialBuildingCount} viviendas conectadas
+                  {service.meanDistanceInMeters !== null &&
+                    ` · recorrido medio ${Math.round(service.meanDistanceInMeters)} m`}
+                </p>
+              ))}
+              <p>
+                Accesos estimados al nodo vial más cercano; no se modelan
+                entradas, capacidad, despachos ni seguridad durante la
+                catástrofe. No es cobertura real de servicios.
+              </p>
+            </details>
+            <p style={{ margin: '8px 0 0', fontSize: 12 }}>
+              Arrastra para girar · Arrastra con botón derecho para desplazarte
+              · Rueda para acercar donde apunta el cursor · WASD/flechas para
+              moverte, Q/E para bajar/subir, Shift para ir más rápido. Terreno y
+              población sintéticos; simulación demostrativa, no predicción real.
+            </p>
+            <hr style={{ margin: '12px 0', borderColor: '#ddd' }} />
+            <strong>Catástrofe: {hazardPreset(hazardKind).label}</strong>
+            <p style={{ margin: '8px 0', fontSize: 12, color: '#425466' }}>
+              {hazardPreset(hazardKind).description} Cambiar de catástrofe en la
+              barra superior reinicia el evento con la misma ciudad.
+            </p>
+            <label style={{ display: 'block', margin: '8px 0', fontSize: 13 }}>
+              Terreno{' '}
+              <select
+                aria-label="Tipo de terreno"
+                value={reliefMode ? 'basin' : 'flat'}
+                disabled={!!city.real || !sourceCity?.terrainGrid}
+                onChange={(event) => {
+                  setRunning(false);
+                  setFlood(null);
+                  setReliefMode(event.target.value === 'basin');
+                }}
+              >
+                <option value="basin">
+                  {city.organic
+                    ? 'Relieve y cuencas'
+                    : 'Relieve con zona baja · demo'}
+                </option>
+                <option value="flat">
+                  {city.organic ? 'Llanura con cuencas' : 'Plano · original'}
+                </option>
+              </select>
+            </label>
+            <p style={{ margin: '8px 0', fontSize: 12 }}>
+              {hazardKind === 'earthquake' &&
+                `Magnitud ${earthquakeMagnitude.toFixed(1)} · daño estructural y escombros. `}
+              {hazardKind === 'strong-wind' &&
+                `Rachas de ${hazardPreset(hazardKind).windSpeedKmh} km/h · daño en edificios altos. `}
+              {hazardKind === 'tsunami' &&
+                `Ola de ${waveHeightInMeters} m entrando desde el oeste. `}
+              {WATER_HAZARDS.includes(hazardKind) &&
+                hazardKind !== 'tsunami' &&
+                `Agua animada · Lluvia: ${hazardPreset(hazardKind).rainIntensityMmPerHour} mm/h · Drenaje: ${hazardPreset(hazardKind).drainRateMmPerHour} mm/h. `}
+              Tiempo acelerado: 1 segundo = {(speed * timeScale) / 60} minutos
+              simulados (ritmo base ×{timeScale}).
+            </p>
+            <p style={{ fontSize: 12, color: '#425466' }}>
+              {city.real
+                ? 'Relieve real importado (DEM Terrarium remuestreado a 20 m) y calles/edificios de OpenStreetMap convertidos al grafo de simulación. Las huellas se aproximan con rectángulos rotados que las contienen.'
+                : city.organic
+                  ? 'Geografía local con cauce excavado, lago y barrios irregulares. El puente conserva su tablero por encima del agua; las rutas usan su altura.'
+                  : city.terrainProfile === 'basin'
+                    ? 'Relieve local sintético con pendiente y depresión central; grilla de 10 m. El agua se acumula primero en zonas bajas.'
+                    : 'Terreno plano original con edificios como barreras y absorción diferenciada.'}{' '}
+              El evento comienza automáticamente. Cambiar el terreno reinicia la
+              simulación.
+            </p>
+            <div
+              style={{
+                display: 'flex',
+                gap: 8,
+                flexWrap: 'wrap',
+                marginBottom: 10,
+              }}
+            >
+              <label style={{ fontSize: 12 }}>
+                Vista{' '}
+                <select
+                  aria-label="Escenario visible"
+                  value={arm}
+                  onChange={(event) => {
+                    const selected = event.target.value as ComparisonArm;
+                    armRef.current = selected;
+                    setArm(selected);
+                    const simulation = simulationRef.current;
+                    if (simulation) {
+                      simulation.selectArm(selected);
+                      setFlood(simulation.snapshot);
+                      setComparison(simulation.comparison);
+                      setStructural(simulation.structural);
+                      refreshHazardEffectsRef.current?.();
+                    }
+                  }}
+                >
+                  <option value="before">Sin mejora</option>
+                  <option value="after">Con mejora</option>
+                </select>
+              </label>
+              <label style={{ fontSize: 12 }}>
+                Velocidad{' '}
+                <select
+                  aria-label="Velocidad de simulación"
+                  value={speed}
+                  onChange={(event) => {
+                    const value = Number(event.target.value) as 3 | 30 | 300;
+                    speedRef.current = value;
+                    setSpeed(value);
+                    simulationRef.current?.setSpeed(value);
+                  }}
+                >
+                  <option value={3}>3× · caminar</option>
+                  <option value={300}>300× · evento</option>
+                  <option value={30}>30× · detalle</option>
+                </select>
+              </label>
+            </div>
+            <p style={{ fontSize: 12 }}>
+              {hazardKind === 'earthquake' &&
+                'Mejora: refuerzo sísmico; reduce la severidad del daño estructural.'}
+              {hazardKind === 'strong-wind' &&
+                'Mejora: techos asegurados; reduce la severidad del daño por viento.'}
+              {WATER_HAZARDS.includes(hazardKind) &&
+                `Mejora: ${drainCount} sumideros de 0.15 m³/s y absorción adicional de plazas de 60 mm/h en lugar de 15 mm/h.`}
+            </p>
+            {floodError && <p role="alert">{floodError}</p>}
+            {flood && (
+              <div role="status" aria-live="off" style={{ fontSize: 13 }}>
+                <p>
+                  {running
+                    ? 'En marcha'
+                    : simulationRef.current?.started
+                      ? 'En pausa'
+                      : 'Lista para iniciar'}{' '}
+                  · {Math.floor(flood.elapsedTimeInSeconds / 60)} min simulados
+                </p>
+                {WATER_HAZARDS.includes(hazardKind) && (
+                  <p>
+                    Agua máxima:{' '}
+                    {(flood.maxWaterDepthInMeters * 100).toFixed(1)} cm
+                  </p>
+                )}
+                {comparison && comparison[arm].damagedBuildings > 0 && (
+                  <p>
+                    Edificios dañados: {comparison[arm].damagedBuildings} ·
+                    Derrumbados: {comparison[arm].collapsedBuildings}
+                    {structural &&
+                      ` · Severidad máxima: ${(structural.maxSeverity * 100).toFixed(0)}%`}
+                  </p>
+                )}
+                {comparison && comparison[arm].trapped > 0 && (
+                  <p>
+                    Personas atrapadas en derrumbes: {comparison[arm].trapped} ·
+                    Evacuadas: {comparison[arm].evacuated}
+                  </p>
+                )}
+                <p>
+                  Tramos bloqueados:{' '}
+                  {
+                    new Set([
+                      ...flood.blockedRoadEdgeIds,
+                      ...(simulationRef.current
+                        ?.selectedCollapsedBlockedRoadEdgeIds ?? []),
+                    ]).size
+                  }{' '}
+                  · Edificios expuestos: {flood.exposedBuildingIds.length}
+                </p>
+              </div>
+            )}
+            <small>
+              Azul: agua · Rojo: tramo bloqueado · Naranja/rojo con rejilla:
+              edificio expuesto o dañado · Gris: escombros de derrumbes ·
+              Violeta: persona atrapada.
+            </small>
+            <p style={{ fontSize: 12 }}>
+              Personas: {city.citizens?.length ?? 0}. La simulación comienza al
+              cargar. Al detectar calles bloqueadas o edificios expuestos, la
+              alarma activa la evacuación automática hacia los refugios. La
+              alarma reduce la velocidad a 3× para observar la caminata. Sin IA
+              conectada. Sumideros: cian.
+            </p>
+            <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
+              <button
+                type="button"
+                onClick={() => applyDemoStep(0)}
+                style={{
+                  padding: '6px 10px',
+                  background: '#1d6f5c',
+                  color: 'white',
+                  border: 0,
+                  borderRadius: 5,
+                }}
+              >
+                Demo guiada
+              </button>
+              <button
+                type="button"
+                disabled={!impactSummary}
+                onClick={downloadCurrentReport}
+                style={{ padding: '6px 10px', borderRadius: 5 }}
+              >
+                Descargar reporte
+              </button>
+            </div>
+            {demoStep !== null && (
+              <DemoTourPanel
+                steps={demoSteps}
+                step={demoStep}
+                onStep={applyDemoStep}
+                onExit={() => setDemoStep(null)}
+              />
+            )}
+            {impactSummary && (
+              <ImpactPanel
+                summary={impactSummary}
+                narrative={impactNarrative}
+              />
+            )}
+            {comparison && (
+              <ComparisonPanel
+                comparison={comparison}
+                alarmTime={alarmTime}
+                total={city.citizens?.length ?? 0}
+                hazardLabel={hazardPreset(hazardKind).label.toLowerCase()}
+                improvementLabel={
+                  hazardKind === 'earthquake'
+                    ? 'cambia el refuerzo sísmico'
+                    : hazardKind === 'strong-wind'
+                      ? 'cambian los techos asegurados'
+                      : 'cambia el drenaje'
+                }
+              />
+            )}
+            {comparison && scoreAfter !== null && (
+              <p style={{ fontSize: 12.5, marginTop: 10 }}>
+                Resiliencia medida: <strong>{scoreBefore}/100</strong> sin
+                mejora → <strong>{scoreAfter}/100</strong> con mejora (
+                {resilienceGrade(scoreAfter)})
+              </p>
+            )}
+            {comparison && (
+              <ShareResultButton
+                shareText={buildShareText({
+                  zoneLabel,
+                  hazardLabel: hazardPreset(hazardKind).label.toLowerCase(),
+                  score: scoreAfter ?? 0,
+                  evacuated: comparison.after.evacuated,
+                  total: city.citizens?.length ?? 0,
+                  ...(hazardKind === 'tsunami' ? { waveHeightInMeters } : {}),
+                })}
+              />
+            )}
+            <WhatsAppPanel
+              messages={buildAlertMessages({
+                hazardLabel: hazardPreset(hazardKind).label.toLowerCase(),
+                alarmMinutes: alarmTime === null ? null : alarmTime / 60,
+                evacuated: comparison?.[arm].evacuated ?? 0,
+                total: city.citizens?.length ?? 0,
+                trapped: comparison?.[arm].trapped ?? 0,
+                score: scoreAfter,
+              })}
+            />
+            {beforeImage && (
+              <div style={{ marginTop: 10 }}>
+                <strong style={{ fontSize: 13 }}>
+                  Antes / después (fotos reales de la escena)
+                </strong>
+                <BeforeAfterSlider
+                  beforeImage={beforeImage}
+                  afterImage={afterImage}
+                  wipePercent={wipePercent}
+                  onWipeChange={setWipePercent}
+                  onCaptureAfter={() => {
+                    const shot = captureViewRef.current?.();
+                    if (shot) setAfterImage(shot);
+                  }}
+                />
+              </div>
+            )}
+            <p style={{ fontSize: 11 }}>
+              Grilla aproximada: barreras por centro de celda, sin escorrentía
+              de techos ni seguridad real de refugios.
+            </p>
+          </aside>
+        )}
+        {inspectedBuilding && (
+          <aside
+            aria-label="Edificio inspeccionado"
+            style={{
+              position: 'absolute',
+              bottom: 16,
+              left: 16,
+              width: 260,
+              padding: 14,
+              borderRadius: 12,
+              background: 'rgba(255,255,255,0.96)',
+              color: '#17252a',
+              fontFamily: 'system-ui, sans-serif',
+              boxShadow: '0 4px 24px #0002',
+              zIndex: 5,
+              fontSize: 13,
+            }}
+          >
+            <strong>Edificio inspeccionado</strong>
+            <button
+              type="button"
+              aria-label="Cerrar inspector"
+              onClick={() => setInspectedId(null)}
+              style={{
+                float: 'right',
+                border: 0,
+                background: 'none',
+                cursor: 'pointer',
+              }}
+            >
+              Cerrar
+            </button>
+            <p style={{ margin: '8px 0 0' }}>
+              Uso:{' '}
+              {inspectedBuilding.use === 'commercial'
+                ? 'Comercial'
+                : 'Residencial'}
+              {inspectedBuilding.vulnerable
+                ? ` · Vulnerable (${inspectedBuilding.vulnerable === 'school' ? 'escuela' : inspectedBuilding.vulnerable === 'hospital' ? 'hospital' : 'residencia de mayores'})`
+                : ''}
+            </p>
+            <p style={{ margin: '4px 0 0' }}>
+              Altura: {inspectedBuilding.heightInMeters.toFixed(0)} m · Personas
+              en casa:{' '}
+              {city?.citizens?.filter(
+                (c) => c.homeBuildingId === inspectedBuilding.id,
+              ).length ?? 0}
+            </p>
+            <p style={{ margin: '4px 0 0' }}>
+              Estado:{' '}
+              {flood?.exposedBuildingIds.includes(inspectedBuilding.id)
+                ? 'Expuesto al agua'
+                : 'Sin exposición por ahora'}
+            </p>
+          </aside>
+        )}
+        {showFinalSummary && impactSummary && (
+          <FinalSummary
+            title={`${hazardPreset(hazardKind).label} ${tx('in', 'en')} ${zoneLabel}`}
+            input={{
+              elapsedSeconds: flood?.elapsedTimeInSeconds ?? 0,
+              evacuated: comparison?.[arm].evacuated ?? 0,
+              totalCitizens: city.citizens?.length ?? 0,
+              trapped: comparison?.[arm].trapped ?? 0,
+              exposedBuildings: impactSummary.exposedBuildings,
+              damagedBuildings: comparison?.[arm].damagedBuildings ?? 0,
+              collapsedBuildings: comparison?.[arm].collapsedBuildings ?? 0,
+              totalBuildings: city.buildings.length,
+              blockedRoads: impactSummary.blockedRoads,
+              maxWaterDepthInMeters: impactSummary.maxWaterDepthInMeters,
+              withoutShelter: Math.max(
+                0,
+                (city.citizens?.length ?? 0) -
+                  (comparison?.[arm].evacuated ?? 0) -
+                  (comparison?.[arm].trapped ?? 0),
+              ),
+              shelterOccupancy,
+              shelterCapacity,
+              vulnerableExposed,
+              vulnerableTotal: vulnerableBuildings.length,
+            }}
+            narrative={[...impactNarrative, ...recommendationLines]}
+            onSaveScenario={() => {
+              setSavedScenarios(
+                saveScenario({
+                  id: `scenario-${Date.now()}`,
+                  name: `${hazardPreset(hazardKind).label} en ${zoneLabel}`,
+                  hazard: hazardKind,
+                  zoneLabel,
+                  durationInMinutes: durationMinutes,
+                  rainIntensityMmPerHour:
+                    hazardKind === 'rain' || hazardKind === 'river-overflow'
+                      ? rainIntensity
+                      : null,
+                  drains: userDrains,
+                  createdAt: new Date().toISOString(),
+                  resultLine: impactNarrative[0] ?? '',
+                  resilienceScore: scoreAfter ?? undefined,
+                }),
+              );
+            }}
+            onDownloadReport={downloadCurrentReport}
+            onRestart={restartSimulation}
+            onClose={() => setShowFinalSummary(false)}
+          />
+        )}
+      </main>
+    </LanguageContext.Provider>
   );
 }

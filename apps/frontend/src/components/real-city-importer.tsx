@@ -23,6 +23,7 @@ import {
   type ZoneSelection,
 } from './zone-picker';
 import { LoadingScreen } from './loading-screen';
+import { pick, useLanguage } from './language';
 
 const primaryButtonStyle: CSSProperties = {
   width: '100%',
@@ -92,6 +93,8 @@ export function RealCityImporter(props: {
   const [busy, setBusy] = useState(false);
   const [savedZones, setSavedZones] = useState<SavedZoneSummary[]>([]);
   const [planFileName, setPlanFileName] = useState<string | null>(null);
+  const language = useLanguage();
+  const tx = (en: string, es: string) => pick(language, en, es);
   const requestRef = useRef(0);
 
   const refreshSavedZones = async () => {
@@ -251,21 +254,27 @@ export function RealCityImporter(props: {
   };
 
   return (
-    <section aria-label="Importar zona real" style={{ margin: '4px 0' }}>
+    <section
+      aria-label={tx('Import a real zone', 'Importar zona real')}
+      style={{ margin: '4px 0' }}
+    >
       {busy && <LoadingScreen message={stage ?? 'Importando la zona…'} />}
       <p style={{ fontSize: 12, marginTop: 0 }}>
-        Buscá una ciudad o barrio, o subí tu plano GeoJSON. Arrastrá el cuadrado
-        sobre el mapa para elegir dónde va la zona fija (1000 m por lado) y
-        cargala en la simulación. Datos gratuitos: © OpenStreetMap (ODbL) y DEM
-        Terrarium.
+        {tx(
+          'Search a city or neighborhood, or upload your GeoJSON plan. Drag the square on the map to choose where the fixed zone goes (1000 m per side) and load it into the simulation. Free data: © OpenStreetMap (ODbL) and Terrarium DEM.',
+          'Buscá una ciudad o barrio, o subí tu plano GeoJSON. Arrastrá el cuadrado sobre el mapa para elegir dónde va la zona fija (1000 m por lado) y cargala en la simulación. Datos gratuitos: © OpenStreetMap (ODbL) y DEM Terrarium.',
+        )}
       </p>
       <div style={{ marginBottom: 10 }}>
-        <strong style={{ fontSize: 12 }}>Zonas guardadas</strong>
+        <strong style={{ fontSize: 12 }}>
+          {tx('Saved zones', 'Zonas guardadas')}
+        </strong>
         {savedZones.length === 0 ? (
           <p style={{ fontSize: 12, margin: '2px 0', color: '#425466' }}>
-            Todavía no guardaste ninguna. Al importar una zona queda acá, en
-            este navegador, para cargarla en un clic sin volver a subir ni
-            descargar nada.
+            {tx(
+              'You have not saved any yet. When you import a zone it stays here, in this browser, to load it in one click without uploading or downloading again.',
+              'Todavía no guardaste ninguna. Al importar una zona queda acá, en este navegador, para cargarla en un clic sin volver a subir ni descargar nada.',
+            )}
           </p>
         ) : (
           <div style={{ display: 'grid', gap: 4, marginTop: 4 }}>
@@ -300,11 +309,11 @@ export function RealCityImporter(props: {
                   disabled={busy}
                   onClick={() => void loadSavedZone(zone)}
                 >
-                  Cargar
+                  {tx('Load', 'Cargar')}
                 </button>
                 <button
                   type="button"
-                  aria-label={`Borrar ${zone.name}`}
+                  aria-label={`${tx('Delete', 'Borrar')} ${zone.name}`}
                   style={{
                     ...secondaryButtonStyle,
                     padding: '5px 8px',
@@ -312,7 +321,7 @@ export function RealCityImporter(props: {
                   }}
                   onClick={() => void removeSavedZone(zone.id)}
                 >
-                  ✕
+                  {tx('Delete', 'Eliminar')}
                 </button>
               </div>
             ))}
@@ -321,13 +330,13 @@ export function RealCityImporter(props: {
       </div>
       <div
         role="group"
-        aria-label="Fuente de la zona"
+        aria-label={tx('Zone source', 'Fuente de la zona')}
         style={{ display: 'flex', marginBottom: 8 }}
       >
         {(
           [
-            ['search', 'Buscar ciudad/barrio'],
-            ['plan', 'Subir plano'],
+            ['search', tx('Search city/neighborhood', 'Buscar ciudad/barrio')],
+            ['plan', tx('Upload plan', 'Subir plano')],
           ] as const
         ).map(([value, label], index) => (
           <button
@@ -351,8 +360,14 @@ export function RealCityImporter(props: {
         <div>
           <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap' }}>
             <input
-              aria-label="Ciudad o barrio a buscar"
-              placeholder="Ej.: Gracia, Barcelona"
+              aria-label={tx(
+                'City or neighborhood to search',
+                'Ciudad o barrio a buscar',
+              )}
+              placeholder={tx(
+                'E.g.: Gracia, Barcelona',
+                'Ej.: Gracia, Barcelona',
+              )}
               value={query}
               onChange={(event) => setQuery(event.target.value)}
               onKeyDown={(event) => {
@@ -366,7 +381,9 @@ export function RealCityImporter(props: {
               disabled={searching}
               onClick={() => void runSearch()}
             >
-              {searching ? 'Buscando…' : 'Buscar'}
+              {searching
+                ? tx('Searching…', 'Buscando…')
+                : tx('Search', 'Buscar')}
             </button>
           </div>
           {searchError && (
@@ -399,7 +416,7 @@ export function RealCityImporter(props: {
             </div>
           )}
           <p style={{ fontSize: 12, margin: '6px 0' }}>
-            Ciudades ofrecidas:{' '}
+            {tx('Suggested cities:', 'Ciudades ofrecidas:')}{' '}
             {PRESETS.map((preset) => (
               <button
                 key={preset.label}
@@ -425,7 +442,7 @@ export function RealCityImporter(props: {
                 fontSize: 13,
               }}
             >
-              Elegir plano GeoJSON…
+              {tx('Choose GeoJSON plan…', 'Elegir plano GeoJSON…')}
               <input
                 type="file"
                 hidden
@@ -438,14 +455,20 @@ export function RealCityImporter(props: {
             </label>
             <p style={{ fontSize: 12, margin: '4px 0', color: '#425466' }}>
               {planFileName
-                ? `Archivo: ${planFileName}`
-                : 'Ningún archivo elegido todavía (GeoJSON en WGS84, hasta 10 MB).'}
+                ? `${tx('File:', 'Archivo:')} ${planFileName}`
+                : tx(
+                    'No file chosen yet (GeoJSON in WGS84, up to 10 MB).',
+                    'Ningún archivo elegido todavía (GeoJSON en WGS84, hasta 10 MB).',
+                  )}
             </p>
           </div>
           {plan && (
             <p style={{ fontSize: 12 }}>
-              {planName}: {plan.elements.length} elementos listos. El plano se
-              dibuja en verde sobre el mapa.
+              {planName}: {plan.elements.length}{' '}
+              {tx(
+                'elements ready. The plan is drawn in green on the map.',
+                'elementos listos. El plano se dibuja en verde sobre el mapa.',
+              )}
             </p>
           )}
           <label style={{ fontSize: 12, display: 'block', marginTop: 4 }}>
@@ -454,10 +477,15 @@ export function RealCityImporter(props: {
               checked={useRealDem}
               onChange={(event) => setUseRealDem(event.target.checked)}
             />{' '}
-            Usar relieve real (DEM) bajo el plano; si no, terreno plano a cota 0
+            {tx(
+              'Use real relief (DEM) under the plan; otherwise flat terrain at elevation 0',
+              'Usar relieve real (DEM) bajo el plano; si no, terreno plano a cota 0',
+            )}
           </label>
           <details style={{ fontSize: 12, marginTop: 4 }}>
-            <summary>¿Cómo debe ser el plano?</summary>
+            <summary>
+              {tx('How should the plan be?', '¿Cómo debe ser el plano?')}
+            </summary>
             <p>
               GeoJSON en coordenadas lon/lat (WGS84). Polígonos = edificios o
               parques; líneas = calles. Propiedades aceptadas: <code>kind</code>
@@ -483,8 +511,10 @@ export function RealCityImporter(props: {
         />
       </div>
       <p style={{ fontSize: 12, marginTop: 6 }}>
-        Zona fija: {ZONE_SIDE_IN_METERS} m por lado. Arrastrá el cuadrado para
-        elegir dónde ubicarla; el tamaño no cambia.
+        {tx(
+          `Fixed zone: ${ZONE_SIDE_IN_METERS} m per side. Drag the square to choose where it goes; the size does not change.`,
+          `Zona fija: ${ZONE_SIDE_IN_METERS} m por lado. Arrastrá el cuadrado para elegir dónde ubicarla; el tamaño no cambia.`,
+        )}
       </p>
       <label style={{ fontSize: 12, display: 'block', marginTop: 6 }}>
         <input
@@ -492,8 +522,10 @@ export function RealCityImporter(props: {
           checked={infill}
           onChange={(event) => setInfill(event.target.checked)}
         />{' '}
-        Completar huecos con casas sintéticas donde la fuente no tiene edificios
-        (relleno visual estimado, no datos reales)
+        {tx(
+          'Fill gaps with synthetic houses where the source has no buildings (estimated visual fill, not real data)',
+          'Completar huecos con casas sintéticas donde la fuente no tiene edificios (relleno visual estimado, no datos reales)',
+        )}
       </label>
       <button
         type="button"
@@ -509,7 +541,12 @@ export function RealCityImporter(props: {
           cursor: busy || (tab === 'plan' && !plan) ? 'not-allowed' : 'pointer',
         }}
       >
-        {busy ? 'Importando…' : 'Representar esta zona en la simulación'}
+        {busy
+          ? tx('Importing…', 'Importando…')
+          : tx(
+              'Render this zone in the simulation',
+              'Representar esta zona en la simulación',
+            )}
       </button>
       {stage && (
         <p role="status" style={{ fontSize: 12 }}>

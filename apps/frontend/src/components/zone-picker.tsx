@@ -6,6 +6,7 @@ import {
   type LatLon,
 } from './map-projection';
 import type { OsmElementInput } from './real-city-model';
+import { pick, useLanguage } from './language';
 
 export interface ZoneSelection {
   center: LatLon;
@@ -39,6 +40,7 @@ export function ZonePicker(props: {
   onSelectionChange(selection: ZoneSelection): void;
   planElements?: OsmElementInput[];
 }) {
+  const language = useLanguage();
   const containerRef = useRef<HTMLDivElement>(null);
   const [size, setSize] = useState({ width: 0, height: 320 });
   const [zoom, setZoom] = useState(() =>
@@ -153,7 +155,11 @@ export function ZonePicker(props: {
     <div
       ref={containerRef}
       role="application"
-      aria-label="Mapa para elegir la zona a representar"
+      aria-label={pick(
+        language,
+        'Map to choose the zone to render',
+        'Mapa para elegir la zona a representar',
+      )}
       style={{
         position: 'relative',
         height: 320,
@@ -206,7 +212,11 @@ export function ZonePicker(props: {
         </svg>
       )}
       <div
-        aria-label="Zona seleccionada: arrastrar para mover"
+        aria-label={pick(
+          language,
+          'Selected zone: drag to move',
+          'Zona seleccionada: arrastrar para mover',
+        )}
         style={{
           position: 'absolute',
           left: selectionScreen.x - sidePixels / 2,
@@ -231,14 +241,14 @@ export function ZonePicker(props: {
       >
         <button
           type="button"
-          aria-label="Acercar mapa"
+          aria-label={pick(language, 'Zoom in', 'Acercar mapa')}
           onClick={() => setZoom((z) => Math.min(18, z + 1))}
         >
           +
         </button>
         <button
           type="button"
-          aria-label="Alejar mapa"
+          aria-label={pick(language, 'Zoom out', 'Alejar mapa')}
           onClick={() => setZoom((z) => Math.max(12, z - 1))}
         >
           −

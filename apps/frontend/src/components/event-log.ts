@@ -16,6 +16,23 @@ export interface TimelineEvent {
 
 const minute = (seconds: number) => `min ${Math.floor(seconds / 60)}`;
 
+const TEXTS = {
+  en: {
+    water: 'Water appears in the streets',
+    blocked: 'First street blocked',
+    exposed: 'First building exposed to water',
+    trapped: 'First person trapped',
+    evacuated: (percent: number) => `${percent}% of people evacuated`,
+  },
+  es: {
+    water: 'Aparece el agua en las calles',
+    blocked: 'Primera calle bloqueada',
+    exposed: 'Primer edificio expuesto al agua',
+    trapped: 'Primera persona atrapada',
+    evacuated: (percent: number) => `${percent}% de las personas evacuadas`,
+  },
+} as const;
+
 /**
  * Derives the readable event timeline from sampled frames: first water,
  * first blocked road, exposure thresholds, evacuation milestones and the
@@ -23,7 +40,9 @@ const minute = (seconds: number) => `min ${Math.floor(seconds / 60)}`;
  */
 export function buildEventLog(
   samples: readonly EventSample[],
+  language: 'en' | 'es' = 'es',
 ): TimelineEvent[] {
+  const texts = TEXTS[language];
   const events: TimelineEvent[] = [];
   const seen = new Set<string>();
   const push = (key: string, atSeconds: number, text: string) => {
@@ -36,17 +55,13 @@ export function buildEventLog(
   );
   for (const sample of ordered) {
     if (sample.maxWaterDepthInMeters > 0.01)
-      push('water', sample.elapsedSeconds, 'Aparece el agua en las calles');
+      push('water', sample.elapsedSeconds, texts.water);
     if (sample.blockedRoads > 0)
-      push('blocked', sample.elapsedSeconds, 'Primera calle bloqueada');
+      push('blocked', sample.elapsedSeconds, texts.blocked);
     if (sample.exposedBuildings > 0)
-      push(
-        'exposed',
-        sample.elapsedSeconds,
-        'Primer edificio expuesto al agua',
-      );
+      push('exposed', sample.elapsedSeconds, texts.exposed);
     if (sample.trapped > 0)
-      push('trapped', sample.elapsedSeconds, 'Primera persona atrapada');
+      push('trapped', sample.elapsedSeconds, texts.trapped);
     if (sample.totalCitizens > 0) {
       const ratio = sample.evacuated / sample.totalCitizens;
       for (const step of [0.25, 0.5, 0.75, 1]) {
@@ -54,7 +69,7 @@ export function buildEventLog(
           push(
             `evac-${step}`,
             sample.elapsedSeconds,
-            `${Math.round(step * 100)}% de las personas evacuadas`,
+            texts.evacuated(Math.round(step * 100)),
           );
       }
     }

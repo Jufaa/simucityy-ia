@@ -69,3 +69,42 @@ export async function requestInterventions(
     return fallbackIntervention(context);
   }
 }
+
+/** Emergency report written by the model from measured outcomes. */
+export interface EmergencyReportContext {
+  zoneLabel: string;
+  hazardLabel: string;
+  score: number;
+  evacuated: number;
+  totalPeople: number;
+  trapped: number;
+  exposedBuildings: number;
+  damagedBuildings: number;
+  maxWaterDepthInMeters: number;
+  recommendations: string[];
+}
+
+export async function requestEmergencyReport(
+  context: EmergencyReportContext,
+): Promise<{ report: string; source: 'meta' | 'fallback' }> {
+  try {
+    const response = await fetch(`${API_URL}/ai/report`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ context }),
+    });
+    if (!response.ok) throw new Error(`HTTP ${response.status}`);
+    const data = (await response.json()) as { report: string };
+    return { report: data.report, source: 'meta' };
+  } catch {
+    const lines = [
+      `Informe de emergencia - ${context.zoneLabel} (${context.hazardLabel})`,
+      `Resiliencia medida: ${context.score}/100. Evacuadas: ${context.evacuated}/${context.totalPeople}. Atrapadas: ${context.trapped}.`,
+      `Edificios expuestos: ${context.exposedBuildings}. Dañados: ${context.damagedBuildings}. Agua maxima: ${(context.maxWaterDepthInMeters * 100).toFixed(0)} cm.`,
+      'Recomendaciones (sin IA, generadas localmente):',
+      ...context.recommendations.map((line) => `- ${line}`),
+      'Coeficientes demostrativos, no calibrados.',
+    ];
+    return { report: lines.join('\n'), source: 'fallback' };
+  }
+}

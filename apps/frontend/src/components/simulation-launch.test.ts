@@ -57,8 +57,12 @@ describe('simulation launch and final summary', () => {
         onClose: () => {},
       }),
     );
-    expect(html).toContain('Resumen: Lluvia intensa en Test');
-    expect(html).toContain('Personas evacuadas');
-    expect(html).toContain('Descargar reporte');
+    expect(html).toContain('Lluvia intensa en Test');
+    expect(html).toContain('Evacuated');
+    expect(html).toContain('Download report');
+    // Same dark glass + teal theme as the creation screens, no emoji icons.
+    expect(html).toContain('rgba(13,27,32,0.92)');
+    expect(html).toContain('linear-gradient(135deg, #0f766e, #14b8a6)');
+    expect(html).not.toContain('📋');
   });
 });

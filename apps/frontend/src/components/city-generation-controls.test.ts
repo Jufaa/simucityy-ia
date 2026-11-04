@@ -22,11 +22,11 @@ it('shows independent random generation and replay with the active generation mo
       onRandom: () => {},
     }),
   );
-  expect(html).toContain('Ciudad aleatoria');
-  expect(html).toContain('Semilla de ciudad');
-  expect(html).toContain('Reproducir ciudad');
+  expect(html).toContain('Random city');
+  expect(html).toContain('City seed');
+  expect(html).toContain('Rebuild city');
   expect(html).toContain('value="123"');
-  expect(html).toContain('Perfil aleatorio');
+  expect(html).toContain('Random profile');
 });
 
 it('offers district and large-city modes and reports the selected size without claiming AI', () => {
@@ -40,9 +40,9 @@ it('offers district and large-city modes and reports the selected size without c
       onRandom: () => {},
     }),
   );
-  expect(html).toContain('Escala urbana');
-  expect(html).toContain('Ciudad grande');
-  expect(html).toContain('Distrito');
+  expect(html).toContain('Urban scale');
+  expect(html).toContain('Large city');
+  expect(html).toContain('District');
   expect(html).toContain('value="city" selected=""');
-  expect(html).toContain('Sin IA');
+  expect(html).toContain('No AI');
 });

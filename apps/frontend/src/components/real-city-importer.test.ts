@@ -7,9 +7,9 @@ it('presents search, plan upload, the zone map and a clear primary action', () =
   const html = renderToStaticMarkup(
     createElement(RealCityImporter, { onImported: () => {} }),
   );
-  expect(html).toContain('Buscar ciudad/barrio');
-  expect(html).toContain('Subir plano');
-  expect(html).toContain('Zonas guardadas');
+  expect(html).toContain('Search city/neighborhood');
+  expect(html).toContain('Upload plan');
+  expect(html).toContain('Saved zones');
   const planHtml = renderToStaticMarkup(
     createElement(RealCityImporter, {
       onImported: () => {},
@@ -17,16 +17,16 @@ it('presents search, plan upload, the zone map and a clear primary action', () =
     }),
   );
   // The file picker reads as a real button, not the raw browser control.
-  expect(planHtml).toContain('Elegir plano GeoJSON…');
-  expect(planHtml).toContain('Ningún archivo elegido');
+  expect(planHtml).toContain('Choose GeoJSON plan…');
+  expect(planHtml).toContain('No file chosen yet');
   expect(planHtml).toContain('type="file"');
   expect(planHtml).toContain('hidden=""');
-  expect(html).toContain('Ciudad o barrio a buscar');
-  expect(html).toContain('Ciudades ofrecidas:');
+  expect(html).toContain('City or neighborhood to search');
+  expect(html).toContain('Suggested cities:');
   expect(html).toContain('Eixample, Barcelona');
-  expect(html).toContain('Mapa para elegir la zona a representar');
-  expect(html).toContain('Zona fija: 1000 m por lado');
+  expect(html).toContain('Map to choose the zone to render');
+  expect(html).toContain('Fixed zone: 1000 m per side');
   // The main action must read as a button, with the primary styling inline.
-  expect(html).toContain('Representar esta zona en la simulación');
+  expect(html).toContain('Render this zone in the simulation');
   expect(html).toContain('background:#24655e');
 });

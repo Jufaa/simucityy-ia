@@ -3,8 +3,18 @@ import { z } from 'zod';
 import type { ApiConfig } from '../../config/env.js';
 import { encryptUserKey, decryptUserKey } from './crypto.js';
 import { SqliteUserKeyRepository } from './sqlite-repository';
-import { proposeCityPlan, proposeInterventions, runAi } from './service.js';
-import { interventionContextSchema } from './ai-plan.js';
+import {
+  explainCitizen,
+  proposeCityPlan,
+  proposeInterventions,
+  runAi,
+  writeEmergencyReport,
+} from './service.js';
+import {
+  interventionContextSchema,
+  citizenContextSchema,
+  reportContextSchema,
+} from './ai-plan.js';
 
 const saveKeySchema = z.object({
   userId: z.string().min(1),
@@ -27,6 +37,16 @@ const cityPlanSchema = z.object({
 const interventionsSchema = z.object({
   userId: z.string().min(1).optional(),
   context: interventionContextSchema,
+});
+
+const citizenSchema = z.object({
+  userId: z.string().min(1).optional(),
+  context: citizenContextSchema,
+});
+
+const reportSchema = z.object({
+  userId: z.string().min(1).optional(),
+  context: reportContextSchema,
 });
 
 export async function registerAiRoutes(
@@ -159,6 +179,48 @@ export async function registerAiRoutes(
         model: config.metaModel,
       });
       return reply.send({ plan });
+    } catch (err) {
+      return aiError(reply, err);
+    }
+  });
+
+  // One citizen narrates their measured state in first person.
+  app.post('/ai/citizen', async (request, reply) => {
+    const parsed = citizenSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: 'Invalid body', issues: parsed.error.issues });
+    }
+    const key = await resolveKey(parsed.data.userId);
+    if (!key) return reply.status(503).send({ error: NOT_CONFIGURED });
+    try {
+      const replyText = await explainCitizen(parsed.data.context, {
+        userKey: key,
+        model: config.metaModel,
+      });
+      return reply.send({ reply: replyText });
+    } catch (err) {
+      return aiError(reply, err);
+    }
+  });
+
+  // Emergency report written from measured outcomes only.
+  app.post('/ai/report', async (request, reply) => {
+    const parsed = reportSchema.safeParse(request.body);
+    if (!parsed.success) {
+      return reply
+        .status(400)
+        .send({ error: 'Invalid body', issues: parsed.error.issues });
+    }
+    const key = await resolveKey(parsed.data.userId);
+    if (!key) return reply.status(503).send({ error: NOT_CONFIGURED });
+    try {
+      const result = await writeEmergencyReport(parsed.data.context, {
+        userKey: key,
+        model: config.metaModel,
+      });
+      return reply.send({ report: result.report });
     } catch (err) {
       return aiError(reply, err);
     }

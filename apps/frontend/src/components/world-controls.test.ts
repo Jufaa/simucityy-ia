@@ -16,13 +16,13 @@ it('labels world generation and its visibility-only controls without implying AI
     }),
   );
   for (const label of [
-    'Semilla',
-    'Generar otro entorno',
-    'Océano',
-    'Lago / río',
-    'Vista ciudad',
-    'sintético',
+    'Seed',
+    'Generate another surroundings',
+    'Ocean',
+    'Lake / river',
+    'City view',
+    'synthetic',
   ])
     expect(html).toContain(label);
-  expect(html).toContain('reinicia la simulación');
+  expect(html).toContain('restarts the simulation');
 });

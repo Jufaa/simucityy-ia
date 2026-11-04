@@ -26,7 +26,7 @@ it('labels the Meta source and shows the applied plan summary', () => {
   );
   expect(html).toContain('Meta AI');
   expect(html).toContain('Ciudad del río');
-  expect(html).toContain('Crear con IA');
+  expect(html).toContain('Create with AI');
 });
 
 it('labels the honest local fallback and agent history', () => {
@@ -47,7 +47,7 @@ it('labels the honest local fallback and agent history', () => {
       ],
     }),
   );
-  expect(html).toContain('Sin IA (local)');
+  expect(html).toContain('No AI (local)');
   expect(html).toContain('Motivo medido');
-  expect(html).toContain('iteración 2 de 3');
+  expect(html).toContain('iteration 2 of 3');
 });

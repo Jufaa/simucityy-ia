@@ -1,6 +1,12 @@
 import { useState, type CSSProperties } from 'react';
 import { parseCitySeed } from './city-generation-controls';
 import type { AiCityPlanResult } from './ai-city';
+import {
+  LanguageToggle,
+  pick,
+  useLanguage,
+  type AppLanguage,
+} from './language';
 
 const accent = '#2dd4bf';
 const ink = '#e9f2f0';
@@ -99,6 +105,19 @@ export interface AiChatMessage {
  * in plain language; each message asks the model for a revised validated
  * plan, and nothing is built until the user confirms the current plan.
  */
+interface SpeechRecognitionLike {
+  lang: string;
+  onresult:
+    | ((event: {
+        results: {
+          [index: number]: { [index: number]: { transcript: string } };
+        };
+      }) => void)
+    | null;
+  onend: (() => void) | null;
+  start(): void;
+}
+
 export function AiChatPanel(props: {
   busy: boolean;
   plan: AiCityPlanResult | null;
@@ -107,7 +126,44 @@ export function AiChatPanel(props: {
   onBuild(): void;
   onBack(): void;
 }) {
+  const language = useLanguage();
   const [draft, setDraft] = useState('');
+  const [listening, setListening] = useState(false);
+  const [voiceNote, setVoiceNote] = useState<string | null>(null);
+  const dictate = () => {
+    const ctor =
+      (
+        window as unknown as {
+          SpeechRecognition?: new () => SpeechRecognitionLike;
+          webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+        }
+      ).SpeechRecognition ??
+      (
+        window as unknown as {
+          webkitSpeechRecognition?: new () => SpeechRecognitionLike;
+        }
+      ).webkitSpeechRecognition;
+    if (!ctor) {
+      setVoiceNote(
+        pick(
+          language,
+          'Voice dictation is not available in this browser. It works in Chrome; type your message here.',
+          'El dictado por voz no esta disponible en este navegador. En Chrome funciona; acá escribí el mensaje.',
+        ),
+      );
+      return;
+    }
+    setVoiceNote(null);
+    const recognition = new ctor();
+    recognition.lang = language === 'en' ? 'en-US' : 'es-AR';
+    recognition.onresult = (event) => {
+      const transcript = event.results[0]?.[0]?.transcript ?? '';
+      if (transcript) setDraft((current) => `${current} ${transcript}`.trim());
+    };
+    recognition.onend = () => setListening(false);
+    setListening(true);
+    recognition.start();
+  };
   const send = () => {
     const text = draft.trim();
     if (!text || props.busy) return;
@@ -116,7 +172,11 @@ export function AiChatPanel(props: {
   };
   return (
     <section
-      aria-label="Chat para crear tu ciudad con IA"
+      aria-label={pick(
+        language,
+        'Chat to create your city with AI',
+        'Chat para crear tu ciudad con IA',
+      )}
       style={{
         width: '100%',
         maxWidth: 660,
@@ -144,7 +204,11 @@ export function AiChatPanel(props: {
       >
         <div>
           <strong style={{ fontSize: 17, color: '#fff', display: 'block' }}>
-            Crear tu ciudad con IA
+            {pick(
+              language,
+              'Create your city with AI',
+              'Crear tu ciudad con IA',
+            )}
           </strong>
           <span
             style={{
@@ -158,11 +222,11 @@ export function AiChatPanel(props: {
           </span>
         </div>
         <button type="button" onClick={props.onBack} style={ghostButton}>
-          Volver
+          {pick(language, 'Back', 'Volver')}
         </button>
       </div>
       <div
-        aria-label="Conversación"
+        aria-label={pick(language, 'Conversation', 'Conversación')}
         style={{
           display: 'flex',
           flexDirection: 'column',
@@ -209,7 +273,7 @@ export function AiChatPanel(props: {
               fontStyle: 'italic',
             }}
           >
-            Meta AI está pensando…
+            {pick(language, 'Meta AI is thinking…', 'Meta AI está pensando…')}
           </p>
         )}
       </div>
@@ -221,8 +285,16 @@ export function AiChatPanel(props: {
         style={{ display: 'flex', gap: 10 }}
       >
         <input
-          aria-label="Escribí cómo querés tu ciudad"
-          placeholder="Escribí cómo querés tu ciudad…"
+          aria-label={pick(
+            language,
+            'Describe your city',
+            'Escribí cómo querés tu ciudad',
+          )}
+          placeholder={pick(
+            language,
+            'Describe your city…',
+            'Escribí cómo querés tu ciudad…',
+          )}
           value={draft}
           onChange={(event) => setDraft(event.target.value)}
           style={{
@@ -236,6 +308,26 @@ export function AiChatPanel(props: {
             outline: 'none',
           }}
         />
+        {
+          <button
+            type="button"
+            onClick={dictate}
+            disabled={props.busy}
+            style={{
+              ...primaryButton,
+              width: 'auto',
+              marginTop: 0,
+              padding: '12px 16px',
+              background: listening
+                ? 'linear-gradient(135deg, #be123c, #e11d48)'
+                : 'rgba(233,242,240,0.12)',
+            }}
+          >
+            {listening
+              ? pick(language, 'Listening…', 'Escuchando…')
+              : pick(language, 'Dictate', 'Dictar')}
+          </button>
+        }
         <button
           type="submit"
           disabled={props.busy || !draft.trim()}
@@ -246,9 +338,14 @@ export function AiChatPanel(props: {
             padding: '12px 22px',
           }}
         >
-          Enviar
+          {pick(language, 'Send', 'Enviar')}
         </button>
       </form>
+      {voiceNote && (
+        <p style={{ fontSize: 12, margin: 0, color: '#fda4af' }} role="note">
+          {voiceNote}
+        </p>
+      )}
       {props.plan && (
         <button
           type="button"
@@ -259,8 +356,11 @@ export function AiChatPanel(props: {
             padding: '14px 16px',
           }}
         >
-          Construir esta ciudad · {props.plan.name} ·{' '}
-          {props.plan.source === 'meta' ? 'Meta AI' : 'Sin IA (local)'}
+          {pick(language, 'Build this city', 'Construir esta ciudad')} ·{' '}
+          {props.plan.name} ·{' '}
+          {props.plan.source === 'meta'
+            ? 'Meta AI'
+            : pick(language, 'No AI (local)', 'Sin IA (local)')}
         </button>
       )}
     </section>
@@ -279,13 +379,19 @@ export function CityStartScreen(props: {
   onRandom(): void;
   onImportZone(): void;
   onSeed(seed: number): void;
+  onLanguageChange?(language: AppLanguage): void;
 }) {
+  const language = useLanguage();
   const [view, setView] = useState<'options' | 'chat'>('options');
   const [seed, setSeed] = useState('123');
   const [messages, setMessages] = useState<AiChatMessage[]>([
     {
       role: 'assistant',
-      text: 'Contame cómo querés tu ciudad: ¿costera o con río? ¿Edificios bajos o torres? ¿Muchos parques? Cuando te guste el plan, lo construimos.',
+      text: pick(
+        language,
+        'Tell me about your city: coastal or with a river? Low buildings or towers? Lots of parks? When you like the plan, we build it.',
+        'Contame cómo querés tu ciudad: ¿costera o con río? ¿Edificios bajos o torres? ¿Muchos parques? Cuando te guste el plan, lo construimos.',
+      ),
     },
   ]);
   const [plan, setPlan] = useState<AiCityPlanResult | null>(null);
@@ -303,7 +409,7 @@ export function CityStartScreen(props: {
       ...current,
       {
         role: 'assistant',
-        text: `${nextPlan.name} (${nextPlan.source === 'meta' ? 'Meta AI' : 'Sin IA (local)'}): ${nextPlan.summary}\n${nextPlan.profile.buildingTarget} edificios · ${nextPlan.profile.parkTarget} parques · semilla ${nextPlan.seed}. Pedime ajustes o construila.`,
+        text: `${nextPlan.name} (${nextPlan.source === 'meta' ? 'Meta AI' : pick(language, 'No AI (local)', 'Sin IA (local)')}): ${nextPlan.summary}\n${nextPlan.profile.buildingTarget} ${pick(language, 'buildings', 'edificios')} · ${nextPlan.profile.parkTarget} ${pick(language, 'parks', 'parques')} · ${pick(language, 'seed', 'semilla')} ${nextPlan.seed}. ${pick(language, 'Ask for changes or build it.', 'Pedime ajustes o construila.')}`,
       },
     ]);
   };
@@ -311,7 +417,7 @@ export function CityStartScreen(props: {
   return (
     <div
       role="dialog"
-      aria-label="Crear tu ciudad"
+      aria-label={pick(language, 'Create your city', 'Crear tu ciudad')}
       style={{
         position: 'absolute',
         inset: 0,
@@ -340,6 +446,14 @@ export function CityStartScreen(props: {
         .sc-card button:hover:not(:disabled) { filter: brightness(1.12); }
         .sc-card button:active:not(:disabled) { transform: scale(0.98); }
       `}</style>
+      {props.onLanguageChange && (
+        <div style={{ alignSelf: 'flex-end', marginBottom: 18 }}>
+          <LanguageToggle
+            language={language}
+            onChange={props.onLanguageChange}
+          />
+        </div>
+      )}
       <p
         style={{
           margin: '0 0 14px',
@@ -351,7 +465,11 @@ export function CityStartScreen(props: {
           textAlign: 'center',
         }}
       >
-        Simulador urbano interactivo
+        {pick(
+          language,
+          'Interactive urban simulator',
+          'Simulador urbano interactivo',
+        )}
       </p>
       <h1
         style={{
@@ -376,8 +494,11 @@ export function CityStartScreen(props: {
           maxWidth: 600,
         }}
       >
-        Creá una ciudad, sometela a una catástrofe y medí cómo responden sus
-        habitantes. Primero: ¿cómo nace tu ciudad?
+        {pick(
+          language,
+          'Create a city, put it through a disaster and measure how its people respond. First: how is your city born?',
+          'Creá una ciudad, sometela a una catástrofe y medí cómo responden sus habitantes. Primero: ¿cómo nace tu ciudad?',
+        )}
       </p>
       {view === 'chat' ? (
         <AiChatPanel
@@ -401,37 +522,59 @@ export function CityStartScreen(props: {
         >
           <Card
             index="01"
-            title="Crear ciudad con IA"
-            label="Crear ciudad con IA"
+            title={pick(
+              language,
+              'Create a city with AI',
+              'Crear ciudad con IA',
+            )}
+            label={pick(
+              language,
+              'Create a city with AI',
+              'Crear ciudad con IA',
+            )}
           >
             <p style={cardText}>
-              Abrí el chat y contale a Meta AI cómo querés tu ciudad. Podés
-              pedir ajustes antes de construirla.
+              {pick(
+                language,
+                'Open the chat and tell Meta AI what your city should be like. You can ask for changes before building it.',
+                'Abrí el chat y contale a Meta AI cómo querés tu ciudad. Podés pedir ajustes antes de construirla.',
+              )}
             </p>
             <button
               type="button"
               style={primaryButton}
               onClick={() => setView('chat')}
             >
-              Abrir chat con IA
+              {pick(language, 'Open AI chat', 'Abrir chat con IA')}
             </button>
           </Card>
 
           <Card
             index="02"
-            title="Ciudad random / semilla"
-            label="Ciudad random o por semilla"
+            title={pick(
+              language,
+              'Random city / seed',
+              'Ciudad random / semilla',
+            )}
+            label={pick(
+              language,
+              'Random city or by seed',
+              'Ciudad random o por semilla',
+            )}
           >
             <p style={cardText}>
-              Una ciudad sorpresa en cada partida, o una exacta por su semilla:
-              la misma semilla siempre reconstruye la misma ciudad.
+              {pick(
+                language,
+                'A surprise city every run, or an exact one from its seed: the same seed always rebuilds the same city.',
+                'Una ciudad sorpresa en cada partida, o una exacta por su semilla: la misma semilla siempre reconstruye la misma ciudad.',
+              )}
             </p>
             <button
               type="button"
               style={primaryButton}
               onClick={props.onRandom}
             >
-              Generar random
+              {pick(language, 'Generate random', 'Generar random')}
             </button>
             <form
               onSubmit={(event) => {
@@ -449,9 +592,13 @@ export function CityStartScreen(props: {
                   color: 'rgba(233,242,240,0.55)',
                 }}
               >
-                Semilla
+                {pick(language, 'Seed', 'Semilla')}
                 <input
-                  aria-label="Semilla de ciudad específica"
+                  aria-label={pick(
+                    language,
+                    'Specific city seed',
+                    'Semilla de ciudad específica',
+                  )}
                   inputMode="numeric"
                   value={seed}
                   onChange={(event) => setSeed(event.target.value)}
@@ -475,7 +622,7 @@ export function CityStartScreen(props: {
                 disabled={parsedSeed === null}
                 style={{ ...primaryButton, width: 'auto', marginTop: 0 }}
               >
-                Crear
+                {pick(language, 'Create', 'Crear')}
               </button>
             </form>
             {parsedSeed === null && (
@@ -483,27 +630,33 @@ export function CityStartScreen(props: {
                 role="alert"
                 style={{ fontSize: 12, margin: 0, color: '#fda4af' }}
               >
-                La semilla debe ser un entero de 0 a 4294967295.
+                {pick(
+                  language,
+                  'The seed must be an integer from 0 to 4294967295.',
+                  'La semilla debe ser un entero de 0 a 4294967295.',
+                )}
               </p>
             )}
           </Card>
 
           <Card
             index="03"
-            title="Ciudad en específico"
-            label="Ciudad en específico"
+            title={pick(language, 'A specific city', 'Ciudad en específico')}
+            label={pick(language, 'A specific city', 'Ciudad en específico')}
           >
             <p style={cardText}>
-              Una zona real: buscá una ciudad o barrio en el mapa, recortá el
-              cuadrado de 1000 m, o subí tu plano GeoJSON. Se convierte con
-              datos de OpenStreetMap.
+              {pick(
+                language,
+                'A real zone: search a city or neighborhood on the map, crop the 1000 m square, or upload your GeoJSON plan. It is converted with OpenStreetMap data.',
+                'Una zona real: buscá una ciudad o barrio en el mapa, recortá el cuadrado de 1000 m, o subí tu plano GeoJSON. Se convierte con datos de OpenStreetMap.',
+              )}
             </p>
             <button
               type="button"
               style={primaryButton}
               onClick={props.onImportZone}
             >
-              Abrir el mapa
+              {pick(language, 'Open the map', 'Abrir el mapa')}
             </button>
           </Card>
         </div>
@@ -518,7 +671,11 @@ export function CityStartScreen(props: {
           textAlign: 'center',
         }}
       >
-        Terreno · agua · calles · edificios · servicios · habitantes
+        {pick(
+          language,
+          'Terrain · water · streets · buildings · services · people',
+          'Terreno · agua · calles · edificios · servicios · habitantes',
+        )}
       </p>
     </div>
   );

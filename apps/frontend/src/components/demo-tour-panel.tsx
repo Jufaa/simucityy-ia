@@ -1,4 +1,5 @@
 import type { DemoStep } from './demo-tour';
+import { pick, useLanguage } from './language';
 
 export function DemoTourPanel({
   steps,
@@ -11,10 +12,11 @@ export function DemoTourPanel({
   onStep: (index: number) => void;
   onExit: () => void;
 }) {
+  const language = useLanguage();
   const current = steps[step]!;
   return (
     <section
-      aria-label="Demo guiada"
+      aria-label={pick(language, 'Guided demo', 'Demo guiada')}
       style={{
         margin: '12px 0',
         padding: 12,
@@ -32,7 +34,7 @@ export function DemoTourPanel({
           disabled={step === 0}
           onClick={() => onStep(step - 1)}
         >
-          Anterior
+          {pick(language, 'Previous', 'Anterior')}
         </button>
         <span>
           {step + 1} / {steps.length}
@@ -42,10 +44,10 @@ export function DemoTourPanel({
           disabled={step === steps.length - 1}
           onClick={() => onStep(step + 1)}
         >
-          Siguiente
+          {pick(language, 'Next', 'Siguiente')}
         </button>
         <button type="button" onClick={onExit}>
-          Salir de la demo
+          {pick(language, 'Exit demo', 'Salir de la demo')}
         </button>
       </div>
     </section>

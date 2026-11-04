@@ -16,6 +16,8 @@ vi.mock('../../modules/ai/service', () => ({
       riverWidthScale: 1.1,
     },
   })),
+  explainCitizen: vi.fn(async () => ({ text: 'Estoy evacuando.' })),
+  writeEmergencyReport: vi.fn(async () => ({ report: 'Informe medido.' })),
   proposeInterventions: vi.fn(async () => ({
     drains: 6,
     earlyWarning: true,
@@ -73,5 +75,57 @@ describe('POST /ai/interventions', () => {
       payload: { context: { hazardKind: 'rain' } },
     });
     expect(res.statusCode).toBe(400);
+  });
+});
+
+describe('POST /ai/citizen and /ai/report', () => {
+  const citizen = {
+    status: 'evacuating',
+    hazardKind: 'tsunami',
+    shelterAssigned: true,
+    elapsedMinutes: 5,
+  };
+  it('returns 503 without a key and the narration with the server key', async () => {
+    const noKey = await makeApp().inject({
+      method: 'POST',
+      url: '/ai/citizen',
+      payload: { context: citizen },
+    });
+    expect(noKey.statusCode).toBe(503);
+    const ok = await makeApp({ META_API_KEY: 'LLM_test_key' }).inject({
+      method: 'POST',
+      url: '/ai/citizen',
+      payload: { context: citizen },
+    });
+    expect(ok.statusCode).toBe(200);
+    expect(ok.json().reply.text).toContain('evacuando');
+  });
+  it('rejects invalid citizen status and writes a measured report', async () => {
+    const bad = await makeApp({ META_API_KEY: 'LLM_test_key' }).inject({
+      method: 'POST',
+      url: '/ai/citizen',
+      payload: { context: { ...citizen, status: 'flying' } },
+    });
+    expect(bad.statusCode).toBe(400);
+    const report = await makeApp({ META_API_KEY: 'LLM_test_key' }).inject({
+      method: 'POST',
+      url: '/ai/report',
+      payload: {
+        context: {
+          zoneLabel: 'Distrito',
+          hazardLabel: 'tsunami',
+          score: 82,
+          evacuated: 90,
+          totalPeople: 100,
+          trapped: 0,
+          exposedBuildings: 3,
+          damagedBuildings: 1,
+          maxWaterDepthInMeters: 0.4,
+          recommendations: ['Mas drenajes'],
+        },
+      },
+    });
+    expect(report.statusCode).toBe(200);
+    expect(report.json().report).toContain('Informe');
   });
 });

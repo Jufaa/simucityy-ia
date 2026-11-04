@@ -72,3 +72,41 @@ export const interventionContextSchema = z.strictObject({
 });
 
 export type InterventionContext = z.infer<typeof interventionContextSchema>;
+
+/** What the simulator knows about one citizen; the model may only narrate these facts. */
+export const citizenContextSchema = z.strictObject({
+  status: z.enum(['waiting', 'evacuating', 'evacuated', 'stranded', 'trapped']),
+  hazardKind: z.string().min(1).max(40),
+  shelterAssigned: z.boolean(),
+  elapsedMinutes: z.number().min(0).max(10080),
+});
+
+export type CitizenContext = z.infer<typeof citizenContextSchema>;
+
+export const citizenReplySchema = z.strictObject({
+  text: z.string().min(1).max(600),
+});
+
+export type CitizenReply = z.infer<typeof citizenReplySchema>;
+
+/** Measured outcome handed to the report writer; never model-invented. */
+export const reportContextSchema = z.strictObject({
+  zoneLabel: z.string().min(1).max(120),
+  hazardLabel: z.string().min(1).max(80),
+  score: z.number().int().min(0).max(100),
+  evacuated: z.number().int().nonnegative(),
+  totalPeople: z.number().int().nonnegative(),
+  trapped: z.number().int().nonnegative(),
+  exposedBuildings: z.number().int().nonnegative(),
+  damagedBuildings: z.number().int().nonnegative(),
+  maxWaterDepthInMeters: z.number().nonnegative(),
+  recommendations: z.array(z.string().min(1).max(240)).max(8),
+});
+
+export type ReportContext = z.infer<typeof reportContextSchema>;
+
+export const emergencyReportSchema = z.strictObject({
+  report: z.string().min(1).max(3000),
+});
+
+export type EmergencyReport = z.infer<typeof emergencyReportSchema>;

@@ -16,10 +16,10 @@ it('offers AI chat, random-or-seed and a specific real zone as the three entry o
       onSeed: () => {},
     }),
   );
-  expect(html).toContain('Crear ciudad con IA');
-  expect(html).toContain('Abrir chat con IA');
-  expect(html).toContain('Ciudad random');
-  expect(html).toContain('Semilla');
-  expect(html).toContain('Ciudad en específico');
-  expect(html).toContain('Abrir el mapa');
+  expect(html).toContain('Create a city with AI');
+  expect(html).toContain('Open AI chat');
+  expect(html).toContain('Random city');
+  expect(html).toContain('Seed');
+  expect(html).toContain('A specific city');
+  expect(html).toContain('Open the map');
 });

@@ -275,3 +275,58 @@ it('supports a readable 3x walking speed without changing the shared simulation 
     simulation.comparison.after.tick,
   );
 });
+
+it('the chosen tsunami wave height changes the measured water, not just the slider', () => {
+  const city = createReliefCity(makeCity());
+  const runWithWave = (waveHeightInMeters: number) => {
+    const sim = new DistrictSimulation(city, {
+      hazard: 'tsunami',
+      waveHeightInMeters,
+    });
+    sim.start();
+    sim.advance(24);
+    return sim.comparison.before;
+  };
+  const low = runWithWave(0.5);
+  const high = runWithWave(20);
+  // peakDepth is the measured water depth; rainVolume stays 0 in a
+  // tsunami because no rain falls (the water arrives as wave inflow).
+  expect(high.peakDepth).toBeGreaterThan(low.peakDepth);
+  expect(high.tick).toBe(low.tick);
+});
+
+it('applyWaveHeightInMeters before starting rebuilds the event with the new wave', () => {
+  const city = createReliefCity(makeCity());
+  const sim = new DistrictSimulation(city, {
+    hazard: 'tsunami',
+    waveHeightInMeters: 0.5,
+  });
+  sim.applyWaveHeightInMeters(20);
+  sim.start();
+  sim.advance(24);
+  const changed = sim.comparison.before;
+  const low = new DistrictSimulation(city, {
+    hazard: 'tsunami',
+    waveHeightInMeters: 0.5,
+  });
+  low.start();
+  low.advance(24);
+  expect(changed.peakDepth).toBeGreaterThan(low.comparison.before.peakDepth);
+});
+
+it('the chosen earthquake magnitude changes structural damage, not just the slider', () => {
+  const city = createReliefCity(makeCity());
+  const damagedAt = (magnitude: number) =>
+    new DistrictSimulation(city, {
+      hazard: 'earthquake',
+      earthquakeMagnitude: magnitude,
+    }).structural.damagedBuildingIds.length;
+  expect(damagedAt(9.5)).toBeGreaterThan(damagedAt(5));
+  const sim = new DistrictSimulation(city, {
+    hazard: 'earthquake',
+    earthquakeMagnitude: 5,
+  });
+  const weakDamage = sim.structural.damagedBuildingIds.length;
+  sim.applyEarthquakeMagnitude(9.5);
+  expect(sim.structural.damagedBuildingIds.length).toBeGreaterThan(weakDamage);
+});
