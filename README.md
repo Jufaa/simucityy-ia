@@ -1,191 +1,241 @@
-Simulicity IA
-A synthetic 3D city simulator for exploring the impact of natural hazards (floods, earthquakes, tsunamis, and strong winds), featuring deterministic before-and-after comparisons and AI-assisted interventions.
+# Simulicity IA
 
-Demo video: [YouTube link — pending]
+> A synthetic 3D city simulator for exploring the impact of natural
+> hazards (floods, earthquakes, tsunamis, strong wind) with same-seed
+> before/after comparison and AI-assisted interventions.
 
-!Simulicity IA overview The Simulicity IA start screen: choose to generate a city with AI, use a random seed, or import a real-world map.
+**Demo video:** *\[YouTube link --- pending\]*
 
-What is it?
+![Simulicity IA overview](assets/MainMenu.png)
 
-Simulicity IA is a 3D city simulator built with Three.js, Next.js, and React. It procedurally generates synthetic cities, including terrain, water, streets, buildings, public services, and citizens, and allows users to simulate deterministic natural hazards.
+*The Simulicity IA start screen: choose to generate a city with AI, a
+random seed, or import a real map.*
 
-Since city generation is deterministic and seed-based, users can compare the same city before and after a hazard event, using identical initial conditions to measure its impact on buildings, population, and essential services.
+------------------------------------------------------------------------
 
-The project also features a real-world district importer powered by OpenStreetMap, along with two optional AI-powered features that generate urban plans and propose mitigation interventions. If no API key is configured, the application automatically falls back to a local planning system.
+## What is it?
 
-Disclaimer: Simulicity IA is an experimental project. It is not a scientific prediction tool or a certified emergency-management system. Its simulation models and coefficients are demonstrative and have not been calibrated against real-world data.
-Features
-Procedural city generation: Generates terrain, rivers, lakes, streets, urban blocks, buildings, parks, public services, and population.
-Deterministic hazard simulation: Simulates heavy rain and flooding, river overflow, tsunamis, earthquakes, and strong winds.
-Before-and-after comparison: Uses the same seed to reproduce identical initial city conditions and compare simulation results.
-Real-world district import: Imports geographic data from OpenStreetMap to generate 3D representations of existing urban areas.
-Optional AI integration: Uses the Meta Model API to propose urban plans and mitigation interventions. Without an API key, the application uses a local fallback labeled "Sin IA (local)".
-Impact metrics: Measures exposed buildings, trapped people, maximum water depth, resilience scores, and other simulation indicators.
-Interactive simulation panel: Provides city generation controls, hazard selection, simulation settings, and comparison tools.
-Screenshots
-City generation and simulation
+Simulicity IA is a city simulator built with **Three.js**, **Next.js**,
+and **React**. It procedurally generates synthetic cities (terrain,
+water, streets, buildings, services, and citizens) and lets you run
+**deterministic hazards** on them. Because generation is deterministic
+per seed, you can compare the **before and after** of the same city
+under the same hazard, and measure the impact on buildings, population,
+and services.
 
-!City generation
+The project also includes a **real-district importer from
+OpenStreetMap**, and two optional AI features that propose city plans
+and mitigation interventions (with a local fallback when no API key is
+set).
 
-A procedurally generated synthetic city, ready for simulation. The top bar displays the active hazard, while the right panel shows real-time simulation metrics.
+> **Disclaimer**: this is an experimental project. It is not a
+> scientific prediction tool or a certified emergency-management system.
+> Coefficients are demonstrative and not calibrated.
 
-Simulation summary
+------------------------------------------------------------------------
 
-!Simulation summary
+## Features
 
-After running a hazard simulation, the application displays a detailed summary, including evacuated population, trapped people, collapsed buildings, maximum water depth, and an analysis of the overall impact.
+-   **Procedural city generation**: terrain, rivers, lakes, streets,
+    blocks, buildings, parks, services, and population.
+-   **Deterministic hazards**: rain/flood, river overflow, tsunami,
+    earthquake, and strong wind.
+-   **Before/after comparison** with the same seed: same scenario, same
+    buildings, reproducible results.
+-   **Real-district import** from OpenStreetMap.
+-   **Optional AI** (Meta Model API) to propose city plans and
+    mitigation interventions. Without a key, it falls back to a local
+    plan labeled *"Sin IA (local)"*.
+-   **Measured metrics**: exposed buildings, trapped people, max water
+    depth, resilience score, etc.
+-   **Simulation panel** with generation controls, hazard selection, and
+    comparison.
 
-Hazards and evacuation
+------------------------------------------------------------------------
 
-!Hazard and evacuation
+## Screenshots
 
-Earthquake simulation at street level: buildings shake, debris falls, and citizens evacuate through the urban environment.
+### City generation and simulation
 
-Real-world district import
+![City generation](assets/simulacionEnCurso.png)
 
-!OSM import
+*A synthetic city generated procedurally, ready for simulation. The top
+bar shows the active hazard and the right panel displays live simulation
+metrics.*
 
-Importing Barcelona's Eixample district using OpenStreetMap. The application automatically generates a 3D urban model from the imported geographic data.
+### Simulation summary
 
-AI-assisted interventions
+![Simulation summary](assets/ResumenSimulacion.png)
 
-[Pending screenshot: assets/ai.png]
+*After running a hazard, the app shows a detailed summary: evacuated
+population, trapped people, collapsed buildings, max water depth, and an
+analysis of the impact.*
 
-The intervention agent proposes mitigation measures based on the simulation's measured metrics. When no API key is configured, the system uses its local fallback, labeled "Sin IA (local)".
+### Hazards and evacuation
 
-How it works (technical overview)
-Deterministic city generation: A seeded pseudo-random number generator (PRNG) generates terrain, streets, urban blocks, buildings, and population. The same seed always produces the same initial city.
-Hazard simulation: Each hazard applies a deterministic simulation model to the city, calculating variables such as water depth, structural damage, and evacuation behavior.
-Before-and-after comparison: Since the initial city can be reproduced using the same seed, the application can compare the original and affected states under identical conditions.
-AI-assisted interventions: The backend, or its local fallback, analyzes the simulation metrics and proposes mitigation measures. Once applied, the simulation runs again using the same seed, allowing users to compare the results before and after the intervention.
-Tech Stack
-Layer	Technology
-Frontend	Next.js, React, Tailwind CSS, Three.js
-City generation	Pure TypeScript (@simulicity/cities)
-Hazard simulation	Pure TypeScript (@simulicity/hazards)
-Shared contracts	Zod (@simulicity/shared)
-Monorepo	pnpm workspaces + Turbo
-AI integration (optional)	Meta Model API
-Deployment	Vercel (frontend only)
-Getting Started
-Requirements
+![Hazard and evacuation](assets/TerremotoEvacuacion.png)
 
-Make sure you have the following installed:
+*Earthquake simulation at street level: buildings shake, debris falls,
+and citizens evacuate across the bridge.*
 
-Node.js 22.x
-pnpm 10.x
-Installation
+### Real district import
 
-Clone the repository and install the dependencies:
+![OSM import](assets/ImportacionBarcelona.png)
 
-bash
+*Importing a real district (Barcelona's Eixample) from OpenStreetMap.
+The 3D model is generated automatically from the map data.*
+
+### AI-assisted interventions
+
+*\[Pending capture: assets/ai.png\]*
+
+*The intervention agent proposes bounded mitigations based on measured
+metrics, labeled "Sin IA (local)" when no API key is set.*
+
+------------------------------------------------------------------------
+
+## How it works (technical summary)
+
+1.  **Deterministic generation**: a seeded PRNG produces terrain,
+    streets, blocks, buildings, and population. The same seed always
+    produces the same city.
+2.  **Hazard simulation**: each hazard applies a deterministic model on
+    the city (water depth, structural damage, evacuation, etc.).
+3.  **Comparison**: because the city is reproducible, the "before" and
+    "after" states can be rendered side by side.
+4.  **Optional AI**: the backend (or the local fallback) proposes plans
+    and interventions from the measured metrics. Interventions are
+    applied, the simulation is re-run with the same seed, and results
+    are compared.
+
+------------------------------------------------------------------------
+
+## Stack
+
+  Layer              Technology
+  ------------------ -----------------------------------------
+  Frontend           Next.js, React, Tailwind, Three.js
+  City generation    Pure TypeScript (`@simulicity/cities`)
+  Hazards            Pure TypeScript (`@simulicity/hazards`)
+  Shared contracts   Zod (`@simulicity/shared`)
+  Monorepo           pnpm workspaces + Turbo
+  AI (optional)      Meta Model API (server-side)
+  Deploy             Vercel (frontend only)
+
+------------------------------------------------------------------------
+
+## Getting started
+
+Requirements: **Node.js 22.x** and **pnpm 10.x**.
+
+``` bash
 pnpm install
-
-Run the development server
-
-Start the frontend application:
-
-bash
 pnpm --filter @simulicity/web dev
+```
 
+Open <http://localhost:3000>.
 
-Once the development server is running, open:
+### Environment variables (optional)
 
-text
-http://localhost:3000
+If you want to use the AI features, you need a Meta Model API key.
+Without a key, the app still works and shows *"Sin IA (local)"*.
 
-Environment Variables (Optional)
-
-AI-powered features require a Meta Model API key.
-
-Without an API key, the application remains fully functional and automatically uses the local fallback, labeled "Sin IA (local)".
-
-If you are running the AI backend locally, create or update the following file:
-
-apps/backend/.env
-
-env
+``` bash
+# apps/backend/.env (only if you keep the AI backend)
 META_API_KEY=LLM_...
+```
 
-Note: The Vercel deployment only includes the frontend. Therefore, AI-powered features use the local fallback unless a separate backend is configured.
-Repository Structure
-text
+> In the Vercel deployment (frontend only), AI features use the local
+> fallback.
+
+------------------------------------------------------------------------
+
+## Repository structure
+
+``` text
 apps/
   frontend/        Next.js + Three.js + simulator UI
-  backend/         Optional AI backend
-
 packages/
-  cities/          Deterministic procedural city generator
-  hazards/         Hazard and evacuation simulation models
+  cities/          Procedural city generator (deterministic)
+  hazards/         Hazard and evacuation models
   shared/          Shared contracts and types (Zod)
+scenarios/         Example scenarios (JSON)
+assets/            Screenshots used in this README
+```
 
-scenarios/         Example simulation scenarios (JSON)
-assets/            Screenshots and visual resources
+------------------------------------------------------------------------
 
-Available Scripts
+## Useful scripts
 
-Run the following commands from the repository root:
+``` bash
+pnpm build        # build the whole monorepo
+pnpm lint         # ESLint
+pnpm typecheck    # TypeScript
+pnpm test         # Vitest
+pnpm format       # Prettier
+```
 
-bash
-pnpm build        # Build the entire monorepo
-pnpm lint         # Run ESLint
-pnpm typecheck    # Run TypeScript type checking
-pnpm test         # Run Vitest tests
-pnpm format       # Format the code with Prettier
+To build only the frontend (what Vercel does):
 
-Build only the frontend
-
-To build only the application deployed on Vercel:
-
-bash
+``` bash
 pnpm turbo run build --filter=@simulicity/web
+```
 
-Deployment
+------------------------------------------------------------------------
 
-The frontend is deployed using Vercel with the following configuration:
+## Deploy
 
-Setting	Value
-Root Directory	apps/frontend
-Build Command	cd ../.. && pnpm turbo run build --filter=@simulicity/web
-Install Command	cd ../.. && pnpm install --frozen-lockfile
-Environment Variables	None required
+The frontend is deployed on **Vercel** with:
 
-The application works without environment variables because AI-powered features automatically fall back to the local planning system.
+-   **Root Directory**: `apps/frontend`
+-   **Build Command**:
+    `cd ../.. && pnpm turbo run build --filter=@simulicity/web`
+-   **Install Command**: `cd ../.. && pnpm install --frozen-lockfile`
+-   **Environment variables**: none (AI features fall back to the local
+    plan)
 
-The Vercel configuration is located at:
+The configuration lives in `apps/frontend/vercel.json`.
 
-text
-apps/frontend/vercel.json
+------------------------------------------------------------------------
 
-Limitations and Disclaimer
-Experimental project: Simulicity IA is not a scientific prediction tool or a certified emergency-management system.
-Demonstrative simulation models: Hazard coefficients and simulation parameters have not been calibrated or validated against real-world events.
-OpenStreetMap dependency: Real-world district imports depend on the availability, accuracy, and quality of OpenStreetMap data.
-Optional AI integration: AI features are not required to use the simulator. The application can operate with its local fallback.
-Simplified urban models: The simulated behavior of buildings, infrastructure, and citizens does not necessarily represent real-world physical or social dynamics.
+## Limitations and disclaimer
 
-Simulation results should be interpreted as experimental scenarios for exploration and educational purposes, not as reliable forecasts of actual disasters.
+-   **Experimental** project: not a scientific prediction or a certified
+    emergency tool.
+-   Hazard coefficients are **demonstrative**, not calibrated against
+    real data.
+-   OpenStreetMap import depends on OSM data availability and quality.
+-   AI features are **optional** and not required to use the simulator.
 
-Demo Video
+------------------------------------------------------------------------
 
-[YouTube link — pending]
+## Demo video
 
-Suggested Demo Script
-Stage	Duration	Content
-Introduction	10 s	Introduce Simulicity IA and explain its purpose.
-City generation	20 s	Show the simulation panel, select a seed, and generate a city.
-Hazard simulation	30 s	Select a flood scenario and demonstrate the before-and-after comparison and impact metrics.
-Mitigation interventions	30 s	Show an AI-generated proposal (or the local fallback), apply the intervention, and compare the results.
-Real-world district import	20 s	Import a district from OpenStreetMap and run a simulation.
-Conclusion	10 s	Highlight the project's capabilities, limitations, technology stack, and repository.
+*\[YouTube link --- pending\]*
 
-Estimated duration: 2 minutes.
+Suggested demo script:
 
-License
+1.  **Intro (10 s)**: what Simulicity IA is and what problem it
+    explores.
+2.  **Generate a city (20 s)**: show the panel, pick a seed, generate.
+3.  **Run a hazard (30 s)**: select flood, show before/after and
+    metrics.
+4.  **Interventions (30 s)**: show the AI proposal (or the local
+    fallback), apply it, compare.
+5.  **Import a real district (20 s)**: load an OSM district and
+    simulate.
+6.  **Outro (10 s)**: limitations, stack, and repo link.
 
-To be defined (MIT, Apache 2.0, or another open-source license).
+------------------------------------------------------------------------
 
-Credits
-3D assets: Kenney City Kit and Poly Haven. See apps/frontend/public/models/.
-Geographic data: © OpenStreetMap contributors.
-Technologies: Next.js, React, Three.js, TypeScript, Tailwind CSS, Zod, and Turbo.
+## License
+
+*\[to be defined --- MIT, Apache 2.0, etc.\]*
+
+------------------------------------------------------------------------
+
+## Credits
+
+-   3D models: Kenney City Kit and Poly Haven (see
+    `apps/frontend/public/models/`).
+-   Real-district data: OpenStreetMap contributors.
