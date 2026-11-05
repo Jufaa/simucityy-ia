@@ -286,34 +286,11 @@ pnpm test         # Vitest
 pnpm format       # Prettier
 ```
 
-To build only the frontend (what Vercel does):
+To build only the frontend locally:
 
 ```bash
 pnpm turbo run build --filter=@simulicity/web
 ```
-
----
-
-## Deploy
-
-The frontend is deployed on **Vercel** with:
-
-- **Root Directory**: `apps/frontend`
-- **Build Command**:
-  `cd ../.. && pnpm turbo run build --filter=@simulicity/web`
-- **Install Command**: `cd ../.. && pnpm install --frozen-lockfile`
-- **AI configuration**: never place a model key in the frontend deployment.
-  AI requires a separately running backend; without it, AI requests fall
-  back locally.
-
-The configuration lives in `apps/frontend/vercel.json`. A frontend-only
-Vercel deployment is **not the full local stack**: synthetic generation
-also needs the backend. The browser clients default to
-`http://127.0.0.1:4000` and use `NEXT_PUBLIC_API_URL` for an alternative
-API address (set at frontend build time). For a separately hosted backend,
-configure its exact frontend origin in `CORS_ORIGINS` and use HTTPS;
-never expose this unauthenticated development API publicly without a
-security review. These deployment settings do not provision a backend.
 
 ---
 
