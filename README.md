@@ -24,9 +24,9 @@ under the same hazard, and measure the impact on buildings, population,
 and services.
 
 The project also includes a **real-district importer from
-OpenStreetMap**, and two optional AI features that propose city plans
-and mitigation interventions (with a local fallback when no API key is
-set).
+OpenStreetMap**, and optional AI features for city plans, mitigation interventions,
+citizen narratives, and emergency reports. Each has a deterministic local
+fallback when the AI service is unavailable.
 
 > **Disclaimer**: this is an experimental project. It is not a
 > scientific prediction tool or a certified emergency-management system.
@@ -43,9 +43,10 @@ set).
 - **Before/after comparison** with the same seed: same scenario, same
   buildings, reproducible results.
 - **Real-district import** from OpenStreetMap.
-- **Optional AI** (Meta Model API) to propose city plans and
-  mitigation interventions. Without a key, it falls back to a local
-  plan labeled _"Sin IA (local)"_.
+- **Optional AI** (Meta Model API, default model `muse-spark-1.3`)
+  for city plans, bounded mitigation proposals, citizen narratives, and
+  emergency reports. Failed or unconfigured AI requests use a labeled
+  local fallback; the simulator, not the model, calculates outcomes.
 - **Measured metrics**: exposed buildings, trapped people, max water
   depth, resilience score, etc.
 - **Simulation panel** with generation controls, hazard selection, and
@@ -112,43 +113,151 @@ metrics, labeled "Sin IA (local)" when no API key is set._
 
 ## Stack
 
-Layer Technology
-
----
-
-Frontend Next.js, React, Tailwind, Three.js
-City generation Pure TypeScript (`@simulicity/cities`)
-Hazards Pure TypeScript (`@simulicity/hazards`)
-Shared contracts Zod (`@simulicity/shared`)
-Monorepo pnpm workspaces + Turbo
-AI (optional) Meta Model API (server-side)
-Deploy Vercel (frontend only)
+| Layer                       | Technology / location                                           |
+| --------------------------- | --------------------------------------------------------------- |
+| Frontend                    | Next.js, React, Tailwind, Three.js (`apps/frontend`)            |
+| Backend and city generation | Fastify and TypeScript (`apps/backend`)                         |
+| Hazards                     | Pure TypeScript (`@simulicity/hazards`)                         |
+| Shared contracts            | Zod (`@simulicity/shared`)                                      |
+| Workspace                   | pnpm + Turbo                                                    |
+| Optional AI                 | Meta Model API through the server-side OpenAI-compatible client |
+| Key storage                 | Local SQLite; opt-in BYOK with AES-256-GCM encryption           |
 
 ---
 
 ## Getting started
 
-Requirements: **Node.js 22.x** and **pnpm 10.x**.
+Run commands from the repository root. Use Node.js **22.23.2** (see
+`.nvmrc`) and **pnpm 10.32.1** (see `package.json`).
+
+### 1. Install and configure the backend
 
 ```bash
-pnpm install
+pnpm install --frozen-lockfile
+```
+
+If `apps/backend/.env` does not exist, copy
+`apps/backend/.env.example` to `apps/backend/.env`. **Do not overwrite an
+existing configuration.** Generate a local encryption key:
+
+```bash
+node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+```
+
+Paste the generated value into `BYOK_MASTER_KEY` in `apps/backend/.env`.
+It must contain exactly **64 hexadecimal characters**. This setting is
+required to start the backend even when AI and BYOK are not used.
+It is an encryption key, **not** your Meta API key.
+
+### 2. Start both applications
+
+```bash
+pnpm dev
+```
+
+- Web: <http://localhost:3000>
+- Backend: <http://127.0.0.1:4000>
+- Health check: <http://127.0.0.1:4000/health>
+
+The backend is needed for synthetic city generation as well as AI.
+Starting only `@simulicity/web` does not start that API. Alternatively,
+run these commands in separate terminals:
+
+```bash
+pnpm --filter @simulicity/api dev
 pnpm --filter @simulicity/web dev
 ```
 
-Open <http://localhost:3000>.
+### 3. Enable Meta AI (optional)
 
-### Environment variables (optional)
+Obtain a Meta Model API key with access to the selected model. In
+`apps/backend/.env`, keep your generated `BYOK_MASTER_KEY` and add:
 
-If you want to use the AI features, you need a Meta Model API key.
-Without a key, the app still works and shows _"Sin IA (local)"_.
-
-```bash
-# apps/backend/.env (only if you keep the AI backend)
-META_API_KEY=LLM_...
+```dotenv
+META_API_KEY=LLM_REPLACE_WITH_YOUR_KEY
+META_MODEL=muse-spark-1.3
+BYOK_ENABLED=false
 ```
 
-> In the Vercel deployment (frontend only), AI features use the local
-> fallback.
+Replace the placeholder with your real key, then restart the backend.
+`META_MODEL` is optional; the client defaults to `muse-spark-1.3`.
+Access, quotas, and charges depend on your provider account: do not assume
+that inference is free or unlimited.
+
+**Never commit `.env`, put secrets in `NEXT_PUBLIC_*` variables, or paste
+keys into screenshots or the city-description chat.** The browser calls
+the backend; only the backend holds the model key. A coding-assistant
+`MODEL_API_KEY` does not configure the application.
+
+Leave `BYOK_ENABLED=false`: the server key works without enabling visitor
+key storage. The BYOK API has no authentication and must not be enabled on
+a public deployment. Advanced provider settings and API routes are in the
+[backend guide](apps/backend/README.md).
+
+### Check AI versus local fallback
+
+Create a city from a description such as "A green city with low buildings
+and a wide river", then build the returned plan. After simulating a hazard,
+run an intervention iteration and inspect its source and rationale.
+The intervention history distinguishes **Meta AI** from **No AI (local)**
+(**Sin IA (local)** in Spanish). City-plan summaries, citizen responses,
+and downloaded reports also identify local fallback results.
+
+No key, an unreachable backend/provider, quota errors, or a failed request
+can trigger fallback. A working simulation or a static Meta label alone
+is **not proof of a successful model call**. If using the alternative
+provider configuration, verify the actual server model too: the UI's
+`Meta AI` source label does not attest which provider was configured.
+
+## Using the simulator
+
+1. **Choose a city.** Use AI-assisted creation, a random city, or enter a
+   seed to reproduce a synthetic layout. Generation settings also offer
+   the optional larger-city preset; it is not an unlimited-city mode.
+2. **Explore.** Use the camera controls and settings panel. Switch the
+   interface language if needed; button labels below may be localized.
+3. **Run a hazard.** Choose rain, river overflow, tsunami, earthquake, or
+   strong wind. Adjust the available intensity/duration controls, start
+   the simulation, and use pause, speed, and reset controls as needed.
+4. **Compare outcomes.** Inspect the before/after comparison and measured
+   evacuation, exposure, damage, and resilience results. These are
+   demonstrative simulator outputs, not AI predictions.
+5. **Try interventions.** In the intervention-agent panel, run an iteration
+   to propose bounded measures and compare the resulting metrics. Mayor
+   mode runs the bounded sequence automatically (up to three iterations).
+   Availability restrictions appear in the panel; not every scene or
+   hazard supports every measure.
+6. **Ask a citizen.** Use the citizen-voice panel to narrate the selected
+   citizen's measured state. This narrative does not control their route.
+7. **Export.** At the final summary, download the report. It includes
+   measured results and an AI-written emergency report, or a labeled local
+   report if the AI request fails.
+
+### Import a real district or GeoJSON plan
+
+Choose the real-city option on the start screen or open the real-zone
+importer from the toolbar. Search for a city/neighborhood, position the
+fixed **1000 × 1000 m** square, and generate that zone. A preloaded Eixample
+example is also available. Live search and import need internet access to
+public map/elevation services, not a Meta key.
+
+You can instead upload a **WGS84 GeoJSON** plan and crop it with the same
+square. DWG, DXF, and PDF are not direct inputs. Successfully imported
+zones are stored only in that browser (IndexedDB, newest eight); clearing
+browser data deletes them. See [formats, sources, and import
+limitations](docs/REAL_CITY.md).
+
+### Troubleshooting
+
+| Symptom                                  | What to check                                                                                                                        |
+| ---------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------ |
+| Backend exits with a configuration error | `apps/backend/.env` exists and `BYOK_MASTER_KEY` has 64 hex characters. A Meta key, if set, must start with `LLM_`.                  |
+| Synthetic city does not load             | Start the backend as well as the frontend; check `/health` and browser network errors.                                               |
+| AI returns a local fallback              | Check the server key, model access, quota, provider connectivity, and backend logs. Restart after editing backend `.env`.            |
+| Unexpected AI provider                   | `AI_API_KEY` takes precedence over `META_API_KEY`; see the backend guide.                                                            |
+| `@simulicity/hazards` cannot resolve     | Run installation from the workspace root and confirm `packages/hazards/src/index.ts` exists; this package exports TypeScript source. |
+| Map search/import fails                  | Check internet access and public-service availability; use the preloaded example or a previously saved zone.                         |
+| Port already in use                      | Check your existing local services; do not stop another person's server.                                                             |
 
 ---
 
@@ -157,8 +266,8 @@ META_API_KEY=LLM_...
 ```text
 apps/
   frontend/        Next.js + Three.js + simulator UI
+  backend/         Fastify API, city generation, AI, encrypted key storage
 packages/
-  cities/          Procedural city generator (deterministic)
   hazards/         Hazard and evacuation models
   shared/          Shared contracts and types (Zod)
 scenarios/         Example scenarios (JSON)
@@ -193,10 +302,18 @@ The frontend is deployed on **Vercel** with:
 - **Build Command**:
   `cd ../.. && pnpm turbo run build --filter=@simulicity/web`
 - **Install Command**: `cd ../.. && pnpm install --frozen-lockfile`
-- **Environment variables**: none (AI features fall back to the local
-  plan)
+- **AI configuration**: never place a model key in the frontend deployment.
+  AI requires a separately running backend; without it, AI requests fall
+  back locally.
 
-The configuration lives in `apps/frontend/vercel.json`.
+The configuration lives in `apps/frontend/vercel.json`. A frontend-only
+Vercel deployment is **not the full local stack**: synthetic generation
+also needs the backend. The browser clients default to
+`http://127.0.0.1:4000` and use `NEXT_PUBLIC_API_URL` for an alternative
+API address (set at frontend build time). For a separately hosted backend,
+configure its exact frontend origin in `CORS_ORIGINS` and use HTTPS;
+never expose this unauthenticated development API publicly without a
+security review. These deployment settings do not provision a backend.
 
 ---
 
